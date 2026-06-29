@@ -66,6 +66,56 @@ workflow instructions, task schemas, cached CodeRabbit policy, and tool-use
 rules should appear before dynamic per-run content such as the commit range,
 changed snippets, and candidate findings.
 
+Recent code-review and software-engineering research supports a narrower
+claim than "more agents are better". The useful pattern is: bound the task,
+provide precise context, generate candidate findings cheaply, and put a strong
+critic in charge of refutation and final synthesis. The design therefore treats
+heterogeneous fan-out as a way to cover scoped work, not as a vote over five
+full-diff reviews.
+
+Evidence from the user-provided Elicit scan, checked with Firecrawl, maps to
+the workflow as follows:
+
+- Saleem et al.'s 2026 Agentic Code Review paper reports that a
+  meta-cognitive critic reduced false positives by 40%, improved line-number
+  accuracy from 67% to 92%, and lowered hallucination rate from 32% to 18% on
+  vulnerable Python samples. Dakar should therefore make `gpt-5.5` high the
+  verifier and synthesizer, not merely one proposer among peers.
+- SWR-Bench introduces 1,000 manually verified pull requests with full project
+  context, an objective evaluator with about 90% human agreement, and a simple
+  multi-review aggregation strategy that improves F1 by up to 43.67%. Dakar
+  should aggregate normalized candidates after context-bounded review, rather
+  than fan the whole diff to redundant reviewers.
+- Cihan et al. found GPT-4o and Gemini 2.0 Flash classified code correctness
+  only 68.50% and 63.89% of the time with problem descriptions, with weaker
+  performance when descriptions were omitted. Dakar should treat raw LLM
+  review output as untrusted until verified against source, diff, policy, and
+  available runtime or static evidence.
+- LLM4FPM, ZeroFalse, and SemTaint all support static-analysis hybrids:
+  extract precise code context, treat analyzer output as structured contracts
+  or taint specs, and ask LLMs to adjudicate gaps that static analysis cannot
+  resolve. Dakar should ingest SARIF, CodeQL, Semgrep, `sem`, `leta`, and
+  codegraph outputs as evidence and routing inputs, not as final findings.
+- Hanam et al. show semantic change impact analysis can reduce false positives
+  and shrink impact sets compared with syntactic diffs; their user study found
+  stronger semantics helped reviewers find defects. Dakar should route by
+  changed entities and dependency neighbourhoods before splitting by file
+  count.
+- Runtime-Structured Task Decomposition shows that static decomposition can be
+  worse than monolithic prompting when failures force downstream reruns, while
+  runtime-structured control logic reruns only failed subtasks. Dakar should
+  keep task dependencies and retry state in executable workflow data, not in
+  prompt prose alone.
+- SE-Jury supports ensemble judging for software-engineering artefacts, but as
+  structured independent judges plus explicit scoring. Dakar should use
+  independent refutation schemas and deterministic reductions, not open-ended
+  debate transcripts.
+- Tufano et al.'s controlled study warns that automated reviews can anchor
+  reviewer attention, increasing low-severity findings without improving
+  high-severity discovery, review time, or confidence. Dakar should cap
+  findings, allow `not_applicable`, record discarded candidates, and require
+  the synthesizer to actively throw away weak role-specific outputs.
+
 Sources:
 
 - [CodeRabbit configuration reference](https://docs.coderabbit.ai/reference/configuration)
@@ -76,6 +126,16 @@ Sources:
 - [ops-codegraph-tool](https://github.com/optave/ops-codegraph-tool)
 - [ops-codegraph-tool AI agent guide](https://raw.githubusercontent.com/optave/ops-codegraph-tool/main/docs/guides/ai-agent-guide.md)
 - [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+- [Agentic Code Review](https://www.semanticscholar.org/paper/b3c711a5b7583853784ced9a5ea4ad20ef2811b9)
+- [SWR-Bench](https://www.semanticscholar.org/paper/2affab64adb964bef66df6e99be3db601b8256ff)
+- [Evaluating Large Language Models for Code Review](https://arxiv.org/abs/2505.20206)
+- [Runtime-Structured Task Decomposition](https://www.semanticscholar.org/paper/a3e5974206faef2d75679a2a4ded4cd3d3c099a6)
+- [LLM4FPM](https://arxiv.org/abs/2411.03079)
+- [SemTaint](https://arxiv.org/abs/2601.10865)
+- [ZeroFalse](https://arxiv.org/abs/2510.02534)
+- [SE-Jury](https://arxiv.org/abs/2505.20854)
+- [Semantic Change Impact Analysis](https://www.semanticscholar.org/paper/eaa00eb02dc86938a3a410f03fc4fb8fbb3134f1)
+- [Deep Learning-based Code Reviews](https://www.semanticscholar.org/paper/6b3c09a1be7120784ec8dc7a70bf185e60bc60f3)
 
 ## Goals
 
@@ -241,6 +301,8 @@ results, and codegraph impact:
   path filters, tools, pre-merge checks, labels, and review tone. Use
   `gpt-5.4-mini` for extraction; `gpt-5.5` high verifies parser warnings during
   rollout. Tools: CodeRabbit docs, YAML parser, and structured output schema.
+  Cache only this stable policy bundle by config hash; do not cache per-run
+  relevance or difficulty.
 
 `git-diff-inventory`
 
@@ -259,7 +321,9 @@ results, and codegraph impact:
 
 : Ingest SARIF or tool-native JSON, group findings by rule and changed entity,
   and mark whether each finding intersects the review range. Use
-  `gpt-5.4-mini`. Tools: SARIF, Semgrep, CodeQL, and project linters.
+  `gpt-5.4-mini`. Treat each warning as a structured contract containing rule,
+  location, trace, CWE or category when available, and changed-range
+  intersection. Tools: SARIF, Semgrep, CodeQL, and project linters.
 
 `codegraph-and-leta-context`
 
@@ -274,7 +338,8 @@ results, and codegraph impact:
 : Score each pre-merge check for applicability, difficulty, mechanical
   evaluability, and required verifier. `gpt-5.5` medium drafts; `gpt-5.5` high
   approves. Inputs: cached policy bundle, entity diff, and static-analysis
-  clusters.
+  clusters. Recompute this every run because changed entities alter whether a
+  stable pre-merge check is relevant.
 
 `task-graph-plan`
 
@@ -295,8 +360,9 @@ results, and codegraph impact:
 : Execute bounded checks: docs links, changelog consistency, title/description
   requirements, path-instruction presence, static-analysis clustering, and
   obvious missing-test inventory. Return candidates, not conclusions. Use
-  `gpt-5.4-mini` or `gpt-5.3-codex-spark`. Tools: `markdownlint`, SARIF,
-  CodeRabbit pre-merge checks, and path globs.
+  `gpt-5.4-mini` or `gpt-5.3-codex-spark`. The prompt must make
+  `no_findings` and `not_applicable` first-class valid outputs. Tools:
+  `markdownlint`, SARIF, CodeRabbit pre-merge checks, and path globs.
 
 `medium-risk-review`
 
@@ -316,14 +382,18 @@ results, and codegraph impact:
 
 : Convert all agent outputs and tool findings into one candidate schema with
   source task, evidence, confidence, changed-range link, and required verifier.
-  Use `gpt-5.4-mini`. Tools: structured output schema and dedupe keys.
+  Use `gpt-5.4-mini`. Do not improve or argue the finding here; normalize,
+  de-duplicate, and preserve evidence. Tools: structured output schema and
+  dedupe keys.
 
 `high-verification`
 
 : Verify every candidate that could block merge, every light-agent candidate
   above low severity, and every proof/test-substance claim. Reject speculative
   or irrelevant findings. Use `gpt-5.5` high. Inputs: git diff, source
-  excerpts, test/proof files, and static-analysis traces.
+  excerpts, test/proof files, and static-analysis traces. This is an
+  adversarial refutation step: the verifier tries to kill each candidate before
+  promoting it.
 
 `synthesis-and-discard`
 
@@ -362,6 +432,71 @@ a semantic code finding blocks merge.
 The default pattern is fast finder, heavy verifier. The inverse pattern,
 heavy finder with light presentation check, is allowed only when the light
 agent checks schema completeness rather than truth.
+
+The fan-out strategy is therefore:
+
+- Use `gpt-5.3-codex-spark` for inventory tasks that are cheap to verify:
+  changed files, path classes, generated-file detection, and missing artefact
+  lists.
+- Use `gpt-5.4-mini` for bounded extraction and clustering: CodeRabbit policy
+  normalization, SARIF grouping, docs/config checks, and candidate schema
+  repair.
+- Use `gpt-5.5` medium for focused semantic proposal and challenge passes when
+  the changed cluster is coherent and does not require proof, security, or
+  global invariant judgement.
+- Use `gpt-5.5` high for high-risk finding, all proof/security/state-machine
+  judgement, adversarial verification, final synthesis, and auditable discard.
+
+This strategy intentionally avoids homogeneous full-diff fan-out. When multiple
+agents inspect the same surface, they must inspect it from distinct bounded
+roles, such as "find likely invariant breaks", "try to refute these
+candidates", or "cluster static-analysis traces". They do not all produce
+parallel final reviews.
+
+## ODW realization constraints
+
+The ODW script implements the dependency graph as executable JavaScript data:
+task objects with `taskId`, `dependsOn`, `kind`, `assignedModel`,
+`contextPack`, `maxFindings`, `schema`, and `verificationPolicy`. It should not
+hide the graph inside a monolithic prompt.
+
+Current ODW realities shape the implementation:
+
+- The workflow file must use a literal `meta` export, injected primitives, and
+  no workflow-level imports.
+- Deterministic filesystem and git work stay in local helpers or host-invoked
+  commands because ODW agent calls do not share a reliable mutable filesystem
+  in copy mode.
+- Agent handoffs use JSON Schemas. Downstream workflow JavaScript must consume
+  structured fields rather than parse prose.
+- Independent finder tasks run with `parallel()` once context packs are ready.
+- Candidate verification uses `pipeline()` so each candidate can move through
+  refutation independently.
+- `parallel()` and `pipeline()` results are filtered for failed or null slots.
+  Reduction is order-independent: dedupe by key, tally refutations, and sort by
+  severity and source location.
+- Retry-only-failed-subtask behaviour is represented as explicit task status
+  records and bounded retry rounds. The initial workflow can rerun failed leaf
+  tasks in a controlled loop, but it cannot depend on a separate dynamic DAG
+  scheduler or shared per-agent files.
+- Fan-out is bounded by args such as `maxTasks`, `maxCandidates`,
+  `maxRefuters`, and by `budget.remaining()` when ODW exposes budget
+  estimates.
+- ODW does not commit, push, apply patches, or update repository state by
+  itself. The only persistent write in this design is the deterministic review
+  history record after synthesis.
+
+The candidate and verdict schemas should include enough fields for audit:
+
+- candidate: `candidateId`, `taskId`, `title`, `severity`, `path`, `line`,
+  `changedRange`, `evidence`, `sourceKind`, `policyRefs`, `toolTraceRefs`, and
+  `confidence`.
+- verdict: `candidateId`, `status`, `refutationReason`, `acceptedSeverity`,
+  `requiredHumanReview`, `evidenceChecked`, and `notes`.
+
+ODW prompts should be built from stable prefix blocks first and dynamic
+per-task tails last. This matches prompt-cache guidance and also keeps smaller
+agents from receiving broad context they cannot use.
 
 ## Scoping bounded tasks
 
@@ -563,22 +698,37 @@ The initial metrics fit in the `metrics_json` field:
 - `taskCount`, `taskType`, `assignedModel`, `candidateFindings`,
   `confirmedFindings`, `discardedFindings`, and `discardReasonCounts`
 - `verificationSurvivalRate` by task type and model
+- `refutationRate`, `acceptedAfterRefutation`, and `killedByVerifier`
 - `duplicateFindingGroups` and cross-agent duplicate rate
+- `lineAccuracyAccepted` and `lineAccuracyRejected` when exact line checks are
+  possible
+- `hallucinationProxyCount` for candidates whose referenced file, symbol, or
+  line cannot be matched
 - `diffStat`, `commitCount`, `changedFiles.length`, changed entity count, and
   changed public API count
 - `staticFindings`, `staticFindingsIntersectingDiff`, and
   `staticFindingsAccepted`
+- `staticContractSurvivalRate` by rule, tool, CWE, and task type
+- `premergeChecksRelevant`, `premergeChecksNotApplicable`, and
+  `premergeChecksEscalatedToHigh`
+- `semanticImpactSetSize`, `semanticImpactShrinkage`, and fallback mode when
+  semantic tools are unavailable
 - codegraph availability, graph quality, changed functions, affected callers,
   affected files, new cycles, complexity threshold failures, and owner
   boundary crossings
 - `contextPackBytes`, source excerpt count, cached policy hash, cached token
   count, latency, and model
 - high-verification time per accepted finding
+- `retryRounds`, failed leaf tasks, retried leaf tasks, and estimated retry
+  tokens avoided compared with rerunning all downstream tasks
+- `noFindingTaskRate`, `notApplicableTaskRate`, and low-severity discard rate
 - findings later overturned by humans, when feedback is available
 
 These metrics support long-term evaluation of whether light agents are useful
 finders, which task types survive high verification, and whether static
-analysis or graph context improves confirmed-finding density.
+analysis or graph context improves confirmed-finding density. They also
+measure whether the workflow is producing useful signal or merely dents from
+role pressure.
 
 ## Verification
 
@@ -617,6 +767,15 @@ If light agents emit many weak candidates, high verification rejects them with
 auditable reasons and the metrics should lower future confidence for that task
 type and assignment.
 
+If automated review output begins anchoring synthesis on low-severity,
+role-specific comments, the max-finding cap and verification prompt must be
+tightened. A task that cannot prove relevance should return `no_findings` or
+`not_applicable`.
+
+If static or semantic context is incomplete, the final report must say which
+tools were missing or degraded. Missing context lowers confidence; it does not
+justify inventing a broader claim.
+
 ## Editing pass notes
 
 The document now treats divide-and-conquer as the production path and equal
@@ -624,3 +783,10 @@ full-diff fan-out as an evaluation mode only. The design keeps implementation
 defaults out of the design except where they define contracts: state format,
 policy cache key, task graph, agent assignments, discard reasons, metrics, and
 verification properties.
+
+The 2026-06-29 research synthesis adds a stricter routed-review principle:
+light agents propose or normalize bounded candidates, `gpt-5.5` high refutes
+and synthesizes, and every discarded finding remains auditable. The ODW design
+uses explicit task objects, JSON Schema handoffs, `parallel()` for independent
+finder work, and `pipeline()` for per-candidate verification to match current
+ODW authoring constraints.
