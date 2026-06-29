@@ -5,10 +5,33 @@ code-review workflow on a branch. It explains the supported command, what the
 workflow reviews, where review history is stored, and how to interpret the
 result.
 
+## Installing the CLI
+
+Agents can install Dakar's review command from a checkout with Bun:
+
+```bash
+bun install -g "$PWD"
+```
+
+This exposes `dakar-review`. The package remains private; the command is meant
+for local or git-based installation, not npm publication. Use an absolute path
+or `file:` URL for local installs; Bun 1.3.11 does not link the bin for bare
+`.` in this repository.
+
 ## Running a branch review
 
 Dakar reviews only commits that have not already been recorded for the current
-branch. From the repository root, run:
+branch. From the repository root, the preferred command is:
+
+```bash
+dakar-review --repo-root "$PWD" --base origin/main
+```
+
+The CLI runs the installed Dakar workflow and passes the reviewed checkout as
+`repoRoot`, which is required because ODW normally gives agents copied
+workspaces without `.git`.
+
+The equivalent direct ODW invocation is:
 
 ```bash
 odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
@@ -26,9 +49,10 @@ the repository's `.git` directory, so live review runs should pass `repoRoot`
 as an absolute path. Finder and verifier prompts use `git -C <repoRoot>` for
 diff evidence, and the prepare step passes the same path to the state helper.
 
-For a syntax and contract check that does not call review agents, run:
+For a syntax and contract check that does not call review agents, run either:
 
 ```bash
+dakar-review --dry-run --repo-root "$PWD"
 npm run odw:dry-run
 ```
 
@@ -58,24 +82,92 @@ and does not launch review agents.
 To isolate a trial run from normal review history, pass `stateRoot`:
 
 ```bash
+dakar-review \
+  --repo-root "$PWD" \
+  --base origin/main \
+  --state-root /tmp/dakar-review-state
+```
+
+The equivalent direct ODW invocation is:
+
+```bash
 odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state"}'
 ```
 
 ## What the workflow returns
 
-A successful live run returns one JSON object. Important fields are:
+A successful live run returns one JSON object on standard output. Important
+fields are:
 
+- `ok`: whether the workflow itself completed.
+- `workflowVersion`: the machine-readable workflow contract version.
+- `stateFile`: review-history file used for this branch.
+- `reviewBase` and `headCommit`: reviewed commit range.
+- `changedFiles`: files covered by the review.
 - `reportMarkdown`: the human-readable review report.
 - `findings`: accepted findings that survived high-reasoning verification.
 - `discarded`: rejected candidate findings with discard reasons.
 - `taskGraph`: the bounded review tasks planned for the change set.
+- `taskResults`, `candidates`, and `verdicts`: audit data from fan-out and
+  verification.
 - `metrics`: counts for tasks, candidates, accepted findings, discarded
   findings, model assignments, and warnings.
 - `recorded`: the review-history write result.
 
 Only `findings` should be treated as actionable review output. The `discarded`
 array is an audit trail showing what the workflow rejected.
+
+If the branch has already been reviewed, output still uses JSON:
+
+```json
+{
+  "ok": true,
+  "skipped": true,
+  "reason": "No unreviewed commits remain for this branch.",
+  "stateFile": ".../reviews.toml",
+  "headCommit": "..."
+}
+```
+
+Dry-run output is also JSON, but it describes the contract instead of a review:
+
+```json
+{
+  "ok": true,
+  "dryRun": true,
+  "workflowVersion": "divide-and-conquer-v1",
+  "config": ".../df12-code-review.yaml",
+  "repoRoot": "/path/to/repo",
+  "models": ["gpt-5.5/low", "gpt-5.5/medium", "gpt-5.5/high"],
+  "synthesisModel": "gpt-5.5/high",
+  "synthesisAdapter": "codex-high",
+  "taskKinds": ["docs", "config", "tests", "source", "review-summary"],
+  "limits": { "maxTasks": 8, "maxCandidates": 30, "maxFindings": 20 },
+  "defaultTaskGraph": [],
+  "candidateSchema": {},
+  "verdictSchema": {},
+  "synthesisSchema": {}
+}
+```
+
+`dakar-review --format markdown` prints `reportMarkdown` when a live result has
+one. Machine users should prefer the default `--format json`.
+
+On CLI or ODW process failures, `dakar-review` exits non-zero and prints a JSON
+error object to standard error:
+
+```json
+{
+  "ok": false,
+  "stage": "cli",
+  "error": "..."
+}
+```
+
+If the workflow returns `ok: false`, the CLI prints that workflow JSON and exits
+non-zero. Accepted findings do not make the CLI exit non-zero; they mean the
+review succeeded and found actionable issues.
 
 ## Routing and limits
 

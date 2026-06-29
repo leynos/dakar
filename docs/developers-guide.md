@@ -19,6 +19,7 @@ dry-run, Node tests, Markdown lint, and Mermaid diagrams.
 Use focused commands while iterating:
 
 ```bash
+node --test tests/cli.test.mjs
 node --test tests/review-state.test.mjs
 node --test tests/workflow-dry-run.test.mjs
 npm run odw:dry-run
@@ -50,7 +51,31 @@ should pass `repoRoot` as an absolute path to the real checkout. Any prompt
 that asks an agent to inspect diffs should use `git -C <repoRoot>` rather than
 plain `git diff`.
 
-## 3. Routed review conventions
+## 3. CLI conventions
+
+`bin/dakar-review.mjs` is the installable command exposed by `package.json`.
+It must remain usable after `bun install -g .` from a Dakar checkout.
+
+The CLI should run the workflow from Dakar's package root as ODW `--source`
+and pass the reviewed repository as the workflow `repoRoot` argument. This is
+intentional: globally installed agents need Dakar's workflow, state helper, and
+`odw.config.json` to be available even when they review another checkout.
+
+The default output is one JSON object on standard output. Do not add progress
+text around it. On CLI or ODW process failures, write a JSON error object to
+standard error and exit non-zero. A successful review with accepted findings is
+still a successful CLI invocation; callers should inspect `findings` rather
+than rely on exit status for review verdicts.
+
+When changing CLI arguments or output, update these places together:
+
+- `bin/dakar-review.mjs`;
+- `tests/cli.test.mjs`;
+- `docs/users-guide.md`;
+- the workflow contract section in `docs/design/initial-workflow.md` when the
+  underlying ODW result changes.
+
+## 4. Routed review conventions
 
 The first routed workflow uses deterministic file-class planning. The planner
 groups paths into review tasks and assigns models by task shape:
@@ -80,7 +105,7 @@ When adding a new task kind, update these places together:
 - user-facing behaviour in `docs/users-guide.md` if the change affects
   operators.
 
-## 4. State helper conventions
+## 5. State helper conventions
 
 `scripts/review-state.mjs` owns review-history behaviour. It computes the
 unreviewed range and appends completed `[[reviews]]` TOML entries. Keep its
@@ -98,7 +123,7 @@ Tests that change range or state behaviour belong in
 `tests/review-state.test.mjs`. Tests that change ODW dry-run or routed workflow
 contracts belong in `tests/workflow-dry-run.test.mjs`.
 
-## 5. Documentation expectations
+## 6. Documentation expectations
 
 Update `docs/users-guide.md` for user-visible command, argument, result, or
 state-path changes. Update this developer's guide for maintainer-facing

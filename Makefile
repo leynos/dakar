@@ -1,7 +1,7 @@
 .PHONY: check check-fmt lint typecheck markdownlint nixie test
 
 MD_FILES := $(shell git ls-files '*.md')
-NODE_MODULES := scripts/review-state.mjs tests/review-state.test.mjs
+NODE_MODULES := bin/dakar-review.mjs scripts/review-state.mjs tests/cli.test.mjs tests/review-state.test.mjs tests/workflow-dry-run.test.mjs
 
 check: check-fmt lint typecheck markdownlint nixie test
 

@@ -754,6 +754,31 @@ The workflow returns the reviewed range, changed files, task graph, per-task
 agent results, synthesized findings, discarded-finding summary, and recording
 result.
 
+## CLI contract
+
+`bin/dakar-review.mjs` is the globally installable wrapper exposed as
+`dakar-review` through `package.json`. It is designed for `bun install -g .`
+from a Dakar checkout and for agent-to-agent automation.
+
+The CLI runs the workflow from Dakar's package root, passes that package root
+as ODW `--source`, and passes the reviewed checkout as workflow `repoRoot`.
+This keeps Dakar's workflow, helper scripts, and `odw.config.json` available
+after global installation while still reviewing the target repository's git
+range.
+
+The default output format is exactly one JSON object on standard output. The
+object is the workflow return value, without ODW's `running ...` progress line.
+`--format markdown` prints `reportMarkdown` when present, but JSON remains the
+stable machine interface.
+
+Exit status is transport-oriented:
+
+- Exit `0` when the workflow completed, including when accepted findings exist.
+- Exit non-zero when CLI parsing, ODW execution, or the workflow itself returns
+  `ok: false`.
+- On CLI or ODW process failures before a workflow object exists, print a JSON
+  error object to standard error with `ok: false`, `stage`, and `error`.
+
 ## Metrics
 
 The initial metrics fit in the `metrics_json` field:
