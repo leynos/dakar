@@ -5,7 +5,7 @@ This ExecPlan (execution plan) is a living document. The sections
 `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
 proceeds.
 
-Status: DRAFT
+Status: COMPLETE
 
 ## Purpose / big picture
 
@@ -100,12 +100,34 @@ findings, task metrics, and the review-history path.
 - [x] (2026-06-29T22:37:30Z) Confirmed the existing workflow still sends the
   whole diff to every default model and synthesizes those full reviews.
 - [x] (2026-06-29T22:37:30Z) Drafted this ExecPlan.
-- [ ] Receive explicit approval to begin implementation.
-- [ ] Add the focused red test for routed dry-run/workflow contract.
-- [ ] Implement the routed task graph, scoped task prompts, candidate
-  normalization, verification, and report synthesis.
-- [ ] Run focused tests, `make check`, and an ODW dry-run smoke.
-- [ ] Update this ExecPlan with red/green/refactor evidence and mark complete.
+- [x] (2026-06-29T22:45:17Z) Received explicit approval to begin
+  implementation, with additional documentation requirements for user,
+  developer, and design-facing behaviour.
+- [x] (2026-06-29T22:45:17Z) Added
+  `tests/workflow-dry-run.test.mjs` and observed the expected red failure:
+  dry-run output had no `workflowVersion`.
+- [x] (2026-06-29T22:45:17Z) Implemented the routed task graph, scoped task
+  prompts, dry-run contract, candidate normalization, verification, and report
+  synthesis in `workflows/coderabbit-code-review.js`.
+- [x] (2026-06-29T22:45:17Z) Documented user-facing behaviour in
+  `docs/users-guide.md`, maintainer conventions in `docs/developers-guide.md`,
+  and component architecture updates in `docs/design/initial-workflow.md`.
+- [x] (2026-06-29T23:11:42Z) Found that live ODW smoke runs need an explicit
+  `repoRoot` because the copied workspace used by agents does not include
+  `.git`.
+- [x] (2026-06-29T23:11:42Z) Added `repoRoot` to the workflow contract and
+  changed prepare, finder, and verifier command prompts to use the real git
+  checkout via `git -C`.
+- [x] (2026-06-30T00:03:52Z) Ran a live smoke review with isolated state; it
+  completed and recorded history, and its accepted finding showed that
+  reasoning-qualified model strings were not being passed to ODW agent calls.
+- [x] (2026-06-30T00:03:52Z) Changed review, verification, synthesis, prepare,
+  and record agent calls to select reasoning-specific ODW adapters while
+  passing plain Codex model ids.
+- [x] (2026-06-30T00:13:06Z) Ran focused dry-run test, `npm test`,
+  `npm run odw:dry-run`, live ODW smoke, and `make check` successfully.
+- [x] (2026-06-30T00:13:06Z) Updated this ExecPlan with validation evidence
+  and marked it complete.
 
 ## Surprises & discoveries
 
@@ -115,6 +137,38 @@ findings, task metrics, and the review-history path.
   prepared)` and sends each prompt the same review range and changed file list.
   Impact: The implementation can be focused in one workflow file while keeping
   `scripts/review-state.mjs` stable.
+
+- Observation: `node --check workflows/coderabbit-code-review.js` is not a
+  valid syntax gate for ODW workflow files.
+  Evidence: Node reports `SyntaxError: Illegal return statement` at the
+  top-level `return`, while `odw run workflows/coderabbit-code-review.js
+  --source . --wait --timeout 20 --args '{"dryRun":true}'` succeeds.
+  Impact: Workflow validation must use ODW dry-run rather than direct Node
+  syntax checking.
+
+- Observation: ODW copy-mode agent workspaces may not contain `.git`.
+  Evidence: A live smoke run failed in the Prepare phase with
+  `fatal: not a git repository` from `git -C /tmp/odw-ws-.../dakar rev-parse
+  HEAD`.
+  Impact: Live workflow runs need a `repoRoot` argument pointing to the real
+  checkout, and all git-backed helper or diff prompts must use that path.
+
+- Observation: The workflow's own live smoke review found one real defect in
+  the first implementation.
+  Evidence: Run `20260629-235614-6ac248` completed with one accepted finding:
+  the workflow displayed `gpt-5.5/high` in prompts and metrics but passed only
+  `gpt-5.5` to the ODW `agent()` model option.
+  Impact: The workflow now selects reasoning-specific ODW adapters at every
+  agent-call boundary.
+
+- Observation: Passing `gpt-5.5/high` as the `model` option is rejected by the
+  backend for this ChatGPT-account Codex setup.
+  Evidence: `codex exec -m gpt-5.5/high ...` failed with
+  `The 'gpt-5.5/high' model is not supported when using Codex with a ChatGPT
+  account`, while `codex exec -m gpt-5.5 -c
+  'model_reasoning_effort="high"' ...` produced output.
+  Impact: The implementation must use custom ODW adapters that pass Codex
+  config for reasoning effort, rather than encoding reasoning in the model id.
 
 ## Decision log
 
@@ -137,10 +191,49 @@ findings, task metrics, and the review-history path.
   runnable.
   Date/Author: 2026-06-29T22:37:30Z / Codex.
 
+- Decision: Treat `docs/design/initial-workflow.md` as the component
+  architecture document for this first pass, and add `docs/users-guide.md` and
+  `docs/developers-guide.md` for public and maintainer-facing guidance.
+  Rationale: The repository already uses `docs/design/initial-workflow.md` as
+  the design and architecture source of truth. Adding a separate architecture
+  document would exceed the approved scope without adding useful separation at
+  this stage.
+  Date/Author: 2026-06-29T22:45:17Z / Codex.
+
+- Decision: Add `repoRoot` rather than switching the workflow to an implicit
+  ODW workspace mode.
+  Rationale: The ODW authoring contract says copy mode is the default, and
+  copied workspaces are not a reliable git handoff channel. Passing the real
+  checkout path makes range preparation and diff evidence explicit while
+  keeping the workflow read-only.
+  Date/Author: 2026-06-29T23:11:42Z / Codex.
+
+- Decision: Add repo-local ODW adapters for Codex reasoning levels.
+  Rationale: ODW custom adapters can include fixed Codex config arguments.
+  `codex-low`, `codex-medium`, and `codex-high` make reasoning effort a runtime
+  choice while keeping `model` as a backend-supported plain model id.
+  Date/Author: 2026-06-30T00:03:52Z / Codex.
+
 ## Outcomes & retrospective
 
-No implementation has started. This section will be updated after the approved
-implementation passes validation.
+The first routed divide-and-conquer review workflow is implemented. A user can
+run `odw run workflows/coderabbit-code-review.js --source . --wait` with
+`repoRoot` pointing at their real checkout and receive a single JSON review
+result containing `reportMarkdown`, accepted findings, discarded candidates,
+task graph data, metrics, and review-history recording status.
+
+The implementation keeps deterministic review range and TOML state writes in
+`scripts/review-state.mjs`, uses a JavaScript task planner for bounded review
+tasks, routes finder work to model/adapter pairs, verifies candidates with a
+high-reasoning Codex adapter, and records only after synthesis. The live smoke
+run proved the workflow can prepare, review, verify, synthesize, discard a stale
+candidate, and write isolated review history.
+
+The main lesson is that ODW model routing and Codex reasoning effort are
+separate concerns. The built-in ODW Codex adapter forwards only `model`, so the
+repo now owns `odw.config.json` adapters for low, medium, and high reasoning.
+The second lesson is that ODW copy workspaces should be treated as read-only
+snapshots without git metadata; `repoRoot` is required for robust git evidence.
 
 ## Context and orientation
 
@@ -308,7 +401,7 @@ For manual acceptance when model access is available, run:
 
 ```bash
 odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main"}'
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar"}'
 ```
 
 Expected live result shape:
@@ -334,12 +427,31 @@ The Red-Green-Refactor evidence must be recorded here during implementation:
 - Red command: `node --test tests/workflow-dry-run.test.mjs`.
   Expected failure: the current dry-run output lacks routed workflow contract
   fields such as `taskKinds`, `defaultTaskGraph`, and verification schemas.
+  Observed failure on 2026-06-29T22:45:17Z:
+  `actual undefined`, `expected 'divide-and-conquer-v1'`.
 - Green command: `node --test tests/workflow-dry-run.test.mjs`.
   Expected pass: the new dry-run output exposes the routed contract and default
   task graph.
+  Observed pass on 2026-06-29T22:45:17Z and again on
+  2026-06-30T00:08:20Z.
 - Refactor command sequence: `npm test` and `make check`.
   Expected pass: all tests, syntax checks, dry-run, Markdown lint, and diagram
   validation succeed.
+  Observed pass for `npm test` on 2026-06-30T00:08:20Z and for `make check`
+  on 2026-06-30T00:13:06Z.
+
+Live smoke command:
+
+```bash
+odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar","stateRoot":"/tmp/dakar-review-smoke-adapters","maxTasks":1,"maxCandidates":1,"maxFindings":1}'
+```
+
+Observed result on 2026-06-30T00:13:06Z: run
+`20260630-000828-d9d5a6` returned `ok: true`, recorded history under
+`/tmp/dakar-review-smoke-adapters/dakar/leynos/dakar/initial-workflow/reviews.toml`,
+used `codex-high` for the source task, verified one stale candidate as
+`not_applicable`, and produced a pass report with no accepted findings.
 
 Quality criteria:
 
@@ -369,7 +481,7 @@ For live smoke tests, pass `stateRoot` to isolate review history:
 
 ```bash
 odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","stateRoot":"/tmp/dakar-review-state"}'
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar","stateRoot":"/tmp/dakar-review-state"}'
 ```
 
 If a live run records an unwanted test review, remove only that temporary
@@ -415,6 +527,8 @@ The workflow args after implementation are:
 
 - `config`: CodeRabbit YAML path. Default:
   `examples/df12-code-review.yaml`.
+- `repoRoot`: real git checkout path used by prepare and diff prompts.
+  Default: `.`; live ODW runs should pass an absolute path.
 - `base`: base ref for merge-base calculation. Default: `origin/main`.
 - `head`: reviewed head ref. Default: `HEAD`.
 - `stateRoot`: optional state-root override for tests and isolated smoke runs.
@@ -427,6 +541,8 @@ The workflow args after implementation are:
 - `models`: optional model assignment override for tests or future routing.
 - `synthesisModel`: model used for prepare, verification, synthesis, and
   record prompts. Default: `gpt-5.5`.
+- `synthesisReasoning`: reasoning suffix used when `synthesisModel` has no
+  suffix. Default: `high`.
 
 The final live workflow return object must include:
 
@@ -458,3 +574,7 @@ the command output.
 Initial draft written on 2026-06-29. It captures the first-pass implementation
 path for a routed ODW code-review workflow and pauses before implementation
 pending explicit approval, as required by the `execplans` skill.
+
+Final update on 2026-06-30 records the implemented workflow, custom ODW Codex
+adapters, `repoRoot` live-run requirement, focused and full validation, and the
+successful isolated live smoke run.

@@ -1,6 +1,6 @@
 # Dakar incremental CodeRabbit review workflow design
 
-Status: Draft implemented; divide-and-conquer revision in progress
+Status: First routed workflow pass implemented
 Audience: Developers implementing and operating Dakar workflows
 Date: 2026-06-29
 
@@ -467,6 +467,13 @@ Current ODW realities shape the implementation:
 - Deterministic filesystem and git work stay in local helpers or host-invoked
   commands because ODW agent calls do not share a reliable mutable filesystem
   in copy mode.
+- Live runs accept `repoRoot` so copied agent workspaces can inspect the real
+  git checkout with `git -C <repoRoot>`. This keeps the workflow compatible
+  with ODW copy isolation, where the copied workspace may not include `.git`.
+- `odw.config.json` defines `codex-low`, `codex-medium`, and `codex-high`
+  adapters because the built-in Codex adapter forwards `model` but has no
+  separate reasoning-effort flag. Workflow tasks select the adapter for
+  reasoning effort and pass the plain model id through `model`.
 - Agent handoffs use JSON Schemas. Downstream workflow JavaScript must consume
   structured fields rather than parse prose.
 - Independent finder tasks run with `parallel()` once context packs are ready.
@@ -668,24 +675,80 @@ metrics_json = "{\"confirmedFindings\":2,\"discardedFindings\":5}"
 ## Workflow contract
 
 `workflows/coderabbit-code-review.js` exposes `meta.name =
-"coderabbit-code-review"` and accepts these args:
+"coderabbit-code-review"` and accepts these args in the first routed
+implementation:
 
 - `config`: CodeRabbit YAML path, default `examples/df12-code-review.yaml`.
+- `repoRoot`: real git checkout path used by the prepare helper and diff
+  prompts, default `.`. Live runs should pass an absolute path because ODW
+  copy workspaces may not contain `.git`.
 - `base`: base ref for merge-base calculation, default `origin/main`.
 - `head`: reviewed head ref, default `HEAD`.
 - `stateRoot`: optional state root override for tests or compatibility runs.
+- `maxTasks`: cap on planned review tasks, default `8`.
+- `maxCandidates`: cap on normalized candidate findings before verification,
+  default `30`.
+- `maxFindings`: cap on accepted final findings, default `20`.
 - `models`: optional model list replacing the default Codex agent set.
-- `synthesisModel`: model for prepare, synthesis, and record agents.
-- `dryRun`: when true, returns configuration without calling agents.
+- `synthesisModel`: model for prepare, high verification, synthesis, and
+  record agents, default `gpt-5.5`.
+- `synthesisReasoning`: reasoning suffix for the synthesis model when
+  `synthesisModel` does not already include one, default `high`.
+- `dryRun`: when true, returns configuration, task kinds, default task graph,
+  limits, and JSON Schemas without calling agents.
+
+The implemented routed phases are:
+
+1. `Prepare`: ask a Codex agent to run `scripts/review-state.mjs prepare`.
+2. `Plan`: build deterministic task objects in workflow JavaScript from the
+   prepared changed-file list.
+3. `Review`: run task prompts with `parallel()`.
+4. `Verify`: run accepted candidates through a `pipeline()` of `gpt-5.5` high
+   verifier prompts.
+5. `Synthesize`: produce `reportMarkdown`, machine-readable accepted findings,
+   and metrics.
+6. `Record`: ask a Codex agent to run `scripts/review-state.mjs record`.
+
+The first routed planner classifies changed files into `source`, `tests`,
+`config`, `docs`, or `unknown`. Dependency lockfiles and unknown paths route
+through source review because they can affect runtime behaviour. The planner
+adds a `review-summary` task so the workflow always has one cross-cutting pass
+over the change set.
+
+Dry-run output is a contract preview. It includes:
+
+- `workflowVersion`, currently `divide-and-conquer-v1`
+- `repoRoot`
+- `synthesisModel`, currently `gpt-5.5/high` by default
+- `synthesisAdapter`, currently `codex-high` by default
+- `taskKinds`
+- `limits`
+- `defaultTaskGraph`
+- `candidateSchema`
+- `verdictSchema`
+- `synthesisSchema`
+
+Live output includes:
+
+- `taskGraph`
+- `taskResults`
+- `candidates`
+- `verdicts`
+- `findings`
+- `discarded`
+- `reportMarkdown`
+- `metrics`
+- `recorded`
 
 The next implementation revision should add these args:
 
 - `policyCacheRoot`: optional cache root for config-hash policy bundles.
-- `enableSem`: enable `sem diff` when `sem` is on `PATH`.
-- `enableLeta`: enable `leta` context when the workspace has an LSP.
-- `enableCodegraph`: enable codegraph build and diff-impact when installed.
 - `sarif`: optional list of SARIF files to ingest.
 - `maxDiscardLogEntries`: cap for recording full discarded candidates.
+- `enableSem`: use `sem diff` to route by changed entities instead of file
+  class alone.
+- `enableLeta`: include language-server reference and call context.
+- `enableCodegraph`: include codegraph impact and ownership context.
 
 The workflow returns the reviewed range, changed files, task graph, per-task
 agent results, synthesized findings, discarded-finding summary, and recording
@@ -743,12 +806,12 @@ The next implementation revision must add dry-run checks for:
 
 - stable config hash calculation
 - cache hit and cache miss behaviour
-- task graph dependency validity
-- rejection reason accounting
 - prompt pack ordering for prefix-cache stability
 
 The ODW script has a `dryRun` mode so syntax and metadata can be checked
-without launching review agents.
+without launching review agents. The routed dry-run contract is covered by
+`tests/workflow-dry-run.test.mjs`; state-range behaviour is covered by
+`tests/review-state.test.mjs`.
 
 ## Failure modes
 
@@ -790,3 +853,10 @@ and synthesizes, and every discarded finding remains auditable. The ODW design
 uses explicit task objects, JSON Schema handoffs, `parallel()` for independent
 finder work, and `pipeline()` for per-candidate verification to match current
 ODW authoring constraints.
+
+The first implemented routed pass records a further decision: the task graph is
+deterministic workflow JavaScript, while semantic judgement remains in agents.
+This keeps dry-run and unit tests meaningful without pretending that file-class
+routing is a complete semantic code graph. The design can evolve to `sem`,
+`leta`, and codegraph-backed routing without changing the user-facing ODW
+entrypoint.

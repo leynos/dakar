@@ -1,0 +1,61 @@
+{
+  "adapters": {
+    "codex-low": {
+      "label": "Codex CLI, low reasoning",
+      "command": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "--cd",
+        "{workspace}",
+        "-c",
+        "model_reasoning_effort=\"low\"",
+        "-"
+      ],
+      "stdin": "{prompt}",
+      "flags": {
+        "model": ["--model"]
+      }
+    },
+    "codex-medium": {
+      "label": "Codex CLI, medium reasoning",
+      "command": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "--cd",
+        "{workspace}",
+        "-c",
+        "model_reasoning_effort=\"medium\"",
+        "-"
+      ],
+      "stdin": "{prompt}",
+      "flags": {
+        "model": ["--model"]
+      }
+    },
+    "codex-high": {
+      "label": "Codex CLI, high reasoning",
+      "command": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "--cd",
+        "{workspace}",
+        "-c",
+        "model_reasoning_effort=\"high\"",
+        "-"
+      ],
+      "stdin": "{prompt}",
+      "flags": {
+        "model": ["--model"]
+      }
+    }
+  }
+}

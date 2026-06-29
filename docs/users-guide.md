@@ -1,0 +1,109 @@
+# User's guide
+
+This guide is for people who want to run Dakar's Open Dynamic Workflow (ODW)
+code-review workflow on a branch. It explains the supported command, what the
+workflow reviews, where review history is stored, and how to interpret the
+result.
+
+## Running a branch review
+
+Dakar reviews only commits that have not already been recorded for the current
+branch. From the repository root, run:
+
+```bash
+odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar"}'
+```
+
+The `config` argument points at the CodeRabbit YAML file whose review tone,
+path instructions, and pre-merge checks should guide the review. The `base`
+argument is the branch or ref used to compute the merge base when there is no
+previous review history. The `repoRoot` argument points at the real git
+checkout being reviewed.
+
+ODW normally runs agents in copied workspaces. Those copies may not contain
+the repository's `.git` directory, so live review runs should pass `repoRoot`
+as an absolute path. Finder and verifier prompts use `git -C <repoRoot>` for
+diff evidence, and the prepare step passes the same path to the state helper.
+
+For a syntax and contract check that does not call review agents, run:
+
+```bash
+npm run odw:dry-run
+```
+
+Dry-run output includes the workflow version, default finder model set,
+synthesis model and adapter, task kinds, limits, default task graph, and JSON
+Schemas used for candidate, verifier, and synthesis handoffs.
+
+## Review history
+
+Review history is stored outside the repository under the XDG state directory:
+
+```plaintext
+$XDG_STATE_HOME/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml
+```
+
+When `XDG_STATE_HOME` is unset, Dakar uses:
+
+```plaintext
+~/.local/state/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml
+```
+
+The workflow records the reviewed head commit after synthesis. A later run on
+the same branch reviews only commits after the last recorded head. If the
+current `HEAD` has already been recorded, the workflow returns `skipped: true`
+and does not launch review agents.
+
+To isolate a trial run from normal review history, pass `stateRoot`:
+
+```bash
+odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state"}'
+```
+
+## What the workflow returns
+
+A successful live run returns one JSON object. Important fields are:
+
+- `reportMarkdown`: the human-readable review report.
+- `findings`: accepted findings that survived high-reasoning verification.
+- `discarded`: rejected candidate findings with discard reasons.
+- `taskGraph`: the bounded review tasks planned for the change set.
+- `metrics`: counts for tasks, candidates, accepted findings, discarded
+  findings, model assignments, and warnings.
+- `recorded`: the review-history write result.
+
+Only `findings` should be treated as actionable review output. The `discarded`
+array is an audit trail showing what the workflow rejected.
+
+## Routing and limits
+
+The first routed workflow groups changed files into `source`, `tests`,
+`config`, `docs`, and `review-summary` tasks. Smaller or faster agents propose
+bounded candidate findings. `gpt-5.5` high verifies candidates before final
+synthesis.
+
+The following optional limits are supported:
+
+- `maxTasks`: maximum planned tasks, default `8`.
+- `maxCandidates`: maximum candidates sent to verification, default `30`.
+- `maxFindings`: maximum accepted findings in the final result, default `20`.
+
+Example:
+
+```bash
+odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","maxTasks":4,"maxFindings":5}'
+```
+
+## Error and skip behaviour
+
+If the prepare step cannot compute a review range, the workflow returns
+`ok: false` with `stage: "prepare"`. If recording fails after synthesis, the
+returned review is still visible in the ODW result, but a later run may review
+the same commits again because the history file was not updated.
+
+If `origin/main` is not available, pass a different `base`. If prepare reports
+that the workspace is not a git repository, pass `repoRoot` as an absolute path
+to the real checkout.
