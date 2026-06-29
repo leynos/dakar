@@ -87,6 +87,90 @@ reviews:
          - Rust Edition 2024 is a valid and finalized edition that was officially released as part of Rust 1.85.0 on February 20, 2025. It can be used in Cargo.toml files with `edition = "2024"`.
         - Dependency versions in Cargo.toml should make use of implicit semver caret versioning and must not explicitly
         include carets.
+    - path: "**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
+      instructions: >-
+        - Keep complexity low and functions small, meaningful, and single responsibility. Follow command/query
+        segregation.
+
+        - Prefer clear, explicit code over terse or obscure idioms. Extract helpers when they make intent clearer.
+
+        - Group related parameters into typed objects rather than long positional parameter lists.
+
+        - Prefer `const`, `readonly`, and returning new objects over mutating inputs.
+
+        - When branching becomes complex, extract predicate helpers or lookup tables. Exhaustive `switch` logic should
+        include a `never` guard.
+
+        - Every module must begin with a `/** @file ... */` JSDoc block explaining its purpose, responsibilities, and
+        usage.
+
+        - Comments and docs must follow en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize,"
+        "synthesized," "polymerization," "analyse," "colour," "behaviour"), except where external API names require
+        otherwise.
+
+        - Use ESM for source modules and public library surfaces.
+
+        - Prefer Bun for JavaScript and TypeScript script invocations. Prefer Makefile targets over direct package
+        scripts where available.
+
+        - Keep TypeScript compiler strictness enabled, including `strict`, `noUncheckedIndexedAccess`,
+        `exactOptionalPropertyTypes`, `noImplicitOverride`, `useUnknownInCatchVariables`,
+        `noPropertyAccessFromIndexSignature`, and `isolatedModules` where the project supports them.
+
+        - Export explicit public entry points through `package.json` `exports` and `types`. Avoid wildcard re-exports
+        that hide breaking changes.
+
+        - Validate I/O boundaries such as network responses, fixture payloads, and persisted data with explicit parsers
+        or a schema library where that dependency is justified.
+
+        - Prefer branded types, narrow domain types, or small immutable objects where they prevent accidental mixing of
+        unrelated primitive values.
+
+        - Centralize time, random number generation, and other ambient state behind adapters rather than calling
+        `Date.now()` or `Math.random()` directly in business logic.
+
+        - Use discriminated unions for recoverable conditions that callers branch on.
+
+        - Reserve `Error` subclasses for exceptional paths and attach `cause` where available.
+
+        - Convert unknown thrown values and third-party failures to project-owned error shapes at API or command
+        boundaries.
+
+        - Avoid non-null assertions and unchecked casts in production code. Tests that need hard assertions must include
+        a failure message explaining the expected invariant.
+
+        - Lint and type suppressions must be a last resort, tightly scoped, and include a clear justification. Blanket
+        suppressions are forbidden.
+
+        - Use Bun tests for unit coverage and keep tests deterministic.
+
+        - Prefer factories and builders over repeated ad hoc fixture object literals.
+
+        - Replace duplicated tests with parameterised cases, compact table-driven loops, or property tests where the
+        behaviour spans a range of inputs, states, orderings, or transitions.
+
+        - Snapshot tests must be limited to meaningful output contracts, paired with semantic assertions, and normalized
+        for nondeterministic fields.
+
+        - Use behavioural tests for externally observable behaviour, integration contracts, persistence, command-line
+        behaviour, network boundaries, or other system-level behaviour.
+
+        - Prefer dependency injection over direct mutation of process-wide state such as environment variables, clocks,
+        random number generators, current working directory, or global fetch. If mutation is unavoidable, guard and
+        restore it in shared test helpers.
+
+        - Prefer structured diagnostics or explicit diagnostic events over ad hoc `console.log` output in library code.
+        Libraries must not install global loggers, metrics exporters, or process-wide handlers as an import side effect.
+
+        - Direct dependency versions should use caret requirements unless a narrower range is explicitly justified.
+        Avoid wildcard, broad inequality, or open-ended version ranges.
+
+        - Commit lockfiles and rebuild them deliberately when major tool upgrades require it.
+
+        - Files must not exceed 400 logical lines:
+          - Decompose large modules into feature-oriented files
+          - Split large `switch` statements or dispatch tables by domain and collocate with targets
+          - Move bulky fixtures, templates, or snapshots to external files when appropriate.
     - path: "**/*.md"
       instructions: >-
         - Avoid 2nd person or 1st person pronouns ("I", "you", "we"), exceptions: README.md, BDD .feature files.
