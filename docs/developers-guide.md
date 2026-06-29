@@ -61,6 +61,12 @@ and pass the reviewed repository as the workflow `repoRoot` argument. This is
 intentional: globally installed agents need Dakar's workflow, state helper, and
 `odw.config.json` to be available even when they review another checkout.
 
+`scripts/review-config.mjs` owns CodeRabbit configuration resolution for both
+the CLI and workflow. Keep this precedence stable unless the user-facing
+contract changes: explicit `--config`, repository-local CodeRabbit YAML,
+`$XDG_CONFIG_HOME/dakar/config.yaml` or `~/.config/dakar/config.yaml`, then the
+bundled example config.
+
 The default output is one JSON object on standard output. Do not add progress
 text around it. On CLI or ODW process failures, write a JSON error object to
 standard error and exit non-zero. A successful review with accepted findings is

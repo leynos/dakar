@@ -5,6 +5,7 @@ export const meta = {
   whenToUse:
     'Use on a git branch when a CodeRabbit YAML file should drive an incremental AI code review and reviews.toml should prevent duplicate commit coverage.',
   phases: [
+    { title: 'Resolve Config' },
     { title: 'Prepare' },
     { title: 'Plan' },
     { title: 'Review' },
@@ -16,7 +17,9 @@ export const meta = {
 
 const cfg = args || {}
 const WORKFLOW_VERSION = 'divide-and-conquer-v1'
-const CODE_RABBIT_CONFIG = cfg.config || 'examples/df12-code-review.yaml'
+const CONFIG_ARG = cfg.config || ''
+const CONFIG_ARG_OPTION = CONFIG_ARG ? ` --config ${shellWord(CONFIG_ARG)}` : ''
+let CODE_RABBIT_CONFIG = CONFIG_ARG || 'auto'
 const REPO_ROOT = cfg.repoRoot || '.'
 const BASE_REF = cfg.base || 'origin/main'
 const HEAD_REF = cfg.head || 'HEAD'
@@ -40,6 +43,19 @@ const SYNTHESIS_MODEL_NAME = modelName({
 })
 const SYNTHESIS_ADAPTER = adapterForReasoning(SYNTHESIS_REASONING)
 const TASK_KINDS = ['docs', 'config', 'tests', 'source', 'review-summary']
+
+const CONFIG_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    ok: { type: 'boolean' },
+    config: { type: 'string' },
+    source: { type: 'string', enum: ['explicit', 'repository', 'user', 'example'] },
+    checked: { type: 'array', items: { type: 'string' } },
+    error: { type: 'string' },
+  },
+  required: ['ok'],
+}
 
 const PREPARE_SCHEMA = {
   type: 'object',
@@ -445,6 +461,30 @@ if (cfg.dryRun === true) {
   }
 }
 
+phase('Resolve Config')
+const resolvedConfig = await agent(
+  [
+    'Resolve the Dakar review configuration and return the helper JSON exactly.',
+    '',
+    'Command:',
+    `node scripts/review-config.mjs resolve --repo-root ${shellWord(REPO_ROOT)} --package-root .${CONFIG_ARG_OPTION}`,
+    '',
+    'Do not edit files. If the command fails, explain the failure in schema-compatible JSON with ok=false.',
+  ].join('\n'),
+  {
+    label: 'config-resolve',
+    phase: 'Resolve Config',
+    adapter: SYNTHESIS_ADAPTER,
+    model: SYNTHESIS_MODEL_BASE,
+    schema: CONFIG_SCHEMA,
+  },
+)
+
+if (!resolvedConfig || resolvedConfig.ok === false) {
+  return { ok: false, stage: 'config', resolvedConfig }
+}
+CODE_RABBIT_CONFIG = resolvedConfig.config
+
 phase('Prepare')
 const prepared = await agent(
   [
@@ -465,7 +505,7 @@ const prepared = await agent(
 )
 
 if (!prepared || prepared.ok === false) {
-  return { ok: false, stage: 'prepare', prepared }
+  return { ok: false, stage: 'prepare', config: CODE_RABBIT_CONFIG, resolvedConfig, prepared }
 }
 
 if (prepared.alreadyReviewed || prepared.commitCount === 0) {
@@ -473,6 +513,8 @@ if (prepared.alreadyReviewed || prepared.commitCount === 0) {
     ok: true,
     skipped: true,
     reason: 'No unreviewed commits remain for this branch.',
+    config: CODE_RABBIT_CONFIG,
+    resolvedConfig,
     stateFile: prepared.stateFile,
     headCommit: prepared.headCommit,
   }
@@ -595,6 +637,8 @@ const recorded = await agent(
 return {
   ok: recorded && recorded.ok === true,
   workflowVersion: WORKFLOW_VERSION,
+  config: CODE_RABBIT_CONFIG,
+  resolvedConfig,
   stateFile: prepared.stateFile,
   reviewBase: prepared.reviewBase,
   headCommit: prepared.headCommit,

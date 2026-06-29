@@ -44,6 +44,21 @@ argument is the branch or ref used to compute the merge base when there is no
 previous review history. The `repoRoot` argument points at the real git
 checkout being reviewed.
 
+When `--config` is omitted, Dakar resolves review configuration in this order:
+
+1. Repository-local `.coderabbit.yaml`.
+2. Repository-local `.coderabbit.yml`.
+3. Repository-local `coderabbit.yaml`.
+4. Repository-local `coderabbit.yml`.
+5. User-level `$XDG_CONFIG_HOME/dakar/config.yaml`, or
+   `~/.config/dakar/config.yaml` when `XDG_CONFIG_HOME` is unset.
+6. Dakar's bundled example config.
+
+The user-level config is treated as the current repository's CodeRabbit config
+only when no repository-local CodeRabbit YAML exists. It is useful for agents
+that should apply one house review policy across repositories without copying a
+`.coderabbit.yaml` into every checkout.
+
 ODW normally runs agents in copied workspaces. Those copies may not contain
 the repository's `.git` directory, so live review runs should pass `repoRoot`
 as an absolute path. Finder and verifier prompts use `git -C <repoRoot>` for
@@ -102,6 +117,9 @@ fields are:
 
 - `ok`: whether the workflow itself completed.
 - `workflowVersion`: the machine-readable workflow contract version.
+- `config`: the CodeRabbit-compatible config file used for the run.
+- `resolvedConfig`: config resolution audit data, including `source` and
+  checked paths.
 - `stateFile`: review-history file used for this branch.
 - `reviewBase` and `headCommit`: reviewed commit range.
 - `changedFiles`: files covered by the review.
@@ -116,7 +134,9 @@ fields are:
 - `recorded`: the review-history write result.
 
 Only `findings` should be treated as actionable review output. The `discarded`
-array is an audit trail showing what the workflow rejected.
+array is an audit trail showing what the workflow rejected. `reportMarkdown`
+is presentation text, not a deterministic schema; automation should consume
+`findings`, `discarded`, `metrics`, `verdicts`, and `recorded`.
 
 If the branch has already been reviewed, output still uses JSON:
 
@@ -125,6 +145,8 @@ If the branch has already been reviewed, output still uses JSON:
   "ok": true,
   "skipped": true,
   "reason": "No unreviewed commits remain for this branch.",
+  "config": ".../config.yaml",
+  "resolvedConfig": { "source": "user" },
   "stateFile": ".../reviews.toml",
   "headCommit": "..."
 }

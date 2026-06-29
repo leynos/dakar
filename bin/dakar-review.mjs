@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveReviewConfig } from '../scripts/review-config.mjs'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workflowPath = join(packageRoot, 'workflows', 'coderabbit-code-review.js')
@@ -64,19 +64,6 @@ function numberValue(name, value) {
   return number
 }
 
-function resolveConfig(repoRoot, config) {
-  if (config) {
-    return isAbsolute(config) ? config : resolve(repoRoot, config)
-  }
-  for (const candidate of ['.coderabbit.yaml', '.coderabbit.yml', 'coderabbit.yaml', 'coderabbit.yml']) {
-    const path = join(repoRoot, candidate)
-    if (existsSync(path)) {
-      return path
-    }
-  }
-  return join(packageRoot, 'examples', 'df12-code-review.yaml')
-}
-
 function extractJson(text) {
   const start = text.indexOf('{')
   if (start === -1) {
@@ -128,7 +115,7 @@ function run(argv) {
   }
 
   const workflowArgs = {
-    config: resolveConfig(repoRoot, options.config),
+    config: resolveReviewConfig({ repoRoot, config: options.config, packageRoot }).config,
     repoRoot,
   }
   for (const [optionKey, workflowKey] of [

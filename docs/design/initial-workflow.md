@@ -678,7 +678,10 @@ metrics_json = "{\"confirmedFindings\":2,\"discardedFindings\":5}"
 "coderabbit-code-review"` and accepts these args in the first routed
 implementation:
 
-- `config`: CodeRabbit YAML path, default `examples/df12-code-review.yaml`.
+- `config`: explicit CodeRabbit YAML path. When omitted, Dakar resolves
+  repository-local `.coderabbit.yaml`, `.coderabbit.yml`, `coderabbit.yaml`, or
+  `coderabbit.yml`; then `$XDG_CONFIG_HOME/dakar/config.yaml` or
+  `~/.config/dakar/config.yaml`; then the bundled example config.
 - `repoRoot`: real git checkout path used by the prepare helper and diff
   prompts, default `.`. Live runs should pass an absolute path because ODW
   copy workspaces may not contain `.git`.
@@ -730,6 +733,8 @@ Dry-run output is a contract preview. It includes:
 
 Live output includes:
 
+- `config`
+- `resolvedConfig`
 - `taskGraph`
 - `taskResults`
 - `candidates`
@@ -757,7 +762,7 @@ result.
 ## CLI contract
 
 `bin/dakar-review.mjs` is the globally installable wrapper exposed as
-`dakar-review` through `package.json`. It is designed for `bun install -g .`
+`dakar-review` through `package.json`. It is designed for `bun install -g "$PWD"`
 from a Dakar checkout and for agent-to-agent automation.
 
 The CLI runs the workflow from Dakar's package root, passes that package root
@@ -766,10 +771,19 @@ This keeps Dakar's workflow, helper scripts, and `odw.config.json` available
 after global installation while still reviewing the target repository's git
 range.
 
+The CLI and workflow share `scripts/review-config.mjs` for config resolution.
+This makes user-level `~/.config/dakar/config.yaml` behave as the current
+repository's CodeRabbit YAML only when the repository does not provide its own.
+
 The default output format is exactly one JSON object on standard output. The
 object is the workflow return value, without ODW's `running ...` progress line.
 `--format markdown` prints `reportMarkdown` when present, but JSON remains the
 stable machine interface.
+
+`reportMarkdown` is intentionally presentation text. It is constrained by the
+synthesis prompt but does not have a deterministic schema or template in the
+current workflow. Machine consumers must use structured fields such as
+`findings`, `discarded`, `metrics`, `verdicts`, and `recorded`.
 
 Exit status is transport-oriented:
 

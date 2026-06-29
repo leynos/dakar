@@ -39,6 +39,7 @@ test('dry-run exposes routed workflow contract', () => {
   assert.equal(result.dryRun, true)
   assert.equal(result.workflowVersion, 'divide-and-conquer-v1')
   assert.equal(result.repoRoot, '/tmp/dakar-checkout')
+  assert.equal(result.config, 'auto')
   assert.equal(result.synthesisModel, 'gpt-5.5/high')
   assert.equal(result.synthesisAdapter, 'codex-high')
   assert.deepEqual(result.taskKinds, ['docs', 'config', 'tests', 'source', 'review-summary'])
