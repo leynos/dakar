@@ -1,0 +1,11 @@
+{
+  "name": "dakar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:state": "node --test tests/review-state.test.mjs",
+    "odw:dry-run": "odw run workflows/coderabbit-code-review.js --source . --wait --timeout 20 --args '{\"dryRun\":true}'"
+  }
+}
