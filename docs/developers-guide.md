@@ -54,7 +54,12 @@ plain `git diff`.
 ## 3. CLI conventions
 
 `bin/dakar-review.mjs` is the installable command exposed by `package.json`.
-It must remain usable after `bun install -g .` from a Dakar checkout.
+It must remain usable after Bun installs Dakar from an absolute checkout path
+or package tarball.
+
+`install.sh` is the preferred local installer. It intentionally calls
+`bun install -g` with Dakar's absolute checkout path because Bun 1.3.11 does
+not create package bin links for bare `bun install -g .`.
 
 The CLI should run the workflow from Dakar's package root as ODW `--source`
 and pass the reviewed repository as the workflow `repoRoot` argument. This is

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 
 const repoRoot = resolve(new URL('..', import.meta.url).pathname)
 const cliPath = join(repoRoot, 'bin', 'dakar-review.mjs')
+const installPath = join(repoRoot, 'install.sh')
 
 function runCli(args, options = {}) {
   return execFileSync(process.execPath, [cliPath, ...args], {
@@ -27,17 +28,21 @@ test('CLI help documents review invocation', () => {
 
 test('CLI dry-run prints one machine-readable JSON result', () => {
   const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
-  const output = runCli([
-    '--dry-run',
-    '--repo-root',
-    repoRoot,
-    '--runs-root',
-    runsRoot,
-    '--timeout',
-    '20',
-    '--max-tasks',
-    '2',
-  ])
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  const output = runCli(
+    [
+      '--dry-run',
+      '--repo-root',
+      repoRoot,
+      '--runs-root',
+      runsRoot,
+      '--timeout',
+      '20',
+      '--max-tasks',
+      '2',
+    ],
+    { env: { XDG_CONFIG_HOME: xdgConfig } },
+  )
   const result = JSON.parse(output)
 
   assert.equal(result.ok, true)
@@ -73,4 +78,62 @@ test('CLI uses user config when repository config is absent', () => {
 
   assert.equal(result.ok, true)
   assert.equal(result.config, userConfig)
+})
+
+test('package installs a callable CLI with Bun global install', (t) => {
+  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8' })
+  if (bunCheck.status !== 0) {
+    t.skip('bun is not installed')
+    return
+  }
+
+  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
+  execFileSync('bun', ['install', '-g', repoRoot], {
+    cwd: repoRoot,
+    env: { ...process.env, BUN_INSTALL: bunInstall },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  const output = execFileSync(join(bunInstall, 'bin', 'dakar-review'), ['--version'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  assert.equal(output.trim(), '0.1.0')
+})
+
+test('install script installs a callable CLI with Bun', (t) => {
+  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8' })
+  if (bunCheck.status !== 0) {
+    t.skip('bun is not installed')
+    return
+  }
+
+  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
+  execFileSync(installPath, {
+    cwd: repoRoot,
+    env: { ...process.env, BUN_INSTALL: bunInstall },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  const output = execFileSync(join(bunInstall, 'bin', 'dakar-review'), ['--version'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  assert.equal(output.trim(), '0.1.0')
+})
+
+test('install script help does not install', () => {
+  const output = execFileSync(installPath, ['--help'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  assert.match(output, /Usage: \.\/install\.sh/u)
 })

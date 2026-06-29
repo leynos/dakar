@@ -10,13 +10,24 @@ result.
 Agents can install Dakar's review command from a checkout with Bun:
 
 ```bash
-bun install -g "$PWD"
+./install.sh
 ```
 
-This exposes `dakar-review`. The package remains private; the command is meant
-for local or git-based installation, not npm publication. Use an absolute path
-or `file:` URL for local installs; Bun 1.3.11 does not link the bin for bare
-`.` in this repository.
+The installer calls Bun with the absolute checkout path and exposes
+`dakar-review`. The package remains private; the command is meant for local or
+git-based installation, not npm publication. `install.sh` accepts no install
+arguments; run `./install.sh --help` for its short usage text.
+
+If you prefer to call Bun directly, use an absolute path or `file:` URL:
+
+```bash
+bun install -g "$PWD"
+bun install -g "file:$PWD"
+```
+
+Do not use `bun install -g .` for this local install path. In Bun 1.3.11, bare
+`.` is parsed as an empty package spec before Dakar's `package.json` is read,
+so Bun installs `@` and creates no `dakar-review` bin link.
 
 ## Running a branch review
 
