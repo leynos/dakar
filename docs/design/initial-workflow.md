@@ -1,6 +1,6 @@
 # Dakar incremental CodeRabbit review workflow design
 
-Status: Draft implemented
+Status: Draft implemented; divide-and-conquer revision in progress
 Audience: Developers implementing and operating Dakar workflows
 Date: 2026-06-29
 
@@ -8,15 +8,19 @@ Date: 2026-06-29
 
 Dakar needs an Open Dynamic Workflow (ODW) that reviews only commits that have
 not been reviewed before. The workflow must use a CodeRabbit YAML file as the
-review policy source, fan out to several Codex reviewers, synthesize their
-findings, and persist review history under an XDG state directory.
+review policy source, divide review work across Codex agents by risk and task
+shape, synthesize their findings, discard weak findings with an audit trail,
+and persist review history under an XDG state directory.
 
 ## Research summary
 
 CodeRabbit documents `.coderabbit.yaml` as the repository-root configuration
 surface for review behaviour, including `reviews.path_instructions`,
-`reviews.pre_merge_checks`, tone, language, labels, and auto-review behaviour.
-The example file in `examples/df12-code-review.yaml` uses those same surfaces.
+`reviews.pre_merge_checks`, `reviews.tools`, labels, knowledge-base settings,
+and auto-incremental review behaviour. The configuration also distinguishes
+stable policy from run-specific PR facts: path instructions and pre-merge check
+definitions are stable until the YAML changes, while relevance, difficulty, and
+severity depend on the changed files and semantic diff.
 
 The XDG Base Directory Specification defines `$XDG_STATE_HOME` for persistent
 user-specific state and defaults it to `$HOME/.local/state` when unset. The
@@ -24,21 +28,54 @@ requested path uses `~/.local/data`; this design records the prompt path as a
 compatibility note but implements the XDG-correct default at
 `$XDG_STATE_HOME/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml`.
 
+AgentGroupChat-V2 argues for hierarchical task forests, dependency-aware
+parallel execution, heterogeneous model assignment, and specialized roles. Its
+ablation results are directly relevant here: homogeneous agents become
+redundant as the number of agents increases, while specialized role division
+improves with more agents and moderate interaction depth. The production review
+workflow therefore replaces equal full-diff fan-out with a task graph: a heavy
+lead reviewer owns semantic judgement, and smaller agents handle bounded
+extraction and mechanical checks.
+
+AutoGen separates single-agent, multi-agent, and event-driven agent
+orchestration, including MCP-backed tools and distributed runtimes. That
+supports the same boundary this design uses: deterministic preparation and
+tool output first, agent reasoning second, final arbitration last.
+
 SARIF 2.1.0 is the OASIS standard exchange format for static-analysis results.
-Semgrep can emit JSON and SARIF, run diff-aware CI scans, and use baseline
-commits. SCIP is a language-agnostic code-intelligence index format for code
-navigation. Tree-sitter provides fast incremental syntax trees across many
-languages. These tools inform future metrics and enrichment, but the initial
-implementation avoids hard dependencies.
+Static analysis findings should enter the review as candidate facts, not final
+review decisions. Light agents may cluster and summarize SARIF results; the
+lead reviewer verifies blocking findings.
+
+`sem` is useful before fan-out because it produces entity-level diffs from git
+ranges. It identifies changed functions, types, structured-data entries, and
+Markdown sections, which is a better dispatch unit than raw file paths.
+
+`leta` is useful for LSP-backed lookup, references, implementations, and call
+hierarchies when a changed symbol is known. It should prime agents with precise
+symbol navigation commands rather than asking them to grep blindly.
+
+`ops-codegraph-tool` can add a local function-level dependency graph across 34
+languages, an MCP server, diff-impact analysis, complexity metrics, code-owner
+mapping, co-change analysis, boundary checks, and batch querying. It is not a
+replacement for reviewer judgement, but it is a strong source for ownership
+clusters, blast-radius estimates, and bounded review tasks.
+
+OpenAI prompt caching rewards stable prompt prefixes. Static content such as
+workflow instructions, task schemas, cached CodeRabbit policy, and tool-use
+rules should appear before dynamic per-run content such as the commit range,
+changed snippets, and candidate findings.
 
 Sources:
 
 - [CodeRabbit configuration reference](https://docs.coderabbit.ai/reference/configuration)
 - [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/)
+- [AgentGroupChat-V2](https://arxiv.org/html/2506.15451v1)
+- [AutoGen documentation](https://microsoft.github.io/autogen/stable//index.html)
 - [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
-- [Semgrep CLI reference](https://docs.semgrep.dev/cli-reference)
-- [SCIP repository](https://github.com/scip-code/scip)
-- [Tree-sitter introduction](https://tree-sitter.github.io/)
+- [ops-codegraph-tool](https://github.com/optave/ops-codegraph-tool)
+- [ops-codegraph-tool AI agent guide](https://raw.githubusercontent.com/optave/ops-codegraph-tool/main/docs/guides/ai-agent-guide.md)
+- [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
 
 ## Goals
 
@@ -49,37 +86,424 @@ The workflow must:
 - Skip when the current head has already been reviewed.
 - Use CodeRabbit YAML as review policy input rather than inventing a separate
   policy format.
-- Dispatch five Codex reviewers initially: `gpt-5.5` at low, medium, and high
-  reasoning, `gpt-5.4-mini`, and `gpt-5.3-codex-spark`.
-- Record one TOML review entry after synthesis, including commit range, model
-  set, changed files, finding count, summary, and metrics JSON.
-- Keep the deterministic range/history logic outside the ODW script because
-  ODW v0.4 rejects workflow-level imports and `require`.
+- Cache stable CodeRabbit policy extraction under a deterministic config hash.
+- Recompute run-specific relevance and difficulty for each pre-merge check.
+- Dispatch review work by bounded task, risk, and required judgement rather
+  than sending every agent the same full diff.
+- Use `gpt-5.5` high as lead reviewer and final verifier.
+- Use `gpt-5.5` medium for medium-risk semantic review and challenge passes.
+- Use `gpt-5.4-mini` and `gpt-5.3-codex-spark` for bounded extraction,
+  clustering, inventory, and mechanical checks.
+- Record one TOML review entry after synthesis, including commit range, task
+  assignments, confirmed findings, discarded findings, summary, and metrics
+  JSON.
+- Keep deterministic range/history logic outside the ODW script because ODW
+  v0.4 rejects workflow-level imports and `require`.
 
 ## Non-goals
 
 The initial workflow does not post GitHub PR comments, enforce branch
-protection, run static analysers automatically, validate the full CodeRabbit
-schema, or prove model availability. ODW passes model identifiers to the Codex
-adapter; adapter configuration owns availability.
+protection, validate the full CodeRabbit schema, prove model availability, or
+trust light agents to judge substantive proofs. ODW passes model identifiers to
+the Codex adapter; adapter configuration owns availability.
 
 ## Architecture
 
+The workflow is a routed task forest. Nodes above the fan-out boundary produce
+stable inputs for all agents. Nodes below it are bounded review tasks. The lead
+reviewer verifies candidate findings before synthesis records the review.
+
 ```mermaid
 flowchart TD
-  A[ODW workflow] --> B[State prepare agent]
-  B --> C[scripts/review-state.mjs prepare]
-  C --> D[reviews.toml]
-  C --> E[Unreviewed range]
-  E --> F[Parallel Codex reviewers]
-  F --> G[Synthesis agent]
-  G --> H[State record agent]
-  H --> I[scripts/review-state.mjs record]
-  I --> D
+  A[Prepare review range] --> B[Hash CodeRabbit config]
+  B --> C{Cached policy exists}
+  C -->|yes| E[Load cached policy]
+  C -->|no| D[Extract stable policy]
+  D --> E
+  A --> F[Build change inventory]
+  E --> G[Score check relevance]
+  F --> G
+  F --> H[Build code context]
+  G --> I[Plan review task graph]
+  H --> I
+  I --> J[Create context packs]
+  J --> K[Light bounded checks]
+  J --> L[Medium semantic checks]
+  J --> M[High lead review]
+  K --> N[Normalize candidates]
+  L --> N
+  M --> N
+  N --> O[High verification]
+  O --> P[Synthesize and discard]
+  P --> Q[Record review history]
 ```
 
-Figure 1: The ODW script orchestrates agents. The Node helper owns deterministic
-git and state-file operations.
+Figure 1: The workflow separates cached policy extraction from per-run
+relevance scoring. Only verified findings reach the final report.
+
+## Dependency graph
+
+The task graph below names the review tasks and their dependencies. Tasks with
+the same predecessor can run in parallel after the predecessor completes.
+
+```mermaid
+flowchart LR
+  T0[prepare-state] --> T1[config-hash]
+  T1 --> T2[policy-cache]
+  T2 --> T3[policy-extract]
+  T2 --> T4[policy-load]
+  T3 --> T5[policy-bundle]
+  T4 --> T5
+  T0 --> T6[git-diff-inventory]
+  T6 --> T7[sem-entity-diff]
+  T6 --> T8[static-analysis-ingest]
+  T7 --> T9[codegraph-and-leta-context]
+  T5 --> T10[premerge-relevance]
+  T9 --> T10
+  T10 --> T11[task-graph-plan]
+  T8 --> T11
+  T11 --> T12[context-pack-assembly]
+  T12 --> T13[light-mechanical-checks]
+  T12 --> T14[medium-risk-review]
+  T12 --> T15[high-risk-review]
+  T13 --> T16[candidate-normalization]
+  T14 --> T16
+  T15 --> T16
+  T16 --> T17[high-verification]
+  T17 --> T18[synthesis-and-discard]
+  T18 --> T19[record-history]
+```
+
+Figure 2: Deterministic inventory and cached policy tasks precede model
+fan-out. Verification and synthesis are serial because they decide what the
+workflow records as review history.
+
+## Cached policy and per-run relevance
+
+Dakar stores cached CodeRabbit policy analysis by deterministic hash:
+
+```plaintext
+$XDG_STATE_HOME/dakar/<repo-owner>/<repo-name>/config-cache/
+  <sha256-config-bytes>-<policy-analyser-version>.json
+```
+
+The cache key is the SHA-256 digest of the exact YAML bytes plus the policy
+analyser version. Using bytes rather than a semantic YAML hash makes the first
+implementation deterministic without depending on a complete CodeRabbit schema
+parser. A later implementation may add a canonical semantic hash if it needs to
+ignore comments or formatting-only edits.
+
+The cached policy bundle contains stable facts:
+
+- review language, tone, profile, and auto-review settings
+- `path_filters`
+- `path_instructions`
+- enabled tools and tool configuration
+- `pre_merge_checks` definitions and enforcement modes
+- review labels, reviewer instructions, and knowledge-base file patterns
+- policy extraction warnings
+
+The per-run relevance overlay is never cached by config hash alone. It depends
+on `reviewBase..headCommit`, changed files, entity diffs, static-analysis
+results, and codegraph impact:
+
+- whether a pre-merge check touches changed files
+- whether the check can be evaluated mechanically
+- likely severity if the check fails
+- required agent capability
+- whether `gpt-5.5` high must verify the result
+
+## Behaviour specification
+
+`prepare-state`
+
+: Run `scripts/review-state.mjs prepare`, compute the unreviewed range,
+  changed files, commit count, and state-file path. Skip when `HEAD` is already
+  reviewed. Use the deterministic helper through `gpt-5.5` high or a local
+  command wrapper. Tools: `git`, `scripts/review-state.mjs`, and XDG state
+  rules.
+
+`config-hash`
+
+: Read the CodeRabbit YAML bytes and compute the config cache key. Do not
+  interpret relevance here. Use a local helper or `gpt-5.3-codex-spark` if the
+  step is agentized. Tools: SHA-256 and the config path from workflow args.
+
+`policy-cache`
+
+: Load a cached policy bundle when the hash and analyser version match;
+  otherwise request extraction. Use a local helper. Tools: XDG state and JSON
+  schema validation.
+
+`policy-extract`
+
+: Parse stable CodeRabbit policy into normalized fields: path instructions,
+  path filters, tools, pre-merge checks, labels, and review tone. Use
+  `gpt-5.4-mini` for extraction; `gpt-5.5` high verifies parser warnings during
+  rollout. Tools: CodeRabbit docs, YAML parser, and structured output schema.
+
+`git-diff-inventory`
+
+: Produce file-level diff stats and classify paths as source, test, docs,
+  config, generated, dependency, or unknown. Use `gpt-5.3-codex-spark`. Tools:
+  `git diff --name-status` and `git diff --stat`.
+
+`sem-entity-diff`
+
+: Convert changed files into entity-level changes. Prefer functions, methods,
+  types, modules, Markdown sections, and YAML/TOML keys over raw line ranges.
+  Use a local helper, with a light agent summarizing output. Tool:
+  `sem diff --from <base> --to <head> --format json`.
+
+`static-analysis-ingest`
+
+: Ingest SARIF or tool-native JSON, group findings by rule and changed entity,
+  and mark whether each finding intersects the review range. Use
+  `gpt-5.4-mini`. Tools: SARIF, Semgrep, CodeQL, and project linters.
+
+`codegraph-and-leta-context`
+
+: Build ownership clusters and blast-radius summaries for changed entities. Use
+  codegraph when available; use Leta for precise LSP refs and calls; fall back
+  to git and `sem`. Use local tools plus a `gpt-5.3-codex-spark` summary.
+  Tools: `codegraph diff-impact`, `codegraph owners`, `codegraph triage`,
+  `leta refs`, `leta calls`, and `leta show`.
+
+`premerge-relevance`
+
+: Score each pre-merge check for applicability, difficulty, mechanical
+  evaluability, and required verifier. `gpt-5.5` medium drafts; `gpt-5.5` high
+  approves. Inputs: cached policy bundle, entity diff, and static-analysis
+  clusters.
+
+`task-graph-plan`
+
+: Create bounded review tasks with `taskId`, files, entities, policy source,
+  max findings, model assignment, dependencies, and verification policy. Use
+  `gpt-5.5` high. Tools: ODW planning, CodeRabbit policy, and codegraph/sem
+  context.
+
+`context-pack-assembly`
+
+: Create one stable context pack per task class and one small dynamic tail per
+  task. Include only files, entities, and policy snippets needed for the task.
+  Use a local helper or `gpt-5.4-mini`. Tools: `context_pack`, `sem`, `leta`,
+  codegraph, and git snippets.
+
+`light-mechanical-checks`
+
+: Execute bounded checks: docs links, changelog consistency, title/description
+  requirements, path-instruction presence, static-analysis clustering, and
+  obvious missing-test inventory. Return candidates, not conclusions. Use
+  `gpt-5.4-mini` or `gpt-5.3-codex-spark`. Tools: `markdownlint`, SARIF,
+  CodeRabbit pre-merge checks, and path globs.
+
+`medium-risk-review`
+
+: Review medium-risk clusters where local reasoning is required but global
+  invariants are unlikely: test/code consistency, config behaviour, API
+  documentation drift, and moderate blast-radius changes. Use `gpt-5.5`
+  medium. Inputs: context pack, `sem`, `leta`, and codegraph summaries.
+
+`high-risk-review`
+
+: Review correctness, security, concurrency, migrations, state machines, public
+  API compatibility, proof quality, property tests, and high-blast-radius
+  entities. Use `gpt-5.5` high. Inputs: full context pack, `leta
+  show/refs/calls`, codegraph impact, and static-analysis evidence.
+
+`candidate-normalization`
+
+: Convert all agent outputs and tool findings into one candidate schema with
+  source task, evidence, confidence, changed-range link, and required verifier.
+  Use `gpt-5.4-mini`. Tools: structured output schema and dedupe keys.
+
+`high-verification`
+
+: Verify every candidate that could block merge, every light-agent candidate
+  above low severity, and every proof/test-substance claim. Reject speculative
+  or irrelevant findings. Use `gpt-5.5` high. Inputs: git diff, source
+  excerpts, test/proof files, and static-analysis traces.
+
+`synthesis-and-discard`
+
+: Deduplicate accepted findings, downgrade severity when warranted, and record
+  discarded findings with reason codes. Produce the final review report and
+  metrics. Use `gpt-5.5` high. Inputs: candidate schema, verification results,
+  and audit log.
+
+`record-history`
+
+: Append the review record to `reviews.toml` only after synthesis finishes.
+  Include task metrics and discarded-finding counts. Use the deterministic
+  helper through `gpt-5.5` high or a local command wrapper. Tools:
+  `scripts/review-state.mjs record` and TOML writer.
+
+## Agent assignment policy
+
+`gpt-5.5` high is the lead reviewer. It owns the final task graph, semantic
+review for high-risk clusters, verification, synthesis, and discard decisions.
+It must judge proof well-formedness, property-test substance, security impact,
+state-machine invariants, migration safety, and cross-file correctness.
+
+`gpt-5.5` medium handles medium-risk review tasks and drafts relevance scores.
+It can challenge the lead reviewer on a bounded finding, but it does not
+override high on blocking findings.
+
+`gpt-5.4-mini` handles structured extraction, policy parsing, static-analysis
+clustering, docs checks, changelog checks, simple test inventory, and candidate
+normalization.
+
+`gpt-5.3-codex-spark` handles fastest inventory work: changed-file summaries,
+path classification, obvious missing artefacts, TODO/FIXME extraction, and
+small mechanical checks. It should not classify proof quality or decide whether
+a semantic code finding blocks merge.
+
+The default pattern is fast finder, heavy verifier. The inverse pattern,
+heavy finder with light presentation check, is allowed only when the light
+agent checks schema completeness rather than truth.
+
+## Scoping bounded tasks
+
+Each fan-out task must include a hard boundary:
+
+- changed files and entity IDs
+- relevant CodeRabbit policy snippets
+- maximum source excerpts
+- maximum findings
+- allowed tools
+- explicit non-goals
+- output schema
+- verification policy
+
+A bounded task may return no findings. The prompt must say this directly. For
+example, a task looking for applications of `trybuild` tests must report
+`not_applicable` when the change has no compile-fail surface. It must not
+invent a test need because its assigned role is test-focused.
+
+The planner uses these scoping rules:
+
+- Give light agents one policy check or one path cluster at a time.
+- Give medium agents one cohesive ownership cluster or one medium-risk
+  pre-merge check.
+- Give high one high-risk cluster plus its impact neighbourhood.
+- Split tasks by entity and dependency neighbourhood before splitting by file
+  count.
+- Escalate any task whose output would require proof, security, or cross-file
+  invariant judgement.
+
+## Context priming and prefix caching
+
+The orchestrator should build prompts in this order:
+
+1. Static workflow identity and role rules.
+2. Static task output schema.
+3. Cached CodeRabbit policy bundle for the config hash.
+4. Stable tool-use instructions for `sem`, `leta`, codegraph, and
+   `context_pack`.
+5. Task-class examples, if any.
+6. Dynamic run data: commit range, changed entities, source excerpts, and
+   candidate findings.
+
+This order maximizes prompt-cache reuse because the longest common prefix
+stays unchanged across tasks that share the same workflow version and
+CodeRabbit config hash. The OpenAI prompt caching guide states that cache hits
+require exact prefix matches and recommends placing static content before
+dynamic content.
+
+Use `prompt_cache_key` at task-class granularity, for example:
+
+```plaintext
+dakar-review:<repo-owner>/<repo-name>:<config-hash>:<workflow-version>:<task-kind>
+```
+
+This keeps related requests on the same cache route without forcing unrelated
+task kinds to share one key. The workflow should record `cached_tokens`,
+latency, and model for each agent call when the adapter exposes usage data.
+
+`context_pack` should create stable packs for repeated context:
+
+- `policy-pack`: normalized CodeRabbit policy for the config hash
+- `review-contract-pack`: output schemas, severity rules, discard rules
+- `tooling-pack`: allowed commands for `sem`, `leta`, codegraph, and SARIF
+- `cluster-pack`: source excerpts and graph summaries for one task cluster
+
+The first three packs are shared across tasks and should appear before the
+dynamic cluster pack. Pack sections and references must be sorted
+deterministically by key and path. Source excerpts belong in the dynamic tail
+unless the same excerpt is intentionally reused across many tasks.
+
+## Static analysis and codegraph strategy
+
+Static analysis is an evidence source. SARIF results become candidate findings
+with rule ID, location, message, and changed-range intersection. Light agents
+may cluster the results and remove duplicates from the same rule/location
+pair, but high verifies all blocking candidates.
+
+`sem` should run for every review range when installed:
+
+```bash
+sem diff --from <review-base> --to <head> --format json
+```
+
+The planner uses the JSON to dispatch by changed entity. For example, a change
+to one exported function with many callers becomes a high-risk semantic task;
+a Markdown heading change becomes a docs task unless CodeRabbit policy says
+otherwise.
+
+`leta` should be used when the task names a symbol and the language server can
+answer references or calls:
+
+```bash
+leta refs <symbol>
+leta calls --from <symbol>
+leta calls --to <symbol>
+leta show <symbol>
+```
+
+The output primes the reviewing agent with exact navigation targets and reduces
+raw file reads.
+
+`ops-codegraph-tool` should be optional but preferred for larger repositories:
+
+```bash
+codegraph build .
+codegraph diff-impact <review-base> -T --json
+codegraph owners <target> -T --json
+codegraph triage -T --limit 20 --json
+codegraph check --staged --no-new-cycles
+```
+
+Dakar should record whether codegraph was available, graph quality if exposed,
+changed functions, affected callers, affected files, ownership boundaries,
+complexity deltas, and cycle or boundary violations. These fields make later
+evaluation possible: the team can compare finding survival rate with and
+without graph context.
+
+## Synthesis and discard policy
+
+Synthesis is not a merge operation over agent opinions. It is an adjudication
+step. The synthesizer must be willing to discard findings.
+
+Every candidate finding receives one final status:
+
+- `accepted`: the finding is supported by changed-range evidence and remains
+  actionable.
+- `duplicate`: another accepted finding covers the same issue.
+- `out_of_scope`: the issue is outside `reviewBase..HEAD`.
+- `not_applicable`: the assigned check does not apply to this change.
+- `insufficient_evidence`: the candidate lacks file, line, trace, reproduction,
+  or source evidence.
+- `speculative`: the candidate depends on an unstated runtime or user behaviour
+  assumption.
+- `tool_false_positive`: a static-analysis result is explained by context.
+- `severity_downgraded`: the issue is real but lower impact than proposed.
+- `needs_human`: the workflow cannot decide from available context.
+
+The final report includes only `accepted` findings. The review record includes
+discard counts by reason and may include full discarded candidates when the
+state file size budget allows. This audit trail prevents narrow agents from
+turning role-specific pressure into low-quality findings.
 
 ## State model
 
@@ -100,10 +524,10 @@ base_commit = "1111111111111111111111111111111111111111"
 head_commit = "2222222222222222222222222222222222222222"
 commit_count = 3
 changed_files = ["src/lib.rs", "tests/lib.test.rs"]
-models = ["gpt-5.5/low", "gpt-5.5/medium"]
+models = ["gpt-5.5/high", "gpt-5.4-mini/medium"]
 findings_total = 2
 summary = "Two blocking findings."
-metrics_json = "{\"confirmedFindings\":2}"
+metrics_json = "{\"confirmedFindings\":2,\"discardedFindings\":5}"
 ```
 
 ## Workflow contract
@@ -115,28 +539,46 @@ metrics_json = "{\"confirmedFindings\":2}"
 - `base`: base ref for merge-base calculation, default `origin/main`.
 - `head`: reviewed head ref, default `HEAD`.
 - `stateRoot`: optional state root override for tests or compatibility runs.
-- `models`: optional model list replacing the default five Codex reviewers.
+- `models`: optional model list replacing the default Codex agent set.
 - `synthesisModel`: model for prepare, synthesis, and record agents.
 - `dryRun`: when true, returns configuration without calling agents.
 
-The workflow returns the reviewed range, changed files, per-model review JSON,
-synthesized findings, and recording result.
+The next implementation revision should add these args:
+
+- `policyCacheRoot`: optional cache root for config-hash policy bundles.
+- `enableSem`: enable `sem diff` when `sem` is on `PATH`.
+- `enableLeta`: enable `leta` context when the workspace has an LSP.
+- `enableCodegraph`: enable codegraph build and diff-impact when installed.
+- `sarif`: optional list of SARIF files to ingest.
+- `maxDiscardLogEntries`: cap for recording full discarded candidates.
+
+The workflow returns the reviewed range, changed files, task graph, per-task
+agent results, synthesized findings, discarded-finding summary, and recording
+result.
 
 ## Metrics
 
 The initial metrics fit in the `metrics_json` field:
 
-- `reviewerCount`, `candidateFindings`, `confirmedFindings`, and
-  `duplicateFindingGroups` to evaluate ensemble behaviour.
-- `diffStat`, `commitCount`, and `changedFiles.length` to normalize review
-  density.
-- Per-reviewer `filesInspected`, `findingsProposed`, and
-  `falsePositiveRisks` to compare model roles over time.
+- `taskCount`, `taskType`, `assignedModel`, `candidateFindings`,
+  `confirmedFindings`, `discardedFindings`, and `discardReasonCounts`
+- `verificationSurvivalRate` by task type and model
+- `duplicateFindingGroups` and cross-agent duplicate rate
+- `diffStat`, `commitCount`, `changedFiles.length`, changed entity count, and
+  changed public API count
+- `staticFindings`, `staticFindingsIntersectingDiff`, and
+  `staticFindingsAccepted`
+- codegraph availability, graph quality, changed functions, affected callers,
+  affected files, new cycles, complexity threshold failures, and owner
+  boundary crossings
+- `contextPackBytes`, source excerpt count, cached policy hash, cached token
+  count, latency, and model
+- high-verification time per accepted finding
+- findings later overturned by humans, when feedback is available
 
-Future static-analysis enrichment should ingest SARIF from tools such as
-Semgrep and CodeQL, then record overlap between static findings and model
-findings. Future codegraph enrichment should record whether SCIP, LSP, or
-Tree-sitter context was available and whether it changed finding survival rate.
+These metrics support long-term evaluation of whether light agents are useful
+finders, which task types survive high verification, and whether static
+analysis or graph context improves confirmed-finding density.
 
 ## Verification
 
@@ -147,20 +589,38 @@ repositories and prove three behaviours:
 - A later prepare call skips commits already recorded in `reviews.toml`.
 - A prepare call at an already recorded head returns `alreadyReviewed = true`.
 
-The ODW script has a `dryRun` mode so syntax and metadata can be checked without
-launching review agents.
+The next implementation revision must add dry-run checks for:
+
+- stable config hash calculation
+- cache hit and cache miss behaviour
+- task graph dependency validity
+- rejection reason accounting
+- prompt pack ordering for prefix-cache stability
+
+The ODW script has a `dryRun` mode so syntax and metadata can be checked
+without launching review agents.
 
 ## Failure modes
 
-If `origin/main` is unavailable, callers should pass `base`. If no recorded head
-is an ancestor of `HEAD`, the helper warns and uses the merge base. If a record
-agent fails after synthesis, the returned review remains available in the ODW
-result but the next run may review the same commits again.
+If `origin/main` is unavailable, callers should pass `base`. If no recorded
+head is an ancestor of `HEAD`, the helper warns and uses the merge base. If a
+record agent fails after synthesis, the returned review remains available in
+the ODW result but the next run may review the same commits again.
+
+If CodeRabbit policy extraction fails, the workflow should continue with the
+raw YAML and mark policy cache status as `failed`. If `sem`, `leta`, codegraph,
+or SARIF inputs are unavailable, the planner records the missing tool and falls
+back to git diff plus source excerpts. Missing graph tooling must not suppress
+review.
+
+If light agents emit many weak candidates, high verification rejects them with
+auditable reasons and the metrics should lower future confidence for that task
+type and assignment.
 
 ## Editing pass notes
 
-The document keeps implementation defaults out of the design except where they
-define a contract: the TOML state format, ODW args, model set, and verification
-properties. Broader static-analysis and codegraph integration remains future
-work because it requires tool availability decisions not present in the initial
-repository.
+The document now treats divide-and-conquer as the production path and equal
+full-diff fan-out as an evaluation mode only. The design keeps implementation
+defaults out of the design except where they define contracts: state format,
+policy cache key, task graph, agent assignments, discard reasons, metrics, and
+verification properties.

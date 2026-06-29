@@ -1,6 +1,6 @@
 .PHONY: check check-fmt lint typecheck markdownlint nixie test
 
-MD_FILES := docs/design/initial-workflow.md docs/execplans/initial-workflow-build.md docs/execplans/initial-workflow-design.md
+MD_FILES := $(shell git ls-files '*.md')
 NODE_MODULES := scripts/review-state.mjs tests/review-state.test.mjs
 
 check: check-fmt lint typecheck markdownlint nixie test
@@ -17,7 +17,7 @@ typecheck:
 	@npm run odw:dry-run
 
 markdownlint:
-	@markdownlint-cli2 "**/*.md"
+	@markdownlint-cli2 $(MD_FILES)
 
 nixie:
 	@nixie $(MD_FILES)
