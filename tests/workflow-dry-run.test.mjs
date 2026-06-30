@@ -66,3 +66,28 @@ test('dry-run exposes routed workflow contract', () => {
   assert.equal(result.verdictSchema.properties.status.enum.includes('accepted'), true)
   assert.equal(result.synthesisSchema.properties.reportMarkdown.type, 'string')
 })
+
+test('dry-run routes requested reasoning through ODW adapters', () => {
+  const result = runDryRun({
+    models: [
+      { label: 'review-high', model: 'gpt-5.5', reasoning: 'high', role: 'high' },
+      { label: 'review-medium', model: 'gpt-5.5', reasoning: 'medium', role: 'medium' },
+      { label: 'review-mini', model: 'gpt-5.4-mini', reasoning: 'low', role: 'mini' },
+      { label: 'review-spark', model: 'gpt-5.3-codex-spark', reasoning: 'low', role: 'spark' },
+    ],
+    synthesisModel: 'gpt-5.5',
+    synthesisReasoning: 'medium',
+  })
+
+  const tasksByKind = new Map(result.defaultTaskGraph.map((task) => [task.kind, task]))
+  assert.equal(tasksByKind.get('source').adapter, 'codex-high')
+  assert.equal(tasksByKind.get('source').model, 'gpt-5.5')
+  assert.equal(tasksByKind.get('tests').adapter, 'codex-medium')
+  assert.equal(tasksByKind.get('tests').model, 'gpt-5.5')
+  assert.equal(tasksByKind.get('docs').adapter, 'codex-low')
+  assert.equal(tasksByKind.get('docs').model, 'gpt-5.4-mini')
+  assert.equal(tasksByKind.get('config').adapter, 'codex-low')
+  assert.equal(tasksByKind.get('review-summary').adapter, 'codex-low')
+  assert.equal(result.synthesisAdapter, 'codex-medium')
+  assert.equal(result.synthesisModel, 'gpt-5.5/medium')
+})
