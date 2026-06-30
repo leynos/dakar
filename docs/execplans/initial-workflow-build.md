@@ -171,8 +171,9 @@ node scripts/review-state.mjs prepare --repo-root . --base origin/main --head HE
 node scripts/review-state.mjs record < review-record.json
 ```
 
-`workflows/coderabbit-code-review.js` accepts ODW args `config`, `base`, `head`,
-`models`, `synthesisModel`, `maxFindings`, and `dryRun`.
+`workflows/coderabbit-code-review.js` accepts ODW args `config`, `repoRoot`,
+`base`, `head`, `stateRoot`, `agentInstructions`, `models`, `synthesisModel`,
+`synthesisReasoning`, `maxTasks`, `maxCandidates`, `maxFindings`, and `dryRun`.
 
 ## Revision note
 

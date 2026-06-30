@@ -145,10 +145,15 @@ function prepare(rawArgs) {
   const headRef = optionString(rawArgs, 'head', 'HEAD')
   const baseRef = optionString(rawArgs, 'base', 'origin/main')
   const headCommit = git(repoRoot, ['rev-parse', headRef])
-  const mergeBase = git(repoRoot, ['merge-base', baseRef, headCommit], true) || git(repoRoot, ['rev-parse', `${headCommit}^`], true)
+  const mergeBase = git(repoRoot, ['merge-base', baseRef, headCommit], true)
+  if (!mergeBase) {
+    throw new Error(`could not determine merge base for ${baseRef} and ${headCommit}`)
+  }
   const existing = readFile(stateFile)
   const reviewed = parseReviewedHeads(existing)
-  const lastReachable = [...reviewed].reverse().find((entry) => isAncestor(repoRoot, entry.head, headCommit))
+  const lastReachable = [...reviewed]
+    .reverse()
+    .find((entry) => isAncestor(repoRoot, mergeBase, entry.head) && isAncestor(repoRoot, entry.head, headCommit))
   const reviewBase = lastReachable ? lastReachable.head : mergeBase
   const commits = commitList(repoRoot, reviewBase, headCommit)
 
@@ -167,7 +172,7 @@ function prepare(rawArgs) {
     changedFiles: changedFiles(repoRoot, reviewBase, headCommit),
     diffStat: diffStat(repoRoot, reviewBase, headCommit),
     alreadyReviewed: commits.length === 0,
-    warnings: lastReachable || reviewed.length === 0 ? [] : ['review history exists but no recorded head is an ancestor of HEAD; using merge base'],
+    warnings: lastReachable || reviewed.length === 0 ? [] : ['review history exists but no recorded head is usable for the current merge base; using merge base'],
   }
 }
 
@@ -187,11 +192,47 @@ function tomlStringArray(values) {
   return `[${(values || []).map((value) => tomlString(value)).join(', ')}]`
 }
 
+function fieldValue(input, ...keys) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(input, key)) {
+      return input[key]
+    }
+  }
+  return undefined
+}
+
+function reviewHeadCommit(input) {
+  const value = fieldValue(input, 'headCommit', 'head_commit')
+  const text = String(value ?? '').trim()
+  if (!text) {
+    throw new Error('record input must include a non-empty headCommit')
+  }
+  if (!/^[0-9a-f]{7,40}$/iu.test(text)) {
+    throw new Error('record input headCommit must be a 7-40 character hexadecimal commit id')
+  }
+  return text.toLowerCase()
+}
+
+function integerField(input, camelKey, snakeKey) {
+  const rawValue = fieldValue(input, camelKey, snakeKey)
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    throw new Error(`record input must include ${camelKey} as a non-negative integer`)
+  }
+  const value = Number(rawValue)
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`record input ${camelKey} must be a non-negative integer`)
+  }
+  return value
+}
+
 function appendReview(input) {
   const rawStateFile = input.stateFile || input.state_file
   if (!rawStateFile) {
     throw new Error('record input must include stateFile')
   }
+  const headCommit = reviewHeadCommit(input)
+  const commitCount = integerField(input, 'commitCount', 'commit_count')
+  const findingsTotal = integerField(input, 'findingsTotal', 'findings_total')
   const stateFile = resolve(String(rawStateFile))
   mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 })
   const now = new Date().toISOString()
@@ -202,11 +243,11 @@ function appendReview(input) {
     `started_at = ${tomlString(input.startedAt || input.started_at || '')}`,
     `completed_at = ${tomlString(input.completedAt || input.completed_at || now)}`,
     `base_commit = ${tomlString(input.baseCommit || input.base_commit || '')}`,
-    `head_commit = ${tomlString(input.headCommit || input.head_commit || '')}`,
-    `commit_count = ${Number(input.commitCount || input.commit_count || 0)}`,
+    `head_commit = ${tomlString(headCommit)}`,
+    `commit_count = ${commitCount}`,
     `changed_files = ${tomlStringArray(input.changedFiles || input.changed_files || [])}`,
     `models = ${tomlStringArray(input.models || [])}`,
-    `findings_total = ${Number(input.findingsTotal || input.findings_total || 0)}`,
+    `findings_total = ${findingsTotal}`,
     `summary = ${tomlString(input.summary || '')}`,
     `metrics_json = ${tomlString(JSON.stringify(input.metrics || {}))}`,
     '',
@@ -216,7 +257,7 @@ function appendReview(input) {
     encoding: 'utf8',
     mode: 0o600,
   })
-  return { ok: true, stateFile, headCommit: input.headCommit || input.head_commit || '' }
+  return { ok: true, stateFile, headCommit }
 }
 
 async function readStdinJson() {

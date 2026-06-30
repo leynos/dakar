@@ -634,6 +634,29 @@ const synthesis = await agent(
   },
 )
 
+if (!synthesis || !Array.isArray(synthesis.findings) || !synthesis.metrics) {
+  return {
+    ok: false,
+    stage: 'synthesize',
+    error: 'synthesis step did not return a schema-compatible review result',
+    workflowVersion: WORKFLOW_VERSION,
+    config: CODE_RABBIT_CONFIG,
+    resolvedConfig,
+    stateFile: prepared.stateFile,
+    reviewBase: prepared.reviewBase,
+    headCommit: prepared.headCommit,
+    commitCount: prepared.commitCount,
+    changedFiles: prepared.changedFiles,
+    taskGraph,
+    taskResults,
+    candidates,
+    verdicts,
+    accepted,
+    discarded,
+    synthesis,
+  }
+}
+
 const metrics = {
   ...synthesis.metrics,
   workflowVersion: WORKFLOW_VERSION,

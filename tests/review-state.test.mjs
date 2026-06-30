@@ -46,6 +46,25 @@ function createRepo() {
   return repo
 }
 
+function createRepoWithAdvancedBase() {
+  const repo = mkdtempSync(join(tmpdir(), 'dakar-state-repo-'))
+  git(repo, ['init', '-b', 'main'])
+  git(repo, ['remote', 'add', 'origin', 'git@github.com:Acme/Widget.git'])
+  writeFileSync(join(repo, 'README.md'), '# Test\n')
+  git(repo, ['add', 'README.md'])
+  git(repo, ['commit', '-m', 'initial'])
+  const initial = git(repo, ['rev-parse', 'HEAD'])
+  writeFileSync(join(repo, 'base.txt'), 'base\n')
+  git(repo, ['add', 'base.txt'])
+  git(repo, ['commit', '-m', 'base'])
+  const mergeBase = git(repo, ['rev-parse', 'HEAD'])
+  git(repo, ['checkout', '-b', 'feature/advanced-base'])
+  writeFileSync(join(repo, 'feature.txt'), 'feature\n')
+  git(repo, ['add', 'feature.txt'])
+  git(repo, ['commit', '-m', 'feature'])
+  return { initial, mergeBase, repo }
+}
+
 test('prepare uses the merge base when no review history exists', () => {
   const repo = createRepo()
   const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))
@@ -64,9 +83,38 @@ test('record rejects input without a state file', () => {
   assert.throws(() => appendReview({ headCommit: 'abc123' }), /stateFile/u)
 })
 
+test('record rejects completed entries without a valid head commit', () => {
+  const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
+
+  assert.throws(() => appendReview({ stateFile, commitCount: 1, findingsTotal: 0 }), /headCommit/u)
+  assert.throws(
+    () => appendReview({ stateFile, headCommit: 'not-a-sha', commitCount: 1, findingsTotal: 0 }),
+    /headCommit/u,
+  )
+})
+
+test('record rejects completed entries with invalid counters', () => {
+  const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
+  const headCommit = 'a'.repeat(40)
+
+  assert.throws(() => appendReview({ stateFile, headCommit, findingsTotal: 0 }), /commitCount/u)
+  assert.throws(() => appendReview({ stateFile, headCommit, commitCount: 'many', findingsTotal: 0 }), /commitCount/u)
+  assert.throws(() => appendReview({ stateFile, headCommit, commitCount: 1, findingsTotal: 1.5 }), /findingsTotal/u)
+})
+
 test('prepare rejects raw missing option values', () => {
   const repo = createRepo()
   assert.throws(() => prepare({ 'repo-root': repo, base: true }), /--base requires a value/u)
+})
+
+test('prepare fails closed when the merge base cannot be resolved', () => {
+  const repo = createRepo()
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))
+
+  assert.throws(
+    () => prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'missing/base', head: 'HEAD' }),
+    /could not determine merge base/u,
+  )
 })
 
 test('CLI parser rejects missing option values', () => {
@@ -104,6 +152,31 @@ test('prepare skips commits already recorded in reviews.toml', () => {
   assert.equal(second.reviewBase, first.headCommit)
   assert.equal(second.commitCount, 1)
   assert.deepEqual(second.changedFiles, ['two.txt'])
+})
+
+test('prepare ignores recorded heads older than the current merge base', () => {
+  const { initial, mergeBase, repo } = createRepoWithAdvancedBase()
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))
+  const first = prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'main', head: 'HEAD' })
+
+  appendReview({
+    stateFile: first.stateFile,
+    reviewId: 'stale',
+    baseCommit: initial,
+    headCommit: initial,
+    commitCount: 1,
+    changedFiles: ['README.md'],
+    models: ['gpt-5.5-low'],
+    findingsTotal: 0,
+    summary: 'stale review',
+  })
+
+  const second = prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'main', head: 'HEAD' })
+  assert.equal(second.reviewBase, mergeBase)
+  assert.equal(second.lastReviewedHead, '')
+  assert.equal(second.commitCount, 1)
+  assert.deepEqual(second.changedFiles, ['feature.txt'])
+  assert.match(second.warnings[0], /current merge base/u)
 })
 
 test('prepare reports alreadyReviewed at a recorded head', () => {

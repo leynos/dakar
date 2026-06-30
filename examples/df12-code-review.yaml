@@ -211,8 +211,6 @@ reviews:
 
         - Follow single responsibility and CQRS (command/query segregation)
 
-        - Prefer structural pattern matching to 
-
         - Prefer structural pattern matching over `isinstance()` or imperative decomposition.
 
         - Docstrings must follow the `numpy` style guide. Use a single-line summary for private functions and methods,
@@ -324,8 +322,10 @@ reviews:
           locale.
       - mode: error
         name: Module-level documentation
-        instructions: All modules must carry a docstring clearly explaining the module's purpose, utility and function. The
-          documentation should also set out the module's relationship to other components if not obvious.
+        instructions: Language-specific source modules must carry appropriate module-level documentation clearly explaining
+          the module's purpose, utility and function. Rust modules use `//!`, JavaScript and TypeScript modules use
+          `/** @file ... */`, and Python modules use a triple-quoted module docstring. The documentation should also set
+          out the module's relationship to other components if not obvious.
       - mode: warning
         name: Testing (Unit and Behavioural)
         instructions: Unit tests must verify meaningful local behaviour, edge cases, error paths, and invariants. Behavioural
@@ -761,7 +761,7 @@ knowledge_base:
     filePatterns:
       - AGENTS.md
       - .rules/*.md
-      - docs/*.md
+      - docs/**/*.md
       - .cursor/*.mdc
       - .rules/*.mdc
   learnings:
