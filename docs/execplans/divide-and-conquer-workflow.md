@@ -128,6 +128,9 @@ findings, task metrics, and the review-history path.
   `npm run odw:dry-run`, live ODW smoke, and `make check` successfully.
 - [x] (2026-06-30T00:13:06Z) Updated this ExecPlan with validation evidence
   and marked it complete.
+- [x] (2026-06-30T01:12:00Z) Added optional CLI telemetry mode that starts ODW
+  in the background, follows live logs on standard error, then emits the final
+  workflow result on standard output.
 
 ## Surprises & discoveries
 
@@ -214,6 +217,13 @@ findings, task metrics, and the review-history path.
   choice while keeping `model` as a backend-supported plain model id.
   Date/Author: 2026-06-30T00:03:52Z / Codex.
 
+- Decision: Keep `dakar-review` telemetry opt-in and stderr-only.
+  Rationale: Agents and humans need visible ODW progress during long reviews,
+  but automation depends on standard output containing only the final workflow
+  result. Running ODW in the background and following logs preserves both use
+  cases without changing the default quiet mode.
+  Date/Author: 2026-06-30T01:12:00Z / Codex.
+
 ## Outcomes & retrospective
 
 The first routed divide-and-conquer review workflow is implemented. A user can
@@ -234,6 +244,9 @@ separate concerns. The built-in ODW Codex adapter forwards only `model`, so the
 repo now owns `odw.config.json` adapters for low, medium, and high reasoning.
 The second lesson is that ODW copy workspaces should be treated as read-only
 snapshots without git metadata; `repoRoot` is required for robust git evidence.
+The follow-up CLI lesson is that live supervision belongs on standard error:
+telemetry can satisfy interactive agents without weakening the JSON stdout
+contract.
 
 ## Context and orientation
 

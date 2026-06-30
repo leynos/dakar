@@ -78,6 +78,12 @@ standard error and exit non-zero. A successful review with accepted findings is
 still a successful CLI invocation; callers should inspect `findings` rather
 than rely on exit status for review verdicts.
 
+`--telemetry` is the only supported live-progress mode. It starts ODW in the
+background, follows `odw logs <run-id> --follow`, writes that stream to
+standard error, then fetches `odw result <run-id>` for the final output. Keep
+all progress, run ids, and log-follow warnings on standard error so standard
+output remains reserved for JSON or Markdown result data.
+
 When changing CLI arguments or output, update these places together:
 
 - `bin/dakar-review.mjs`;

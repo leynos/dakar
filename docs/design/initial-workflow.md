@@ -780,6 +780,13 @@ object is the workflow return value, without ODW's `running ...` progress line.
 `--format markdown` prints `reportMarkdown` when present, but JSON remains the
 stable machine interface.
 
+`--telemetry` is an opt-in supervision path for interactive agents. Instead of
+using `odw run --wait`, the CLI starts the ODW run in the background, extracts
+the run id, follows `odw logs <run-id> --follow`, and then fetches
+`odw result <run-id>`. All telemetry is written to standard error. This keeps
+the normal result stream deterministic while giving long-running agent reviews
+visible progress.
+
 `reportMarkdown` is intentionally presentation text. It is constrained by the
 synthesis prompt but does not have a deterministic schema or template in the
 current workflow. Machine consumers must use structured fields such as

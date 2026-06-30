@@ -86,6 +86,22 @@ Dry-run output includes the workflow version, default finder model set,
 synthesis model and adapter, task kinds, limits, default task graph, and JSON
 Schemas used for candidate, verifier, and synthesis handoffs.
 
+By default, `dakar-review` stays quiet until the workflow finishes so standard
+output is easy to parse. To watch ODW progress while keeping the final result
+machine-readable, pass `--telemetry`:
+
+```bash
+dakar-review --repo-root "$PWD" --base origin/main --telemetry
+```
+
+Telemetry follows `odw logs <run-id> --follow` and writes the live ODW event
+stream to standard error. The final JSON or Markdown result still goes to
+standard output, so callers can redirect the channels independently:
+
+```bash
+dakar-review --repo-root "$PWD" --telemetry > review.json
+```
+
 ## Review history
 
 Review history is stored outside the repository under the XDG state directory:

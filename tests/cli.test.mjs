@@ -24,6 +24,7 @@ test('CLI help documents review invocation', () => {
   assert.match(output, /Usage: dakar-review/u)
   assert.match(output, /--repo-root <path>/u)
   assert.match(output, /--format <json\|markdown>/u)
+  assert.match(output, /--telemetry/u)
 })
 
 test('CLI dry-run prints one machine-readable JSON result', () => {
@@ -52,6 +53,38 @@ test('CLI dry-run prints one machine-readable JSON result', () => {
   assert.equal(result.synthesisAdapter, 'codex-high')
   assert.equal(result.limits.maxTasks, 2)
   assert.match(result.config, /examples\/df12-code-review\.yaml$/u)
+})
+
+test('CLI telemetry streams ODW progress to stderr and keeps stdout JSON', () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      '--dry-run',
+      '--repo-root',
+      repoRoot,
+      '--runs-root',
+      runsRoot,
+      '--timeout',
+      '20',
+      '--telemetry',
+    ],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  const output = JSON.parse(result.stdout)
+
+  assert.equal(result.status, 0)
+  assert.equal(output.ok, true)
+  assert.equal(output.dryRun, true)
+  assert.match(result.stderr, /dakar-review: following ODW run \d{8}-\d{6}-[0-9a-f]+/u)
+  assert.match(result.stderr, /run_started/u)
 })
 
 test('CLI uses user config when repository config is absent', () => {
