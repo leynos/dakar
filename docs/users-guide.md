@@ -45,7 +45,7 @@ workspaces without `.git`.
 The equivalent direct ODW invocation is:
 
 ```bash
-odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar"}'
 ```
 
@@ -138,7 +138,7 @@ dakar-review \
 The equivalent direct ODW invocation is:
 
 ```bash
-odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state"}'
 ```
 
@@ -246,7 +246,7 @@ The following optional limits are supported:
 Example:
 
 ```bash
-odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","maxTasks":4,"maxFindings":5}'
 ```
 

@@ -11,7 +11,7 @@ Status: COMPLETE
 
 The goal is to replace the current equal full-diff fan-out review with a first
 usable routed review workflow. After this change, an agent working on a Dakar
-branch can run `odw` against `workflows/coderabbit-code-review.js` and receive
+branch can run `odw` against `workflows/dakar-review.js` and receive
 one actionable code-review report for only the commits that have not already
 been reviewed on that branch.
 
@@ -24,7 +24,7 @@ findings, task metrics, and the review-history path.
 
 ## Constraints
 
-- Keep `workflows/coderabbit-code-review.js` valid ODW workflow JavaScript:
+- Keep `workflows/dakar-review.js` valid ODW workflow JavaScript:
   literal `meta`, no workflow-level imports, injected primitives only, and
   schema-based handoffs for agent outputs.
 - Keep review range and XDG state behaviour delegated to
@@ -51,7 +51,7 @@ findings, task metrics, and the review-history path.
 - Size: if production JavaScript changes exceed roughly 350 net new lines,
   stop and propose a smaller first milestone.
 - Interface: if ODW requires a different public workflow invocation than
-  `odw run workflows/coderabbit-code-review.js --source . --wait`, stop and
+  `odw run workflows/dakar-review.js --source . --wait`, stop and
   escalate.
 - Dependencies: if any new npm package, global binary, hosted service, or
   database is required, stop and escalate.
@@ -108,7 +108,7 @@ findings, task metrics, and the review-history path.
   dry-run output had no `workflowVersion`.
 - [x] (2026-06-29T22:45:17Z) Implemented the routed task graph, scoped task
   prompts, dry-run contract, candidate normalization, verification, and report
-  synthesis in `workflows/coderabbit-code-review.js`.
+  synthesis in `workflows/dakar-review.js`.
 - [x] (2026-06-29T22:45:17Z) Documented user-facing behaviour in
   `docs/users-guide.md`, maintainer conventions in `docs/developers-guide.md`,
   and component architecture updates in `docs/design/initial-workflow.md`.
@@ -134,17 +134,17 @@ findings, task metrics, and the review-history path.
 
 ## Surprises & discoveries
 
-- Observation: The current `workflows/coderabbit-code-review.js` is still a
+- Observation: The current `workflows/dakar-review.js` is still a
   homogeneous fan-out design.
   Evidence: It maps every default model over the same `reviewPrompt(spec,
   prepared)` and sends each prompt the same review range and changed file list.
   Impact: The implementation can be focused in one workflow file while keeping
   `scripts/review-state.mjs` stable.
 
-- Observation: `node --check workflows/coderabbit-code-review.js` is not a
+- Observation: `node --check workflows/dakar-review.js` is not a
   valid syntax gate for ODW workflow files.
   Evidence: Node reports `SyntaxError: Illegal return statement` at the
-  top-level `return`, while `odw run workflows/coderabbit-code-review.js
+  top-level `return`, while `odw run workflows/dakar-review.js
   --source . --wait --timeout 20 --args '{"dryRun":true}'` succeeds.
   Impact: Workflow validation must use ODW dry-run rather than direct Node
   syntax checking.
@@ -227,7 +227,7 @@ findings, task metrics, and the review-history path.
 ## Outcomes & retrospective
 
 The first routed divide-and-conquer review workflow is implemented. A user can
-run `odw run workflows/coderabbit-code-review.js --source . --wait` with
+run `odw run workflows/dakar-review.js --source . --wait` with
 `repoRoot` pointing at their real checkout and receive a single JSON review
 result containing `reportMarkdown`, accepted findings, discarded candidates,
 task graph data, metrics, and review-history recording status.
@@ -257,7 +257,7 @@ runtime. An ODW file cannot import Node modules directly.
 
 The key files are:
 
-- `workflows/coderabbit-code-review.js`: the ODW workflow to update.
+- `workflows/dakar-review.js`: the ODW workflow to update.
 - `scripts/review-state.mjs`: a Node helper that computes the unreviewed git
   range and appends review entries to `reviews.toml`.
 - `tests/review-state.test.mjs`: current Node tests for the state helper.
@@ -297,9 +297,9 @@ such as `workflowVersion`, `taskKinds`, `defaultTaskGraph`, `candidateSchema`,
 workflow because dry-run only returns `ok`, `dryRun`, `config`, `base`, `head`,
 and `models`.
 
-Stage C updates `workflows/coderabbit-code-review.js`.
+Stage C updates `workflows/dakar-review.js`.
 
-The workflow keeps `meta.name = 'coderabbit-code-review'` and adds a planning
+The workflow keeps `meta.name = 'dakar-review'` and adds a planning
 phase after Prepare. It defines small schemas for task review candidates,
 verification verdicts, and final synthesis. It adds helper functions inside
 the workflow file:
@@ -372,7 +372,7 @@ not ok 1 - dry-run exposes routed workflow contract
 ```
 
 Then implement the workflow changes in
-`workflows/coderabbit-code-review.js` and run the focused test again:
+`workflows/dakar-review.js` and run the focused test again:
 
 ```bash
 node --test tests/workflow-dry-run.test.mjs
@@ -413,7 +413,7 @@ validation. No command in `make check` should require live model calls because
 For manual acceptance when model access is available, run:
 
 ```bash
-odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar"}'
 ```
 
@@ -456,7 +456,7 @@ The Red-Green-Refactor evidence must be recorded here during implementation:
 Live smoke command:
 
 ```bash
-odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar","stateRoot":"/tmp/dakar-review-smoke-adapters","maxTasks":1,"maxCandidates":1,"maxFindings":1}'
 ```
 
@@ -493,7 +493,7 @@ already skips a branch head that has been recorded.
 For live smoke tests, pass `stateRoot` to isolate review history:
 
 ```bash
-odw run workflows/coderabbit-code-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar","stateRoot":"/tmp/dakar-review-state"}'
 ```
 
@@ -527,11 +527,11 @@ than a bare config echo.
 
 ## Interfaces and dependencies
 
-`workflows/coderabbit-code-review.js` must expose the same ODW entrypoint:
+`workflows/dakar-review.js` must expose the same ODW entrypoint:
 
 ```javascript
 export const meta = {
-  name: 'coderabbit-code-review',
+  name: 'dakar-review',
   // ...
 }
 ```
@@ -578,7 +578,7 @@ The final live workflow return object must include:
 ```
 
 `tests/workflow-dry-run.test.mjs` should use Node built-ins only. It may invoke
-`npm run odw:dry-run` or `odw run workflows/coderabbit-code-review.js --source
+`npm run odw:dry-run` or `odw run workflows/dakar-review.js --source
 . --wait --timeout 20 --args '{"dryRun":true}'` and parse the JSON object from
 the command output.
 

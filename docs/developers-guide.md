@@ -26,13 +26,13 @@ node --test tests/workflow-dry-run.test.mjs
 npm run odw:dry-run
 ```
 
-Do not use `node --check workflows/coderabbit-code-review.js` as a workflow
+Do not use `node --check workflows/dakar-review.js` as a workflow
 syntax gate. ODW files permit top-level `return`, which ordinary Node syntax
 checking rejects. Use `odw run ... --args '{"dryRun":true}'` instead.
 
 ## 2. Workflow implementation conventions
 
-`workflows/coderabbit-code-review.js` must remain a pure ODW workflow file:
+`workflows/dakar-review.js` must remain a pure ODW workflow file:
 
 - keep a literal `meta` export;
 - do not add Node imports;
@@ -126,7 +126,7 @@ reports include only accepted findings.
 
 When adding a new task kind, update these places together:
 
-- `TASK_KINDS` in `workflows/coderabbit-code-review.js`;
+- `TASK_KINDS` in `workflows/dakar-review.js`;
 - `buildTaskGraph()` and `taskSpec()`;
 - the dry-run contract test in `tests/workflow-dry-run.test.mjs`;
 - the workflow contract section in `docs/design/initial-workflow.md`;

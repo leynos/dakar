@@ -18,7 +18,7 @@ function runDryRun(args = {}) {
     'odw',
     [
       'run',
-      'workflows/coderabbit-code-review.js',
+      'workflows/dakar-review.js',
       '--runs-root',
       runsRoot,
       '--source',

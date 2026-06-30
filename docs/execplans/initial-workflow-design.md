@@ -1,4 +1,4 @@
-# Design the incremental CodeRabbit ODW review workflow
+# Design the Dakar incremental ODW review workflow
 
 This ExecPlan (execution plan) is a living document. The sections
 `Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
@@ -170,7 +170,7 @@ https://tree-sitter.github.io/
 The design defines these build artefacts:
 
 - `scripts/review-state.mjs`: deterministic prepare/record helper.
-- `workflows/coderabbit-code-review.js`: ODW orchestrator.
+- `workflows/dakar-review.js`: ODW orchestrator.
 - `tests/review-state.test.mjs`: state-helper behaviour tests.
 
 ## Revision note

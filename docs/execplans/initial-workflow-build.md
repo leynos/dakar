@@ -1,4 +1,4 @@
-# Build the incremental CodeRabbit ODW review workflow
+# Build the Dakar incremental ODW review workflow
 
 This ExecPlan (execution plan) is a living document. The sections
 `Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
@@ -60,7 +60,7 @@ model set without launching reviewer agents.
   and `record` commands.
 - [x] (2026-06-29T17:57:30Z) Added `tests/review-state.test.mjs`.
 - [x] (2026-06-29T17:57:30Z) Added
-  `workflows/coderabbit-code-review.js`.
+  `workflows/dakar-review.js`.
 - [x] (2026-06-29T19:01:07Z) Ran `npm test`; all state-helper tests passed.
 - [x] (2026-06-29T19:01:07Z) Ran `npm run odw:dry-run`; ODW returned
   `dryRun: true` and the configured model set.
@@ -92,7 +92,7 @@ the ODW workflow loads in dry-run mode without launching reviewer agents.
 
 `scripts/review-state.mjs` owns review-history mechanics. Its `prepare` command
 calculates the review range and returns JSON. Its `record` command appends a
-TOML entry from JSON on stdin. `workflows/coderabbit-code-review.js` calls
+TOML entry from JSON on stdin. `workflows/dakar-review.js` calls
 agents in four phases: prepare, review, synthesize, and record.
 
 ## Plan of work
@@ -171,7 +171,7 @@ node scripts/review-state.mjs prepare --repo-root . --base origin/main --head HE
 node scripts/review-state.mjs record < review-record.json
 ```
 
-`workflows/coderabbit-code-review.js` accepts ODW args `config`, `repoRoot`,
+`workflows/dakar-review.js` accepts ODW args `config`, `repoRoot`,
 `base`, `head`, `stateRoot`, `agentInstructions`, `models`, `synthesisModel`,
 `synthesisReasoning`, `maxTasks`, `maxCandidates`, `maxFindings`, and `dryRun`.
 

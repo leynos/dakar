@@ -1,4 +1,4 @@
-# Dakar incremental CodeRabbit review workflow design
+# Dakar incremental review workflow design
 
 Status: First routed workflow pass implemented
 Audience: Developers implementing and operating Dakar workflows
@@ -674,8 +674,8 @@ metrics_json = "{\"confirmedFindings\":2,\"discardedFindings\":5}"
 
 ## Workflow contract
 
-`workflows/coderabbit-code-review.js` exposes `meta.name =
-"coderabbit-code-review"` and accepts these args in the first routed
+`workflows/dakar-review.js` exposes `meta.name =
+"dakar-review"` and accepts these args in the first routed
 implementation:
 
 - `config`: explicit CodeRabbit YAML path. When omitted, Dakar resolves

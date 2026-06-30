@@ -16,7 +16,7 @@ import { resolveReviewConfig } from '../scripts/review-config.mjs'
 import { appendReview } from '../scripts/review-state.mjs'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const workflowPath = join(packageRoot, 'workflows', 'coderabbit-code-review.js')
+const workflowPath = join(packageRoot, 'workflows', 'dakar-review.js')
 const odwConfigPath = join(packageRoot, 'odw.config.json')
 
 const OPTION_SPECS = new Map([
@@ -363,7 +363,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
 function usage() {
   return `Usage: dakar-review [options]
 
-Run Dakar's routed CodeRabbit review workflow and print the workflow result.
+Run Dakar's routed review workflow and print the workflow result.
 
 Options:
   --repo-root <path>          Git checkout to review (default: cwd)

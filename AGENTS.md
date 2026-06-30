@@ -3,7 +3,7 @@
 This repository builds Dakar, an Open Dynamic Workflows (ODW) code-review
 workflow and installable `dakar-review` CLI.
 
-- `workflows/coderabbit-code-review.js` is an ODW workflow file. Before editing
+- `workflows/dakar-review.js` is an ODW workflow file. Before editing
   or reviewing it, load and follow the `odw-authoring` skill so the workflow
   dialect, injected primitives, schema contracts, workspace mode, and
   validation expectations are understood.
