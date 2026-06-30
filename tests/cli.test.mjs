@@ -1,5 +1,13 @@
+/**
+ * @file Verify the installable Dakar review CLI contract.
+ *
+ * The tests cover argument help, dry-run JSON output, telemetry channel
+ * separation, configuration resolution, review-history recovery, and local Bun
+ * installation behaviour.
+ */
+
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -53,6 +61,7 @@ test('CLI dry-run prints one machine-readable JSON result', () => {
   assert.equal(result.synthesisAdapter, 'codex-high')
   assert.equal(result.limits.maxTasks, 2)
   assert.match(result.config, /examples\/df12-code-review\.yaml$/u)
+  assert.equal(result.agentInstructionsIncluded, true)
 })
 
 test('CLI telemetry streams ODW progress to stderr and keeps stdout JSON', () => {
@@ -111,6 +120,89 @@ test('CLI uses user config when repository config is absent', () => {
 
   assert.equal(result.ok, true)
   assert.equal(result.config, userConfig)
+})
+
+test('CLI rejects missing explicit config paths before ODW starts', () => {
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--dry-run', '--repo-root', repoRoot, '--config', 'does-not-exist.yaml'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  const error = JSON.parse(result.stderr)
+
+  assert.equal(result.status, 1)
+  assert.equal(error.stage, 'cli')
+  assert.match(error.error, /explicit config does not exist/u)
+})
+
+test('CLI includes repository AGENTS.md instructions in workflow args', () => {
+  const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-agents-repo-'))
+  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  writeFileSync(join(targetRepo, 'AGENTS.md'), '# Agent Instructions\n\nRespect local review policy.\n')
+
+  const output = runCli(
+    [
+      '--dry-run',
+      '--repo-root',
+      targetRepo,
+      '--runs-root',
+      runsRoot,
+      '--timeout',
+      '20',
+    ],
+    { env: { XDG_CONFIG_HOME: xdgConfig } },
+  )
+  const result = JSON.parse(output)
+
+  assert.equal(result.ok, true)
+  assert.equal(result.agentInstructionsIncluded, true)
+})
+
+test('CLI recovers review-history recording when ODW record phase fails', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-recovery-'))
+  const stateFile = join(tempRoot, 'state', 'reviews.toml')
+  const fakeOdw = join(tempRoot, 'odw')
+  const fakeResult = {
+    ok: false,
+    stage: 'record',
+    stateFile,
+    reviewBase: 'a'.repeat(40),
+    headCommit: 'b'.repeat(40),
+    commitCount: 1,
+    changedFiles: ['src/example.js'],
+    findings: [],
+    reportMarkdown: '## Verdict: Pass\n\nNo accepted findings.',
+    metrics: {
+      modelAssignments: [{ model: 'gpt-5.5/high' }],
+    },
+    recorded: { ok: false },
+  }
+  writeFileSync(
+    fakeOdw,
+    `#!/bin/sh\nprintf 'running fake-run ...\\n%s\\n' '${JSON.stringify(fakeResult).replace(/'/g, "'\"'\"'")}'\n`,
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const output = runCli([
+    '--repo-root',
+    repoRoot,
+    '--odw-bin',
+    fakeOdw,
+    '--runs-root',
+    join(tempRoot, 'runs'),
+  ])
+  const result = JSON.parse(output)
+  const stateText = readFileSync(stateFile, 'utf8')
+
+  assert.equal(result.ok, true)
+  assert.equal(result.recorded.ok, true)
+  assert.equal(result.recorded.recoveredBy, 'dakar-review')
+  assert.match(stateText, /head_commit = "bbbb/u)
 })
 
 test('package installs a callable CLI with Bun global install', (t) => {

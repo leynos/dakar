@@ -1,3 +1,11 @@
+/**
+ * @file Route CodeRabbit-guided incremental review work through ODW agents.
+ *
+ * The workflow computes the unreviewed range, fans scoped review tasks out to
+ * Codex agents, verifies candidate findings, synthesizes the accepted review,
+ * and records completed heads in Dakar's XDG state history.
+ */
+
 export const meta = {
   name: 'coderabbit-code-review',
   description:
@@ -21,6 +29,7 @@ const CONFIG_ARG = cfg.config || ''
 const CONFIG_ARG_OPTION = CONFIG_ARG ? ` --config ${shellWord(CONFIG_ARG)}` : ''
 let CODE_RABBIT_CONFIG = CONFIG_ARG || 'auto'
 const REPO_ROOT = cfg.repoRoot || '.'
+const AGENT_INSTRUCTIONS = cfg.agentInstructions || null
 const BASE_REF = cfg.base || 'origin/main'
 const HEAD_REF = cfg.head || 'HEAD'
 const STATE_ROOT_ARG = cfg.stateRoot ? ` --state-root ${shellWord(cfg.stateRoot)}` : ''
@@ -186,6 +195,9 @@ const RECORD_SCHEMA = {
     ok: { type: 'boolean' },
     stateFile: { type: 'string' },
     headCommit: { type: 'string' },
+    error: { type: 'string' },
+    stdout: { type: 'string' },
+    stderr: { type: 'string' },
   },
   required: ['ok'],
 }
@@ -217,6 +229,20 @@ function shellWord(value) {
 
 function modelForRole(role) {
   return REVIEW_MODELS.find((spec) => spec.role === role) || REVIEW_MODELS[0]
+}
+
+function agentInstructionsBlock() {
+  if (!AGENT_INSTRUCTIONS || !AGENT_INSTRUCTIONS.content) {
+    return 'Repository AGENTS.md: none found at the repository root.'
+  }
+  return [
+    `Repository AGENTS.md source: ${AGENT_INSTRUCTIONS.source || 'AGENTS.md'}`,
+    AGENT_INSTRUCTIONS.truncated ? 'Repository AGENTS.md was truncated for prompt size.' : '',
+    'Treat these as repository-local instructions when they do not conflict with the Dakar workflow schema, output, and safety rules:',
+    AGENT_INSTRUCTIONS.content,
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function classifyPath(path) {
@@ -315,6 +341,8 @@ function taskPrompt(task, prepared) {
     `Changed files for this task: ${files}`,
     `Maximum findings from this task: ${task.maxFindings}`,
     '',
+    agentInstructionsBlock(),
+    '',
     'Instructions:',
     '1. Apply CodeRabbit path instructions, pre-merge checks, review tone, and labels from the YAML file.',
     '2. Inspect only the changed range and files assigned to this task.',
@@ -385,6 +413,8 @@ function verificationPrompt(candidate, prepared) {
     `Review range: ${prepared.reviewBase}..${prepared.headCommit}`,
     `CodeRabbit YAML: ${CODE_RABBIT_CONFIG}`,
     '',
+    agentInstructionsBlock(),
+    '',
     'Verification rules:',
     '1. Accept only if the issue is in scope for the changed range and actionable.',
     '2. Reject findings whose evidence does not match the current source, diff, or policy.',
@@ -407,33 +437,50 @@ function discardReasonCounts(discarded) {
 
 function acceptedFromVerdicts(candidates, verdicts) {
   const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]))
-  return verdicts
-    .filter(Boolean)
-    .filter((verdict) => verdict.status === 'accepted' || verdict.status === 'severity_downgraded')
-    .map((verdict) => {
-      const candidate = byId.get(verdict.candidateId)
-      return {
-        ...candidate,
-        severity: verdict.acceptedSeverity || candidate.severity,
-        verificationStatus: verdict.status,
-        verificationReason: verdict.reason,
-        evidenceChecked: verdict.evidenceChecked,
-      }
+  const accepted = []
+  for (const verdict of verdicts.filter(Boolean)) {
+    if (verdict.status !== 'accepted' && verdict.status !== 'severity_downgraded') {
+      continue
+    }
+    const candidate = byId.get(verdict.candidateId)
+    if (!candidate) {
+      continue
+    }
+    accepted.push({
+      ...candidate,
+      severity: verdict.acceptedSeverity || candidate.severity,
+      verificationStatus: verdict.status,
+      verificationReason: verdict.reason,
+      evidenceChecked: verdict.evidenceChecked,
     })
-    .slice(0, MAX_FINDINGS)
+  }
+  return accepted.slice(0, MAX_FINDINGS)
 }
 
 function discardedFromVerdicts(candidates, verdicts) {
   const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]))
-  return verdicts
-    .filter(Boolean)
-    .filter((verdict) => verdict.status !== 'accepted' && verdict.status !== 'severity_downgraded')
-    .map((verdict) => ({
-      candidate: byId.get(verdict.candidateId),
-      status: verdict.status,
-      reason: verdict.reason,
-      evidenceChecked: verdict.evidenceChecked,
-    }))
+  const discarded = []
+  for (const verdict of verdicts.filter(Boolean)) {
+    const candidate = byId.get(verdict.candidateId)
+    if (!candidate) {
+      discarded.push({
+        candidate: { candidateId: verdict.candidateId },
+        status: 'unknown_candidate',
+        reason: `Verifier referenced an unknown candidate id: ${verdict.candidateId}`,
+        evidenceChecked: verdict.evidenceChecked || '',
+      })
+      continue
+    }
+    if (verdict.status !== 'accepted' && verdict.status !== 'severity_downgraded') {
+      discarded.push({
+        candidate,
+        status: verdict.status,
+        reason: verdict.reason,
+        evidenceChecked: verdict.evidenceChecked,
+      })
+    }
+  }
+  return discarded
 }
 
 if (cfg.dryRun === true) {
@@ -458,6 +505,7 @@ if (cfg.dryRun === true) {
     candidateSchema: CANDIDATE_SCHEMA,
     verdictSchema: VERDICT_SCHEMA,
     synthesisSchema: SYNTHESIS_SCHEMA,
+    agentInstructionsIncluded: Boolean(AGENT_INSTRUCTIONS && AGENT_INSTRUCTIONS.content),
   }
 }
 
@@ -491,7 +539,7 @@ const prepared = await agent(
     'Run the deterministic Dakar state helper and return its JSON result exactly.',
     '',
     'Command:',
-    `node scripts/review-state.mjs prepare --repo-root ${shellWord(REPO_ROOT)} --base ${BASE_REF} --head ${HEAD_REF}${STATE_ROOT_ARG}`,
+    `node scripts/review-state.mjs prepare --repo-root ${shellWord(REPO_ROOT)} --base ${shellWord(BASE_REF)} --head ${shellWord(HEAD_REF)}${STATE_ROOT_ARG}`,
     '',
     'Do not edit files. If the command fails, explain the failure in schema-compatible JSON with ok=false.',
   ].join('\n'),
@@ -565,6 +613,9 @@ const synthesis = await agent(
     '',
     `Review range: ${prepared.reviewBase}..${prepared.headCommit}`,
     `Changed files: ${(prepared.changedFiles || []).join(', ')}`,
+    '',
+    agentInstructionsBlock(),
+    '',
     `Accepted candidates:\n${JSON.stringify(accepted, null, 2)}`,
     `Discarded candidate summary:\n${JSON.stringify(discardReasonCounts(discarded), null, 2)}`,
     '',
@@ -618,12 +669,12 @@ const recorded = await agent(
   [
     'Record the completed review in Dakar review history by passing this JSON to the helper on stdin.',
     'Return the helper JSON output exactly.',
+    'If the command fails, return ok=false with an error, stdout, and stderr.',
     '',
-    'Command pattern:',
-    "cat > /tmp/dakar-review-record.json <<'JSON'",
+    'Command:',
+    "node scripts/review-state.mjs record <<'JSON'",
     JSON.stringify(recordInput, null, 2),
     'JSON',
-    'node scripts/review-state.mjs record < /tmp/dakar-review-record.json',
   ].join('\n'),
   {
     label: 'state-record',
@@ -636,6 +687,8 @@ const recorded = await agent(
 
 return {
   ok: recorded && recorded.ok === true,
+  stage: recorded && recorded.ok === true ? undefined : 'record',
+  error: recorded && recorded.ok === true ? undefined : recorded?.error || 'failed to record review history',
   workflowVersion: WORKFLOW_VERSION,
   config: CODE_RABBIT_CONFIG,
   resolvedConfig,
@@ -653,4 +706,5 @@ return {
   reportMarkdown: synthesis.reportMarkdown,
   metrics,
   recorded,
+  recordInput,
 }

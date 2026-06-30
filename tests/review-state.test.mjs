@@ -1,7 +1,15 @@
+/**
+ * @file Exercise Dakar's review-history preparation and recording helper.
+ *
+ * The tests build small git repositories to verify incremental range
+ * calculation, XDG state path construction, TOML recording, and CLI argument
+ * validation around the helper used by the ODW workflow.
+ */
+
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -54,6 +62,24 @@ test('prepare uses the merge base when no review history exists', () => {
 
 test('record rejects input without a state file', () => {
   assert.throws(() => appendReview({ headCommit: 'abc123' }), /stateFile/u)
+})
+
+test('prepare rejects raw missing option values', () => {
+  const repo = createRepo()
+  assert.throws(() => prepare({ 'repo-root': repo, base: true }), /--base requires a value/u)
+})
+
+test('CLI parser rejects missing option values', () => {
+  const repo = createRepo()
+  assert.throws(
+    () =>
+      execFileSync(process.execPath, [resolve('scripts/review-state.mjs'), 'prepare', '--repo-root', repo, '--base'], {
+        cwd: resolve(new URL('..', import.meta.url).pathname),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    /--base requires a value/u,
+  )
 })
 
 test('prepare skips commits already recorded in reviews.toml', () => {

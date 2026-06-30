@@ -1,13 +1,26 @@
+/**
+ * @file Validate the ODW dry-run contract exposed by the review workflow.
+ *
+ * The tests launch the workflow in dry-run mode so schema and routing metadata
+ * stay executable without dispatching live review agents.
+ */
+
 import { execFileSync } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
 function runDryRun(args = {}) {
+  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-odw-dry-run-'))
   const output = execFileSync(
     'odw',
     [
       'run',
       'workflows/coderabbit-code-review.js',
+      '--runs-root',
+      runsRoot,
       '--source',
       '.',
       '--wait',

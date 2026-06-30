@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Prepare and record Dakar code-review history.
+ * @file Prepare and record Dakar code-review history.
  *
  * The helper keeps ODW workflow JavaScript free of filesystem and git imports.
  * It computes the next unreviewed commit range from git plus reviews.toml, then
@@ -26,13 +26,23 @@ function parseArgs(argv) {
     const key = token.slice(2)
     const next = argv[index + 1]
     if (next === undefined || next.startsWith('--')) {
-      args[key] = true
-      continue
+      throw new Error(`--${key} requires a value`)
     }
     args[key] = next
     index += 1
   }
   return args
+}
+
+function optionString(rawArgs, key, fallback = '') {
+  const value = rawArgs[key]
+  if (value === undefined || value === null || value === '') {
+    return fallback
+  }
+  if (value === true) {
+    throw new Error(`--${key} requires a value`)
+  }
+  return String(value)
 }
 
 function git(repoRoot, args, allowFailure = false) {
@@ -123,17 +133,17 @@ function diffStat(repoRoot, baseCommit, headCommit) {
 }
 
 function prepare(rawArgs) {
-  const repoRoot = resolve(String(rawArgs['repo-root'] || process.cwd()))
+  const repoRoot = resolve(optionString(rawArgs, 'repo-root', process.cwd()))
   const remoteUrl = git(repoRoot, ['remote', 'get-url', 'origin'], true)
   const { owner, name } = remoteOwnerName(remoteUrl)
   const branch = git(repoRoot, ['branch', '--show-current'], true) || 'detached'
-  const branchSlug = slug(String(rawArgs.branch || branch))
-  const stateRoot = xdgStateRoot(rawArgs['state-root'])
+  const branchSlug = slug(optionString(rawArgs, 'branch', branch))
+  const stateRoot = xdgStateRoot(optionString(rawArgs, 'state-root'))
   const stateFile = rawArgs['state-file']
-    ? resolve(String(rawArgs['state-file']))
+    ? resolve(optionString(rawArgs, 'state-file'))
     : stateFilePath({ stateRoot, owner, name, branchSlug })
-  const headRef = String(rawArgs.head || 'HEAD')
-  const baseRef = String(rawArgs.base || 'origin/main')
+  const headRef = optionString(rawArgs, 'head', 'HEAD')
+  const baseRef = optionString(rawArgs, 'base', 'origin/main')
   const headCommit = git(repoRoot, ['rev-parse', headRef])
   const mergeBase = git(repoRoot, ['merge-base', baseRef, headCommit], true) || git(repoRoot, ['rev-parse', `${headCommit}^`], true)
   const existing = readFile(stateFile)

@@ -1,4 +1,12 @@
 #!/usr/bin/env node
+/**
+ * @file Resolve Dakar's CodeRabbit-compatible review configuration.
+ *
+ * The helper is shared by the installable CLI and the ODW workflow. It keeps
+ * configuration precedence deterministic and reports the paths considered so a
+ * review result can explain which policy file shaped the run.
+ */
+
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -17,7 +25,17 @@ export function resolveReviewConfig({
 
   if (config) {
     const explicit = isAbsolute(config) ? config : resolve(resolvedRepoRoot, config)
-    return { ok: true, config: explicit, source: 'explicit', checked }
+    checked.push(explicit)
+    if (existsSync(explicit)) {
+      return { ok: true, config: explicit, source: 'explicit', checked }
+    }
+    return {
+      ok: false,
+      config: explicit,
+      source: 'explicit',
+      checked,
+      error: `explicit config does not exist: ${explicit}`,
+    }
   }
 
   for (const candidate of DEFAULT_REPO_CONFIGS) {

@@ -27,7 +27,7 @@ findings, task metrics, and the review-history path.
 - Keep `workflows/coderabbit-code-review.js` valid ODW workflow JavaScript:
   literal `meta`, no workflow-level imports, injected primitives only, and
   schema-based handoffs for agent outputs.
-- Keep review range and XDG state behavior delegated to
+- Keep review range and XDG state behaviour delegated to
   `scripts/review-state.mjs`; do not reimplement git or filesystem logic in the
   ODW workflow.
 - Keep the workflow read-only with respect to repository files. The only
@@ -475,7 +475,7 @@ Quality criteria:
 - A live ODW run with model access returns one `reportMarkdown` string and
   machine-readable findings/discards for the unreviewed range.
 - Running the workflow twice at the same `HEAD` skips the second run through
-  existing review-history behavior.
+  existing review-history behaviour.
 
 Quality method:
 

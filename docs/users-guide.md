@@ -75,6 +75,11 @@ the repository's `.git` directory, so live review runs should pass `repoRoot`
 as an absolute path. Finder and verifier prompts use `git -C <repoRoot>` for
 diff evidence, and the prepare step passes the same path to the state helper.
 
+If the reviewed repository has a root `AGENTS.md`, `dakar-review` passes it to
+the workflow as repository-local review context. Workflow schema rules,
+machine-readable output requirements, and Dakar safety rules still take
+precedence over repository instructions.
+
 For a syntax and contract check that does not call review agents, run either:
 
 ```bash
@@ -217,6 +222,13 @@ error object to standard error:
 If the workflow returns `ok: false`, the CLI prints that workflow JSON and exits
 non-zero. Accepted findings do not make the CLI exit non-zero; they mean the
 review succeeded and found actionable issues.
+
+If ODW completes the review but the workflow's record phase fails, the CLI
+attempts one deterministic local recovery by calling Dakar's state helper
+directly. A recovered result has `recorded.recoveredBy: "dakar-review"` and
+`metrics.recordRecoveredByCli: true`. If recovery also fails, the result keeps
+`stage: "record"` and exits non-zero so the caller knows the same commit range
+may be reviewed again.
 
 ## Routing and limits
 

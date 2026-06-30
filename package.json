@@ -10,6 +10,6 @@
     "test": "node --test",
     "test:state": "node --test tests/review-state.test.mjs",
     "test:cli": "node --test tests/cli.test.mjs",
-    "odw:dry-run": "odw run workflows/coderabbit-code-review.js --source . --wait --timeout 20 --args '{\"dryRun\":true}'"
+    "odw:dry-run": "sh -c 'runs_root=$(mktemp -d); odw run workflows/coderabbit-code-review.js --runs-root \"$runs_root\" --source . --wait --timeout 20 --args '\\''{\"dryRun\":true}'\\'''"
   }
 }

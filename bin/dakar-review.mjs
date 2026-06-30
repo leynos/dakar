@@ -1,9 +1,19 @@
 #!/usr/bin/env node
+/**
+ * @file Run Dakar's ODW review workflow from an installable CLI.
+ *
+ * The command preserves a parseable stdout result for automation while handling
+ * repository-local configuration, AGENTS.md context, live ODW telemetry, and
+ * deterministic review-history recovery around the workflow runtime.
+ */
+
 import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { resolveReviewConfig } from '../scripts/review-config.mjs'
+import { appendReview } from '../scripts/review-state.mjs'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workflowPath = join(packageRoot, 'workflows', 'coderabbit-code-review.js')
@@ -82,10 +92,31 @@ function extractRunId(text) {
   return match[0]
 }
 
+function readAgentInstructions(repoRoot) {
+  const agentsPath = join(repoRoot, 'AGENTS.md')
+  if (!existsSync(agentsPath)) {
+    return null
+  }
+  const content = readFileSync(agentsPath, 'utf8')
+  return {
+    source: agentsPath,
+    content: content.slice(0, 24_000),
+    truncated: content.length > 24_000,
+  }
+}
+
 function buildWorkflowArgs(options, repoRoot) {
+  const resolvedConfig = resolveReviewConfig({ repoRoot, config: options.config, packageRoot })
+  if (resolvedConfig.ok === false) {
+    throw new Error(resolvedConfig.error || `could not resolve review config: ${resolvedConfig.config}`)
+  }
+  const agentInstructions = readAgentInstructions(repoRoot)
   const workflowArgs = {
-    config: resolveReviewConfig({ repoRoot, config: options.config, packageRoot }).config,
+    config: resolvedConfig.config,
     repoRoot,
+  }
+  if (agentInstructions) {
+    workflowArgs.agentInstructions = agentInstructions
   }
   for (const [optionKey, workflowKey] of [
     ['base', 'base'],
@@ -143,6 +174,72 @@ function printWorkflowOutput(output, format) {
   }
 }
 
+function summarizeReport(output) {
+  const markdown = String(output.reportMarkdown || '').trim()
+  if (!markdown) {
+    return 'Dakar review completed.'
+  }
+  return markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('#')) || 'Dakar review completed.'
+}
+
+function recordInputFromOutput(output) {
+  return output.recordInput || {
+    stateFile: output.stateFile,
+    reviewId: `${String(output.headCommit || 'unknown').slice(0, 12)}-${Date.now()}-cli`,
+    baseCommit: output.reviewBase,
+    headCommit: output.headCommit,
+    commitCount: output.commitCount || 0,
+    changedFiles: output.changedFiles || [],
+    models: (output.metrics?.modelAssignments || []).map((assignment) => assignment.model).filter(Boolean),
+    findingsTotal: Array.isArray(output.findings) ? output.findings.length : 0,
+    summary: output.summary || summarizeReport(output),
+    metrics: {
+      ...(output.metrics || {}),
+      recordRecoveredByCli: true,
+    },
+  }
+}
+
+function recoverRecordFailure(output) {
+  if (
+    !output ||
+    output.dryRun ||
+    output.skipped ||
+    output.recorded?.ok === true ||
+    (output.stage !== 'record' && output.recorded?.ok !== false) ||
+    !output.stateFile ||
+    !output.headCommit ||
+    (output.stage && output.stage !== 'record')
+  ) {
+    return output
+  }
+  try {
+    const recorded = appendReview(recordInputFromOutput(output))
+    output.recorded = { ...recorded, recoveredBy: 'dakar-review' }
+    output.metrics = {
+      ...(output.metrics || {}),
+      recordRecoveredByCli: true,
+    }
+    output.ok = true
+    delete output.stage
+    delete output.error
+  } catch (error) {
+    output.ok = false
+    output.stage = 'record'
+    output.error = error.message
+    output.recorded = {
+      ...(output.recorded || {}),
+      ok: false,
+      error: error.message,
+      recoveryAttemptedBy: 'dakar-review',
+    }
+  }
+  return output
+}
+
 function runOdwQuiet(options, workflowArgs) {
   const result = spawnSync(options.odwBin || 'odw', buildOdwRunArgs(options, workflowArgs, true), {
     encoding: 'utf8',
@@ -160,7 +257,7 @@ function runOdwQuiet(options, workflowArgs) {
     return { status: result.status || 1 }
   }
 
-  return { output: extractJson(result.stdout) }
+  return { output: recoverRecordFailure(extractJson(result.stdout)) }
 }
 
 function followOdwLogs(odwBin, args, timeoutMs) {
@@ -196,7 +293,7 @@ async function waitForOdwResult(options, runId, timeoutMs = (options.timeout || 
       maxBuffer: 64 * 1024 * 1024,
     })
     if (result.status === 0) {
-      return extractJson(result.stdout)
+      return recoverRecordFailure(extractJson(result.stdout))
     }
     lastError = result.stderr.trim() || result.stdout.trim()
     if (Date.now() >= deadline) {

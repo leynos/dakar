@@ -2,8 +2,9 @@
 
 This guide is for maintainers working on Dakar's local ODW review workflow.
 The primary architecture reference is
-[`docs/design/initial-workflow.md`](design/initial-workflow.md), and delivery
-plans live under [`docs/execplans/`](execplans/).
+[`docs/dakar-review-design.md`](dakar-review-design.md). The initial design
+record remains at [`docs/design/initial-workflow.md`](design/initial-workflow.md),
+and delivery plans live under [`docs/execplans/`](execplans/).
 
 ## 1. Local validation
 
@@ -66,6 +67,10 @@ and pass the reviewed repository as the workflow `repoRoot` argument. This is
 intentional: globally installed agents need Dakar's workflow, state helper, and
 `odw.config.json` to be available even when they review another checkout.
 
+When the reviewed repository has a root `AGENTS.md`, the CLI should pass its
+content as `agentInstructions`. Keep this as context for review agents, not as
+an override for Dakar's schema, output, or safety rules.
+
 `scripts/review-config.mjs` owns CodeRabbit configuration resolution for both
 the CLI and workflow. Keep this precedence stable unless the user-facing
 contract changes: explicit `--config`, repository-local CodeRabbit YAML,
@@ -78,6 +83,12 @@ standard error and exit non-zero. A successful review with accepted findings is
 still a successful CLI invocation; callers should inspect `findings` rather
 than rely on exit status for review verdicts.
 
+If a workflow result contains a completed review but `recorded.ok` is false,
+the CLI should attempt exactly one deterministic record recovery through
+`scripts/review-state.mjs`. Preserve `recorded.recoveredBy` and
+`metrics.recordRecoveredByCli` so later evaluation can distinguish native ODW
+recording from CLI repair.
+
 `--telemetry` is the only supported live-progress mode. It starts ODW in the
 background, follows `odw logs <run-id> --follow`, writes that stream to
 standard error, then fetches `odw result <run-id>` for the final output. Keep
@@ -89,7 +100,7 @@ When changing CLI arguments or output, update these places together:
 - `bin/dakar-review.mjs`;
 - `tests/cli.test.mjs`;
 - `docs/users-guide.md`;
-- the workflow contract section in `docs/design/initial-workflow.md` when the
+- the workflow contract section in `docs/dakar-review-design.md` when the
   underlying ODW result changes.
 
 ## 4. Routed review conventions
