@@ -253,6 +253,42 @@ test('install script installs a callable CLI with Bun', (t) => {
   assert.equal(output.trim(), '0.1.0')
 })
 
+test('install script repairs stale duplicate Bun global entries', (t) => {
+  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8' })
+  if (bunCheck.status !== 0) {
+    t.skip('bun is not installed')
+    return
+  }
+
+  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
+  const globalDir = join(bunInstall, 'install', 'global')
+  mkdirSync(globalDir, { recursive: true })
+  writeFileSync(
+    join(globalDir, 'package.json'),
+    '{\n  "dependencies": {\n    "dakar": "/tmp/old",\n    "dakar": "/tmp/older"\n  }\n}\n',
+  )
+  writeFileSync(
+    join(globalDir, 'bun.lock'),
+    '{\n  "packages": {\n    "dakar": ["old"],\n    "dakar": ["older"]\n  }\n}\n',
+  )
+
+  const result = spawnSync(installPath, {
+    cwd: repoRoot,
+    env: { ...process.env, BUN_INSTALL: bunInstall },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const combinedOutput = `${result.stdout}\n${result.stderr}`
+
+  assert.equal(result.status, 0, combinedOutput)
+  assert.doesNotMatch(combinedOutput, /Duplicate key|Duplicate package path/u)
+  assert.equal((readFileSync(join(globalDir, 'package.json'), 'utf8').match(/"dakar"\s*:/gu) || []).length, 1)
+  assert.equal(
+    execFileSync(join(bunInstall, 'bin', 'dakar-review'), ['--version'], { encoding: 'utf8' }).trim(),
+    '0.1.0',
+  )
+})
+
 test('install script help does not install', () => {
   const output = execFileSync(installPath, ['--help'], {
     cwd: repoRoot,

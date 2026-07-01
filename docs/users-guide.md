@@ -17,6 +17,9 @@ The installer calls Bun with the absolute checkout path and exposes
 `dakar-review`. The package remains private; the command is meant for local or
 git-based installation, not npm publication. `install.sh` accepts no install
 arguments; run `./install.sh --help` for its short usage text.
+Repeated installer runs remove Dakar's stale entry from Bun's global manifest
+and discard a Dakar-bearing global Bun lockfile before reinstalling, so a
+previous interrupted install does not leave duplicate `dakar` entries behind.
 
 If you prefer to call Bun directly, use an absolute path or `file:` URL:
 
