@@ -110,8 +110,8 @@ reviews:
 
         - Use ESM for source modules and public library surfaces.
 
-        - Prefer Bun for JavaScript and TypeScript script invocations. Prefer Makefile targets over direct package
-        scripts where available.
+        - Prefer `node --test` and `node` for JavaScript and TypeScript script invocations. Prefer Makefile targets over
+        direct package scripts where available.
 
         - Keep TypeScript compiler strictness enabled, including `strict`, `noUncheckedIndexedAccess`,
         `exactOptionalPropertyTypes`, `noImplicitOverride`, `useUnknownInCatchVariables`,
@@ -142,7 +142,7 @@ reviews:
         - Lint and type suppressions must be a last resort, tightly scoped, and include a clear justification. Blanket
         suppressions are forbidden.
 
-        - Use Bun tests for unit coverage and keep tests deterministic.
+        - Use `node --test` for unit coverage and keep tests deterministic.
 
         - Prefer factories and builders over repeated ad hoc fixture object literals.
 

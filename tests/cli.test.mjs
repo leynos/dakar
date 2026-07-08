@@ -203,6 +203,58 @@ test('CLI recovers review-history recording when ODW record phase fails', () => 
   assert.equal(result.recorded.ok, true)
   assert.equal(result.recorded.recoveredBy, 'dakar-review')
   assert.match(stateText, /head_commit = "bbbb/u)
+  assert.match(stateText, /recordRecoveredByCli/u)
+})
+
+test('CLI marks recovery in metrics when the workflow supplied recordInput', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-recovery-input-'))
+  const stateFile = join(tempRoot, 'state', 'reviews.toml')
+  const fakeOdw = join(tempRoot, 'odw')
+  // The workflow emits its own recordInput (with prior metrics) alongside the
+  // failed record stage. The CLI must merge the recovery marker into those
+  // metrics instead of persisting the stale object verbatim.
+  const fakeResult = {
+    ok: false,
+    stage: 'record',
+    stateFile,
+    headCommit: 'c'.repeat(40),
+    recordInput: {
+      stateFile,
+      reviewId: 'workflow-supplied',
+      baseCommit: 'a'.repeat(40),
+      headCommit: 'c'.repeat(40),
+      commitCount: 2,
+      changedFiles: ['src/example.js'],
+      models: ['gpt-5.5/high'],
+      findingsTotal: 0,
+      summary: 'workflow record input',
+      metrics: { taskCount: 3, acceptedFindings: 0 },
+    },
+    recorded: { ok: false },
+  }
+  writeFileSync(
+    fakeOdw,
+    `#!/bin/sh\nprintf 'running fake-run ...\\n%s\\n' '${JSON.stringify(fakeResult).replace(/'/g, "'\"'\"'")}'\n`,
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const output = runCli([
+    '--repo-root',
+    repoRoot,
+    '--odw-bin',
+    fakeOdw,
+    '--runs-root',
+    join(tempRoot, 'runs'),
+  ])
+  const result = JSON.parse(output)
+  const stateText = readFileSync(stateFile, 'utf8')
+
+  assert.equal(result.ok, true)
+  assert.equal(result.recorded.recoveredBy, 'dakar-review')
+  // The persisted entry keeps the workflow's own metrics fields and adds the marker.
+  assert.match(stateText, /head_commit = "cccc/u)
+  assert.match(stateText, /recordRecoveredByCli/u)
+  assert.match(stateText, /taskCount/u)
 })
 
 test('package installs a callable CLI with Bun global install', (t) => {

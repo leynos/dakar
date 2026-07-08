@@ -185,8 +185,19 @@ function summarizeReport(output) {
     .find((line) => line && !line.startsWith('#')) || 'Dakar review completed.'
 }
 
+/**
+ * Build the record input passed to `appendReview` during CLI recovery.
+ *
+ * Prefers the workflow-supplied `recordInput` when present and otherwise
+ * reconstructs one from the workflow output. Either way, the returned metrics
+ * are stamped with `recordRecoveredByCli: true` so the repaired reviews.toml
+ * entry is auditable as a CLI recovery.
+ *
+ * @param {object} output - the ODW workflow result.
+ * @returns {object} record input for `appendReview`.
+ */
 function recordInputFromOutput(output) {
-  return output.recordInput || {
+  const base = output.recordInput || {
     stateFile: output.stateFile,
     reviewId: `${String(output.headCommit || 'unknown').slice(0, 12)}-${Date.now()}-cli`,
     baseCommit: output.reviewBase,
@@ -196,13 +207,33 @@ function recordInputFromOutput(output) {
     models: (output.metrics?.modelAssignments || []).map((assignment) => assignment.model).filter(Boolean),
     findingsTotal: Array.isArray(output.findings) ? output.findings.length : 0,
     summary: output.summary || summarizeReport(output),
+    metrics: output.metrics || {},
+  }
+  // Always stamp the recovery marker onto the metrics that appendReview()
+  // persists, whether the record input came from the workflow (output.recordInput)
+  // or was reconstructed here. Merging preserves the workflow's existing metrics
+  // fields while ensuring the repaired reviews.toml entry is marked recovered.
+  return {
+    ...base,
     metrics: {
-      ...(output.metrics || {}),
+      ...(base.metrics || {}),
       recordRecoveredByCli: true,
     },
   }
 }
 
+/**
+ * Attempt one deterministic local recovery of a failed record phase.
+ *
+ * When ODW completed the review but its record phase failed, re-run the
+ * review-history append directly through Dakar's state helper. On success the
+ * result is marked `recorded.recoveredBy`; on failure it retains `stage:
+ * "record"` so the caller still exits non-zero. Non-record failures and dry/
+ * skipped runs are returned untouched.
+ *
+ * @param {object} output - the ODW workflow result to repair in place.
+ * @returns {object} the (possibly repaired) workflow result.
+ */
 function recoverRecordFailure(output) {
   if (
     !output ||

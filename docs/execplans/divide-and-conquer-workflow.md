@@ -344,7 +344,7 @@ to test. Any refactor must preserve the focused test and `make check`.
 
 ## Concrete steps
 
-Run all commands from `/data/leynos/Projects/dakar`.
+Run all commands from `/path/to/dakar`.
 
 First, confirm the current branch and clean working tree:
 
@@ -414,7 +414,7 @@ For manual acceptance when model access is available, run:
 
 ```bash
 odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar"}'
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar"}'
 ```
 
 Expected live result shape:
@@ -457,7 +457,7 @@ Live smoke command:
 
 ```bash
 odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar","stateRoot":"/tmp/dakar-review-smoke-adapters","maxTasks":1,"maxCandidates":1,"maxFindings":1}'
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-smoke-adapters","maxTasks":1,"maxCandidates":1,"maxFindings":1}'
 ```
 
 Observed result on 2026-06-30T00:13:06Z: run
@@ -494,7 +494,7 @@ For live smoke tests, pass `stateRoot` to isolate review history:
 
 ```bash
 odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/data/leynos/Projects/dakar","stateRoot":"/tmp/dakar-review-state"}'
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state"}'
 ```
 
 If a live run records an unwanted test review, remove only that temporary

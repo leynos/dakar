@@ -147,7 +147,8 @@ odw run workflows/dakar-review.js --source . --wait --timeout 900 \
 
 ## What the workflow returns
 
-A successful live run returns one JSON object on standard output. Important
+In the default JSON output mode, a successful live run prints one JSON object
+on standard output (the `--format markdown` case is described below). Important
 fields are:
 
 - `ok`: whether the workflow itself completed.
@@ -196,17 +197,98 @@ Dry-run output is also JSON, but it describes the contract instead of a review:
   "workflowVersion": "divide-and-conquer-v1",
   "config": ".../df12-code-review.yaml",
   "repoRoot": "/path/to/repo",
-  "models": ["gpt-5.5/low", "gpt-5.5/medium", "gpt-5.5/high"],
+  "models": [
+    "gpt-5.5/low",
+    "gpt-5.5/medium",
+    "gpt-5.5/high",
+    "gpt-5.4-mini/medium",
+    "gpt-5.3-codex-spark/medium"
+  ],
   "synthesisModel": "gpt-5.5/high",
   "synthesisAdapter": "codex-high",
   "taskKinds": ["docs", "config", "tests", "source", "review-summary"],
   "limits": { "maxTasks": 8, "maxCandidates": 30, "maxFindings": 20 },
-  "defaultTaskGraph": [],
-  "candidateSchema": {},
-  "verdictSchema": {},
-  "synthesisSchema": {}
+  "defaultTaskGraph": [
+    {
+      "taskId": "source-1",
+      "kind": "source",
+      "assignedModel": "gpt-5.5/high",
+      "adapter": "codex-high",
+      "model": "gpt-5.5",
+      "role": "high",
+      "maxFindings": 6,
+      "verificationPolicy": "verify-all"
+    },
+    {
+      "taskId": "review-summary-1",
+      "kind": "review-summary",
+      "assignedModel": "gpt-5.3-codex-spark/medium",
+      "adapter": "codex-medium",
+      "model": "gpt-5.3-codex-spark",
+      "role": "spark",
+      "maxFindings": 3,
+      "verificationPolicy": "verify-non-low-and-sampled-low"
+    }
+  ],
+  "candidateSchema": {
+    "type": "object",
+    "properties": {
+      "taskId": { "type": "string" },
+      "summary": { "type": "string" },
+      "candidates": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "severity": { "type": "string" },
+            "path": { "type": "string" },
+            "line": { "type": "number" },
+            "detail": { "type": "string" },
+            "confidence": { "type": "number" }
+          }
+        }
+      }
+    }
+  },
+  "verdictSchema": {
+    "type": "object",
+    "properties": {
+      "candidateId": { "type": "string" },
+      "status": {
+        "type": "string",
+        "enum": [
+          "accepted",
+          "duplicate",
+          "out_of_scope",
+          "not_applicable",
+          "insufficient_evidence",
+          "speculative",
+          "tool_false_positive",
+          "severity_downgraded",
+          "needs_human"
+        ]
+      },
+      "reason": { "type": "string" },
+      "evidenceChecked": { "type": "string" }
+    }
+  },
+  "synthesisSchema": {
+    "type": "object",
+    "properties": {
+      "verdict": { "type": "string" },
+      "summary": { "type": "string" },
+      "reportMarkdown": { "type": "string" },
+      "findings": { "type": "array" }
+    }
+  }
 }
 ```
+
+The schemas and task graph above are shown abbreviated; the real dry-run emits
+the full `candidateSchema`, `verdictSchema`, and `synthesisSchema`, plus one
+task per changed-file group (source, tests, config, docs) followed by the
+mandatory `review-summary` task.
 
 `dakar-review --format markdown` prints `reportMarkdown` when a live result has
 one. Machine users should prefer the default `--format json`.
@@ -257,8 +339,10 @@ odw run workflows/dakar-review.js --source . --wait --timeout 900 \
 
 If the prepare step cannot compute a review range, the workflow returns
 `ok: false` with `stage: "prepare"`. If recording fails after synthesis, the
-returned review is still visible in the ODW result, but a later run may review
-the same commits again because the history file was not updated.
+returned review is still visible in the ODW result; the CLI first attempts its
+one-shot local recovery (see the record-phase recovery behaviour described
+above). Only if that recovery also fails will a later run review the same
+commits again because the history file was not updated.
 
 If `origin/main` is not available, pass a different `base`. If prepare reports
 that the workspace is not a git repository, pass `repoRoot` as an absolute path

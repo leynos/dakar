@@ -343,10 +343,21 @@ results, and codegraph impact:
 
 `task-graph-plan`
 
-: Create bounded review tasks with `taskId`, files, entities, policy source,
-  max findings, model assignment, dependencies, and verification policy. Use
-  `gpt-5.5` high. Tools: ODW planning, CodeRabbit policy, and codegraph/sem
-  context.
+: Deterministically build bounded review tasks from the prepared changed-file
+  list in workflow JavaScript (`buildTaskGraph`). Each changed file is
+  classified as `source`, `tests`, `config`, or `docs`; dependency lockfiles
+  and unknown paths are routed through `source` review because they can affect
+  runtime behaviour. Each task receives a `taskId`, assigned model and adapter,
+  `maxFindings` cap, and verification policy derived from its class. A mandatory
+  `review-summary` task is always appended. If the changed-file groups plus the
+  summary task exceed `maxTasks`, the planner fails closed rather than silently
+  dropping tasks. No agent is invoked during planning.
+
+  Future enhancement: an optional agent-assisted planner could use CodeRabbit
+  policy, codegraph/sem entity context, and ODW planning to produce richer task
+  boundaries (entity-level splits, dependency-aware ordering). This is not
+  shipped; it corresponds to the deferred `enableSem`, `enableLeta`, and
+  `enableCodegraph` flags described in the next-revision args.
 
 `context-pack-assembly`
 

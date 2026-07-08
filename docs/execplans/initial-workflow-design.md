@@ -103,7 +103,7 @@ inside workflow JavaScript.
 
 ## Context and orientation
 
-The repository is `/data/leynos/Projects/dakar` on branch `initial-workflow`.
+The repository is `/path/to/dakar` on branch `initial-workflow`.
 The only pre-existing file is `examples/df12-code-review.yaml`, an untracked
 CodeRabbit configuration with review tone, path instructions, labels, and
 pre-merge checks. ODW means Open Dynamic Workflow, a JavaScript workflow format
@@ -118,7 +118,7 @@ verification properties. Stage C hands the design to the build ExecPlan.
 
 ## Concrete steps
 
-Run from `/data/leynos/Projects/dakar`:
+Run from `/path/to/dakar`:
 
 ```bash
 rg --files

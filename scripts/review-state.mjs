@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { stdin } from 'node:process'
@@ -45,6 +45,21 @@ function optionString(rawArgs, key, fallback = '') {
   return String(value)
 }
 
+/**
+ * Run a git command in `repoRoot` and return its trimmed stdout.
+ *
+ * `allowFailure` is reserved for genuinely optional lookups where a non-zero
+ * exit is an expected "absent" state rather than an environmental fault: a repo
+ * with no `origin` remote, or a detached HEAD with no current branch. Range and
+ * revision queries must leave `allowFailure` false so that broken repositories,
+ * bad revisions, or permission errors surface instead of masquerading as an
+ * empty result.
+ *
+ * @param {string} repoRoot - repository the command runs against.
+ * @param {string[]} args - git arguments after the implicit `-C repoRoot`.
+ * @param {boolean} [allowFailure] - tolerate a non-zero exit as empty output.
+ * @returns {string} trimmed stdout, or an empty string when tolerated.
+ */
 function git(repoRoot, args, allowFailure = false) {
   try {
     return execFileSync('git', ['-C', repoRoot, ...args], {
@@ -104,34 +119,66 @@ function parseReviewedHeads(tomlText) {
   return entries
 }
 
-function isAncestor(repoRoot, ancestor, descendant) {
-  if (!ancestor || !descendant) {
-    return false
-  }
-  try {
-    execFileSync('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', ancestor, descendant], {
-      stdio: 'ignore',
-    })
-    return true
-  } catch {
-    return false
-  }
+/**
+ * Compute every commit that could serve as an incremental review base.
+ *
+ * A single `git rev-list --ancestry-path mergeBase..headCommit` yields exactly
+ * the commits X for which `mergeBase` is an ancestor of X and X is an ancestor
+ * of `headCommit` — the same predicate the previous per-entry
+ * `merge-base --is-ancestor` probe tested, but in one subprocess instead of up
+ * to 2N. `mergeBase` itself qualifies but is excluded by the exclusive range,
+ * so it is added explicitly.
+ *
+ * @param {string} repoRoot - repository to query.
+ * @param {string} mergeBase - lower bound of the reviewable range.
+ * @param {string} headCommit - commit being reviewed.
+ * @returns {Set<string>} full commit ids usable as a review base.
+ */
+function reachableReviewBases(repoRoot, mergeBase, headCommit) {
+  const output = git(repoRoot, ['rev-list', '--ancestry-path', `${mergeBase}..${headCommit}`])
+  const bases = new Set(output ? output.split('\n').filter(Boolean) : [])
+  bases.add(mergeBase)
+  return bases
 }
 
+/**
+ * List commits in `baseCommit..headCommit` oldest-first.
+ * @returns {string[]} commit ids in review order.
+ */
 function commitList(repoRoot, baseCommit, headCommit) {
-  const output = git(repoRoot, ['rev-list', '--reverse', `${baseCommit}..${headCommit}`], true)
+  const output = git(repoRoot, ['rev-list', '--reverse', `${baseCommit}..${headCommit}`])
   return output ? output.split('\n').filter(Boolean) : []
 }
 
+/**
+ * List files changed across `baseCommit..headCommit`, sorted for stable output.
+ * @returns {string[]} changed file paths.
+ */
 function changedFiles(repoRoot, baseCommit, headCommit) {
-  const output = git(repoRoot, ['diff', '--name-only', `${baseCommit}..${headCommit}`], true)
+  const output = git(repoRoot, ['diff', '--name-only', `${baseCommit}..${headCommit}`])
   return output ? output.split('\n').filter(Boolean).sort() : []
 }
 
+/**
+ * Return git's shortstat summary for `baseCommit..headCommit`.
+ * @returns {string} shortstat line, or empty when nothing changed.
+ */
 function diffStat(repoRoot, baseCommit, headCommit) {
-  return git(repoRoot, ['diff', '--shortstat', `${baseCommit}..${headCommit}`], true)
+  return git(repoRoot, ['diff', '--shortstat', `${baseCommit}..${headCommit}`])
 }
 
+/**
+ * Compute the next unreviewed commit range for a repository.
+ *
+ * Reads prior review heads from the XDG state file, advances the review base to
+ * the most recently recorded head that still lies on the current merge-base to
+ * HEAD ancestry path, and returns the resulting range, changed files, and
+ * bookkeeping. The raw remote URL is intentionally not returned: it can embed
+ * credentials, so only the derived owner/name reach the output.
+ *
+ * @param {Record<string, string>} rawArgs - parsed CLI arguments.
+ * @returns {object} review-range descriptor consumed by the workflow.
+ */
 function prepare(rawArgs) {
   const repoRoot = resolve(optionString(rawArgs, 'repo-root', process.cwd()))
   const remoteUrl = git(repoRoot, ['remote', 'get-url', 'origin'], true)
@@ -151,15 +198,17 @@ function prepare(rawArgs) {
   }
   const existing = readFile(stateFile)
   const reviewed = parseReviewedHeads(existing)
-  const lastReachable = [...reviewed]
-    .reverse()
-    .find((entry) => isAncestor(repoRoot, mergeBase, entry.head) && isAncestor(repoRoot, entry.head, headCommit))
+  const reachableBases = reachableReviewBases(repoRoot, mergeBase, headCommit)
+  const matchesReachable = (head) =>
+    reachableBases.has(head) ||
+    [...reachableBases].some((sha) => sha.startsWith(head) || head.startsWith(sha))
+  const lastReachable = [...reviewed].reverse().find((entry) => matchesReachable(entry.head))
   const reviewBase = lastReachable ? lastReachable.head : mergeBase
   const commits = commitList(repoRoot, reviewBase, headCommit)
 
   return {
     ok: true,
-    repo: { owner, name, remoteUrl, branch, branchSlug },
+    repo: { owner, name, branch, branchSlug },
     stateFile,
     baseRef,
     headRef,
@@ -176,11 +225,82 @@ function prepare(rawArgs) {
   }
 }
 
+/**
+ * Read a state file, treating only a missing file as empty history.
+ *
+ * A missing `reviews.toml` is the normal first-run case and yields an empty
+ * string. Any other error (permission denied, I/O fault, a directory in the
+ * path) is a real problem that must surface rather than silently replaying the
+ * whole history as unreviewed.
+ *
+ * @param {string} path - state file to read.
+ * @returns {string} file contents, or empty string when absent.
+ */
 function readFile(path) {
   try {
     return readFileSync(path, 'utf8')
-  } catch {
-    return ''
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return ''
+    }
+    throw error
+  }
+}
+
+/**
+ * Block synchronously for `milliseconds` without reading a wall clock.
+ *
+ * Uses `Atomics.wait` on a throwaway buffer so lock retry timing stays
+ * deterministic and free of `Date.now()`/`Math.random()`.
+ *
+ * @param {number} milliseconds - duration to block.
+ */
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
+}
+
+/**
+ * Run `mutate` while holding an exclusive lock on the state file.
+ *
+ * Serialises the read-modify-write in {@link appendReview} so a workflow record
+ * step and a CLI recovery cannot interleave and clobber each other's entry. The
+ * lock is an `O_EXCL` sentinel file next to the state file; contending writers
+ * retry with a bounded backoff before failing loudly.
+ *
+ * @template T
+ * @param {string} stateFile - state file being guarded.
+ * @param {() => T} mutate - critical section to run under the lock.
+ * @returns {T} whatever `mutate` returns.
+ */
+function withStateLock(stateFile, mutate) {
+  const lockPath = `${stateFile}.lock`
+  const maxAttempts = 100
+  let handle
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      handle = openSync(lockPath, 'wx', 0o600)
+      break
+    } catch (error) {
+      if (error.code !== 'EEXIST') {
+        throw error
+      }
+      sleepSync(20)
+    }
+  }
+  if (handle === undefined) {
+    throw new Error(`could not acquire review state lock at ${lockPath}`)
+  }
+  try {
+    return mutate()
+  } finally {
+    closeSync(handle)
+    try {
+      unlinkSync(lockPath)
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        throw error
+      }
+    }
   }
 }
 
@@ -252,10 +372,12 @@ function appendReview(input) {
     `metrics_json = ${tomlString(JSON.stringify(input.metrics || {}))}`,
     '',
   ].join('\n')
-  const current = readFile(stateFile)
-  writeFileSync(stateFile, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${entry}`, {
-    encoding: 'utf8',
-    mode: 0o600,
+  withStateLock(stateFile, () => {
+    const current = readFile(stateFile)
+    writeFileSync(stateFile, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${entry}`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    })
   })
   return { ok: true, stateFile, headCommit }
 }

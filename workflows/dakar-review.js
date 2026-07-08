@@ -296,22 +296,70 @@ function taskSpec(kind, files, index) {
   }
 }
 
+// Distribute a task budget across changed-file groups. Every group starts with
+// one slot; the remainder is handed to whichever group currently carries the
+// most files per slot, until the budget is exhausted or every group holds at
+// most one file per slot. Returns a Map of kind to slot count.
+function distributeTaskSlots(groups, budget) {
+  const slots = new Map(groups.map((group) => [group.kind, 1]))
+  let remaining = budget - groups.length
+  while (remaining > 0) {
+    let target
+    let worstLoad = -1
+    for (const group of groups) {
+      const allocated = slots.get(group.kind)
+      if (allocated >= group.files.length) {
+        continue
+      }
+      const load = group.files.length / allocated
+      if (load > worstLoad) {
+        worstLoad = load
+        target = group.kind
+      }
+    }
+    if (target === undefined) {
+      break
+    }
+    slots.set(target, slots.get(target) + 1)
+    remaining -= 1
+  }
+  return slots
+}
+
 function buildTaskGraph(prepared) {
   const groups = new Map()
   for (const file of prepared.changedFiles || []) {
     const kind = classifyPath(file)
     const key = kind === 'dependency' || kind === 'unknown' ? 'source' : kind
-    groups.set(key, [...(groups.get(key) || []), file])
+    if (!groups.has(key)) {
+      groups.set(key, [])
+    }
+    groups.get(key).push(file)
   }
+  const populated = ['source', 'tests', 'config', 'docs']
+    .map((kind) => ({ kind, files: groups.get(kind) || [] }))
+    .filter((group) => group.files.length > 0)
+  // The review-summary task is mandatory, so reserve a slot for it and never
+  // let source chunking crowd it (or any changed-file group) out. If the budget
+  // cannot give every group at least one slot, fail closed instead of silently
+  // dropping tasks with a trailing slice.
+  const budget = Math.max(1, MAX_TASKS) - 1
+  if (populated.length > budget) {
+    throw new Error(
+      `maxTasks=${MAX_TASKS} is too small: ${populated.length} changed-file groups ` +
+        'plus a review summary cannot fit; raise maxTasks or narrow the review range',
+    )
+  }
+  const slots = distributeTaskSlots(populated, budget)
   const tasks = []
-  for (const kind of ['source', 'tests', 'config', 'docs']) {
-    const files = groups.get(kind) || []
-    for (const [index, part] of chunk(files, 8).entries()) {
-      tasks.push(taskSpec(kind, part, index))
+  for (const group of populated) {
+    const size = Math.max(1, Math.ceil(group.files.length / slots.get(group.kind)))
+    for (const [index, part] of chunk(group.files, size).entries()) {
+      tasks.push(taskSpec(group.kind, part, index))
     }
   }
   tasks.push(taskSpec('review-summary', prepared.changedFiles || [], 0))
-  return tasks.slice(0, Math.max(1, MAX_TASKS))
+  return tasks
 }
 
 function defaultTaskGraph() {

@@ -118,25 +118,14 @@ maintenance costs.[^8]
 
 ### Table 1: Cyclomatic vs. cognitive complexity
 
-- **Primary Focus**
-  - *Cyclomatic Complexity:* testability and execution paths
-  - *Cognitive Complexity:* readability and human understanding
-- **Basis**
-  - *Cyclomatic Complexity:* rooted in graph theory
-  - *Cognitive Complexity:* breaks in flow and nesting
-- **Nesting Penalty**
-  - *Cyclomatic Complexity:* counts paths only
-  - *Cognitive Complexity:* adds cost for each nested level
-- **Method Calls**
-  - *Cyclomatic Complexity:* each path in a called method counts
-  - *Cognitive Complexity:* generally free unless recursive
-- **Logical Operators**
-  - *Cyclomatic Complexity:* each condition is a decision point
-  - *Cognitive Complexity:* mixed operators raise the score
-- **Use Case Example**
-  - *Cyclomatic Complexity:* high Cyclomatic Complexity, low cognitive load in
-    simple switch
-  - *Cognitive Complexity:* deep nesting raises cognitive load
+| Dimension | Cyclomatic complexity | Cognitive complexity |
+| --- | --- | --- |
+| Primary Focus | testability and execution paths | readability and human understanding |
+| Basis | rooted in graph theory | breaks in flow and nesting |
+| Nesting Penalty | counts paths only | adds cost for each nested level |
+| Method Calls | each path in a called method counts | generally free unless recursive |
+| Logical Operators | each condition is a decision point | mixed operators raise the score |
+| Use Case Example | high Cyclomatic Complexity, low cognitive load in simple switch | deep nesting raises cognitive load |
 
 Understanding both metrics provides a more holistic view of code quality. While
 Cyclomatic Complexity guides testing efforts, Cognitive Complexity directly
@@ -557,22 +546,12 @@ and method structure.
 
 ### Table 2: Refactoring approaches for reducing cognitive complexity
 
-- **Balanced Abstraction (e.g., Extract Method)**
-  - Break large methods into smaller, cohesive units
-  - Benefit: shorter methods and clearer intent
-  - Solves spaghetti code and Bumpy Road issues
-- **Structural pattern matching**
-  - Replace complex if/else or switch constructs with pattern matching
-  - Benefit: simpler conditional logic and data extraction
-  - Solves deeply nested conditionals
-- **Declarative Programming**
-  - Focus on what to achieve instead of how to do it
-  - Benefit: less state tracking and clearer intent
-  - Solves imperative loops and manual state management
-- **Dispatcher/Command Pattern**
-  - Encapsulate actions in objects and route via a dispatcher
-  - Benefit: removes large conditional blocks
-  - Solves complex switch statements
+| Approach | Description | Benefit | Problem solved |
+| --- | --- | --- | --- |
+| Balanced Abstraction (e.g., Extract Method) | Break large methods into smaller, cohesive units | Shorter methods and clearer intent | Spaghetti code and Bumpy Road issues |
+| Structural pattern matching | Replace complex if/else or switch constructs with pattern matching | Simpler conditional logic and data extraction | Deeply nested conditionals |
+| Declarative Programming | Focus on what to achieve instead of how to do it | Less state tracking and clearer intent | Imperative loops and manual state management |
+| Dispatcher/Command Pattern | Encapsulate actions in objects and route via a dispatcher | Removes large conditional blocks | Complex switch statements |
 
 #### 1. Structural pattern matching
 
@@ -659,7 +638,7 @@ behaviour—common culprits for bugs and increased cognitive load in imperative
 code.[^26]
 
 Examples include using Structured Query Language for database queries—
-specifying the desired dataset rather than the retrieval algorithm[^34]—or
+specifying the desired dataset rather than the retrieval algorithm—or
 employing functional programming constructs like `map`, `filter`, and `reduce`
 on collections instead of writing explicit loops. Refactoring imperative code
 to a declarative style can start small, perhaps by converting a loop that

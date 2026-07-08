@@ -1,0 +1,102 @@
+/**
+ * @file Prove the review-state helper surfaces environmental faults and
+ * serialises concurrent recorders.
+ *
+ * These tests cover the failure-handling contract that separates an expected
+ * "missing history" state from a real I/O or git error, and the single-writer
+ * lock that keeps concurrent `record` calls from clobbering each other's entry.
+ */
+
+import { spawn } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import { prepare } from '../scripts/review-state.mjs'
+
+const SCRIPT = new URL('../scripts/review-state.mjs', import.meta.url).pathname
+
+function stateDir() {
+  return mkdtempSync(join(tmpdir(), 'dakar-state-'))
+}
+
+test('prepare rethrows non-ENOENT state-file read errors instead of replaying history', () => {
+  // A directory where the state file is expected yields EISDIR on read. A silent
+  // empty-string fallback here would make prepare re-review the whole history.
+  const root = stateDir()
+  const stateFile = join(root, 'reviews.toml')
+  mkdirSync(stateFile, { recursive: true })
+
+  assert.throws(
+    () => prepare({ 'repo-root': process.cwd(), 'state-file': stateFile, base: 'HEAD', head: 'HEAD' }),
+    (error) => error.code === 'EISDIR' || /EISDIR|illegal operation on a directory/u.test(error.message),
+  )
+})
+
+test('prepare surfaces git failures on a non-repository root', () => {
+  // rev-parse HEAD is not tolerated, so a directory that is not a git repo must
+  // raise rather than yield an empty, falsely "already reviewed" range.
+  const notARepo = mkdtempSync(join(tmpdir(), 'dakar-not-a-repo-'))
+  const root = stateDir()
+
+  assert.throws(() =>
+    prepare({ 'repo-root': notARepo, 'state-root': root, base: 'origin/main', head: 'HEAD' }),
+  )
+})
+
+function recordChild(stateFile, headCommit) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, [SCRIPT, 'record'], {
+      stdio: ['pipe', 'ignore', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.on('data', (data) => {
+      stderr += data
+    })
+    child.on('error', rejectPromise)
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolvePromise()
+      } else {
+        rejectPromise(new Error(`record exited ${code}: ${stderr}`))
+      }
+    })
+    child.stdin.end(
+      JSON.stringify({
+        stateFile,
+        reviewId: `review-${headCommit}`,
+        headCommit,
+        commitCount: 1,
+        findingsTotal: 0,
+        summary: 'concurrent write',
+      }),
+    )
+  })
+}
+
+test('concurrent record writes all persist under the state lock', async () => {
+  const stateFile = join(stateDir(), 'reviews.toml')
+  const heads = Array.from({ length: 8 }, (_, index) => `${'0'.repeat(39)}${(index + 1).toString(16)}`)
+
+  await Promise.all(heads.map((head) => recordChild(stateFile, head)))
+
+  const content = readFileSync(stateFile, 'utf8')
+  const entryCount = (content.match(/\[\[reviews\]\]/gu) || []).length
+  assert.equal(entryCount, heads.length)
+  for (const head of heads) {
+    assert.ok(content.includes(`head_commit = "${head}"`), `missing entry for ${head}`)
+  }
+})
+
+test('a pre-existing state file without a trailing newline stays well-formed after recording', async () => {
+  const stateFile = join(stateDir(), 'reviews.toml')
+  writeFileSync(stateFile, '[[reviews]]\nhead_commit = "abcabcabcabcabcabcabcabcabcabcabcabcabca"', 'utf8')
+
+  await recordChild(stateFile, `${'0'.repeat(39)}f`)
+
+  const content = readFileSync(stateFile, 'utf8')
+  assert.equal((content.match(/\[\[reviews\]\]/gu) || []).length, 2)
+  assert.match(content, /abca"\n\[\[reviews\]\]/u)
+})
