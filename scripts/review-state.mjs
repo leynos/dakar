@@ -8,13 +8,22 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { stdin } from 'node:process'
 
 const APP_NAME = 'dakar'
 
+/**
+ * Parse a mixed positional/flag argument vector into a plain args object.
+ *
+ * Positional tokens are collected in `args._`; `--key value` pairs are stored
+ * by key name. Flags without a following value throw.
+ *
+ * @param {string[]} argv - argument tokens to parse.
+ * @returns {{ _: string[], [key: string]: string | string[] }} parsed args map.
+ */
 function parseArgs(argv) {
   const args = { _: [] }
   for (let index = 0; index < argv.length; index += 1) {
@@ -34,6 +43,16 @@ function parseArgs(argv) {
   return args
 }
 
+/**
+ * Extract a string value from a raw-args map, returning a fallback when absent.
+ *
+ * Throws when the key maps to `true` (i.e. the flag was given without a value).
+ *
+ * @param {object} rawArgs - the args map produced by `parseArgs`.
+ * @param {string} key - the option key to look up.
+ * @param {string} [fallback] - value to return when the key is absent or empty.
+ * @returns {string} the resolved string value.
+ */
 function optionString(rawArgs, key, fallback = '') {
   const value = rawArgs[key]
   if (value === undefined || value === null || value === '') {
@@ -74,6 +93,12 @@ function git(repoRoot, args, allowFailure = false) {
   }
 }
 
+/**
+ * Convert an arbitrary string into a lowercase URL/filename-safe slug.
+ *
+ * @param {string} input - the string to slugify.
+ * @returns {string} slug composed of lowercase alphanumerics and hyphens, or `'unknown'`.
+ */
 function slug(input) {
   return input
     .toLowerCase()
@@ -81,6 +106,15 @@ function slug(input) {
     .replace(/^-+|-+$/g, '') || 'unknown'
 }
 
+/**
+ * Extract the owner and repository name from a git remote URL.
+ *
+ * Handles both HTTPS and SCP-style SSH remote URLs. Returns `'unknown'` slugs
+ * when the URL does not match the expected format.
+ *
+ * @param {string} remoteUrl - raw git remote URL.
+ * @returns {{ owner: string, name: string }} slugified owner and repository name.
+ */
 function remoteOwnerName(remoteUrl) {
   const normalised = remoteUrl.trim()
   const scpLike = normalised.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/)
@@ -90,6 +124,12 @@ function remoteOwnerName(remoteUrl) {
   return { owner: slug(scpLike[1]), name: slug(scpLike[2]) }
 }
 
+/**
+ * Resolve the XDG state root directory, honouring an explicit override or the environment.
+ *
+ * @param {string} explicitRoot - caller-supplied override; empty string means use defaults.
+ * @returns {string} absolute path to the XDG state root.
+ */
 function xdgStateRoot(explicitRoot) {
   if (explicitRoot) {
     return resolve(explicitRoot)
@@ -101,10 +141,28 @@ function xdgStateRoot(explicitRoot) {
   return join(homedir(), '.local', 'state')
 }
 
+/**
+ * Compute the canonical `reviews.toml` path for a repository and branch.
+ *
+ * @param {object} opts - path components.
+ * @param {string} opts.stateRoot - XDG state root directory.
+ * @param {string} opts.owner - repository owner slug.
+ * @param {string} opts.name - repository name slug.
+ * @param {string} opts.branchSlug - branch slug.
+ * @returns {string} absolute path to the `reviews.toml` state file.
+ */
 function stateFilePath({ stateRoot, owner, name, branchSlug }) {
   return join(stateRoot, APP_NAME, owner, name, branchSlug, 'reviews.toml')
 }
 
+/**
+ * Parse completed review head commits from `reviews.toml` content.
+ *
+ * Only entries whose `status` is `'completed'` (or absent) contribute a head.
+ *
+ * @param {string} tomlText - raw TOML file content.
+ * @returns {{ head: string, completedAt: string }[]} list of completed review entries.
+ */
 function parseReviewedHeads(tomlText) {
   const entries = []
   const chunks = tomlText.split(/\n(?=\[\[reviews\]\]\n)/u)
@@ -120,25 +178,32 @@ function parseReviewedHeads(tomlText) {
 }
 
 /**
- * Compute every commit that could serve as an incremental review base.
+ * Rank every commit that could serve as an incremental review base.
  *
  * A single `git rev-list --ancestry-path mergeBase..headCommit` yields exactly
  * the commits X for which `mergeBase` is an ancestor of X and X is an ancestor
  * of `headCommit` — the same predicate the previous per-entry
  * `merge-base --is-ancestor` probe tested, but in one subprocess instead of up
- * to 2N. `mergeBase` itself qualifies but is excluded by the exclusive range,
- * so it is added explicitly.
+ * to 2N. `git rev-list` emits newest-first, so the returned rank orders bases by
+ * ancestry position: rank 0 is the commit closest to `headCommit` (the furthest
+ * a base may advance), and larger ranks are progressively closer to the merge
+ * base. `mergeBase` itself qualifies but is excluded by the exclusive range, so
+ * it is added explicitly as the highest-ranked (fallback) base.
  *
  * @param {string} repoRoot - repository to query.
  * @param {string} mergeBase - lower bound of the reviewable range.
  * @param {string} headCommit - commit being reviewed.
- * @returns {Set<string>} full commit ids usable as a review base.
+ * @returns {Map<string, number>} commit id to ancestry rank (0 = nearest HEAD).
  */
 function reachableReviewBases(repoRoot, mergeBase, headCommit) {
   const output = git(repoRoot, ['rev-list', '--ancestry-path', `${mergeBase}..${headCommit}`])
-  const bases = new Set(output ? output.split('\n').filter(Boolean) : [])
-  bases.add(mergeBase)
-  return bases
+  const ordered = output ? output.split('\n').filter(Boolean) : []
+  const rankByCommit = new Map()
+  ordered.forEach((commit, index) => rankByCommit.set(commit, index))
+  if (!rankByCommit.has(mergeBase)) {
+    rankByCommit.set(mergeBase, ordered.length)
+  }
+  return rankByCommit
 }
 
 /**
@@ -199,11 +264,28 @@ function prepare(rawArgs) {
   const existing = readFile(stateFile)
   const reviewed = parseReviewedHeads(existing)
   const reachableBases = reachableReviewBases(repoRoot, mergeBase, headCommit)
-  const matchesReachable = (head) =>
-    reachableBases.has(head) ||
-    [...reachableBases].some((sha) => sha.startsWith(head) || head.startsWith(sha))
-  const lastReachable = [...reviewed].reverse().find((entry) => matchesReachable(entry.head))
-  const reviewBase = lastReachable ? lastReachable.head : mergeBase
+  const rankOfHead = (head) => {
+    if (reachableBases.has(head)) {
+      return reachableBases.get(head)
+    }
+    for (const [sha, rank] of reachableBases) {
+      if (sha.startsWith(head) || head.startsWith(sha)) {
+        return rank
+      }
+    }
+    return -1
+  }
+  // Advance the review base to the recorded head that is furthest along the
+  // ancestry path (smallest rank = closest to HEAD), independent of the order
+  // in which reviews happened to be recorded. mergeBase remains the fallback.
+  let furthestReachable = null
+  for (const entry of reviewed) {
+    const rank = rankOfHead(entry.head)
+    if (rank >= 0 && (furthestReachable === null || rank < furthestReachable.rank)) {
+      furthestReachable = { head: entry.head, rank }
+    }
+  }
+  const reviewBase = furthestReachable ? furthestReachable.head : mergeBase
   const commits = commitList(repoRoot, reviewBase, headCommit)
 
   return {
@@ -215,13 +297,13 @@ function prepare(rawArgs) {
     mergeBase,
     reviewBase,
     headCommit,
-    lastReviewedHead: lastReachable ? lastReachable.head : '',
+    lastReviewedHead: furthestReachable ? furthestReachable.head : '',
     commitCount: commits.length,
     commits,
     changedFiles: changedFiles(repoRoot, reviewBase, headCommit),
     diffStat: diffStat(repoRoot, reviewBase, headCommit),
     alreadyReviewed: commits.length === 0,
-    warnings: lastReachable || reviewed.length === 0 ? [] : ['review history exists but no recorded head is usable for the current merge base; using merge base'],
+    warnings: furthestReachable || reviewed.length === 0 ? [] : ['review history exists but no recorded head is usable for the current merge base; using merge base'],
   }
 }
 
@@ -259,13 +341,54 @@ function sleepSync(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }
 
+// A lock older than this is treated as abandoned by a terminated process. The
+// critical section is a small read-modify-write measured in milliseconds, so a
+// generous threshold reaps dead locks without ever reaping a live holder.
+const STALE_LOCK_MS = 30_000
+
+/**
+ * Reap a review-state lock left behind by a terminated process.
+ *
+ * A lock younger than {@link STALE_LOCK_MS} is considered live and left intact.
+ * A stale or already-vanished lock is removed so acquisition can proceed.
+ *
+ * @param {string} lockPath - path to the lock sentinel file.
+ * @returns {boolean} true if the caller should retry acquisition immediately.
+ */
+function reapStaleLock(lockPath) {
+  let stats
+  try {
+    stats = statSync(lockPath)
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return true
+    }
+    throw error
+  }
+  if (Date.now() - stats.mtimeMs < STALE_LOCK_MS) {
+    return false
+  }
+  try {
+    unlinkSync(lockPath)
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      return false
+    }
+  }
+  return true
+}
+
 /**
  * Run `mutate` while holding an exclusive lock on the state file.
  *
  * Serialises the read-modify-write in {@link appendReview} so a workflow record
  * step and a CLI recovery cannot interleave and clobber each other's entry. The
- * lock is an `O_EXCL` sentinel file next to the state file; contending writers
- * retry with a bounded backoff before failing loudly.
+ * lock is an `O_EXCL` sentinel file next to the state file recording the owner
+ * pid and timestamp; contending writers reap a stale lock (see
+ * {@link reapStaleLock}) or wait with a bounded backoff before failing loudly.
+ * Lock release is best-effort and never masks the outcome of `mutate`: a
+ * successful write is still returned, and a failing write still throws its own
+ * error, even if closing or unlinking the lock fails.
  *
  * @template T
  * @param {string} stateFile - state file being guarded.
@@ -276,42 +399,84 @@ function withStateLock(stateFile, mutate) {
   const lockPath = `${stateFile}.lock`
   const maxAttempts = 100
   let handle
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts && handle === undefined; attempt += 1) {
     try {
       handle = openSync(lockPath, 'wx', 0o600)
-      break
     } catch (error) {
       if (error.code !== 'EEXIST') {
         throw error
       }
-      sleepSync(20)
+      // Reap a lock abandoned by a dead process; otherwise wait and retry.
+      if (!reapStaleLock(lockPath)) {
+        sleepSync(20)
+      }
     }
   }
   if (handle === undefined) {
     throw new Error(`could not acquire review state lock at ${lockPath}`)
   }
   try {
-    return mutate()
-  } finally {
-    closeSync(handle)
-    try {
-      unlinkSync(lockPath)
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        throw error
-      }
-    }
+    // Record owner pid and time for diagnostics and staleness; failure to write
+    // this marker must not fail the critical section.
+    writeSync(handle, `${process.pid} ${new Date().toISOString()}\n`)
+  } catch {
+    // Diagnostics only.
   }
+  let result
+  let failure
+  let failed = false
+  try {
+    result = mutate()
+  } catch (error) {
+    failure = error
+    failed = true
+  }
+  // Best-effort release that never obscures the mutate outcome.
+  try {
+    closeSync(handle)
+  } catch {
+    // The write above already reached disk; a failed close cannot lose it.
+  }
+  try {
+    unlinkSync(lockPath)
+  } catch {
+    // A leftover lock is reaped as stale by the next writer.
+  }
+  if (failed) {
+    throw failure
+  }
+  return result
 }
 
+/**
+ * Encode a value as a TOML basic string literal (double-quoted, with escapes).
+ *
+ * @param {unknown} value - value to encode; coerced to string via `String()`.
+ * @returns {string} TOML-quoted string including surrounding double quotes.
+ */
 function tomlString(value) {
   return `"${String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`
 }
 
+/**
+ * Encode an array of values as a TOML inline array of basic strings.
+ *
+ * @param {unknown[]} [values] - items to encode; each is passed through `tomlString`.
+ * @returns {string} TOML inline array literal, e.g. `["a", "b"]`.
+ */
 function tomlStringArray(values) {
   return `[${(values || []).map((value) => tomlString(value)).join(', ')}]`
 }
 
+/**
+ * Return the value of the first matching own-property key found on `input`.
+ *
+ * Supports camelCase/snake_case aliases: the first key present wins.
+ *
+ * @param {object} input - object to inspect.
+ * @param {...string} keys - candidate property names in priority order.
+ * @returns {unknown} the first matching value, or `undefined` when none match.
+ */
 function fieldValue(input, ...keys) {
   for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(input, key)) {
@@ -321,6 +486,15 @@ function fieldValue(input, ...keys) {
   return undefined
 }
 
+/**
+ * Extract and validate the `headCommit` field from a record-input object.
+ *
+ * Accepts both `headCommit` (camelCase) and `head_commit` (snake_case) keys.
+ * Throws when the value is absent or not a 7–40 character hexadecimal string.
+ *
+ * @param {object} input - record input object.
+ * @returns {string} normalised lowercase commit id.
+ */
 function reviewHeadCommit(input) {
   const value = fieldValue(input, 'headCommit', 'head_commit')
   const text = String(value ?? '').trim()
@@ -333,6 +507,16 @@ function reviewHeadCommit(input) {
   return text.toLowerCase()
 }
 
+/**
+ * Extract and validate a non-negative integer field from a record-input object.
+ *
+ * Accepts both camelCase and snake_case variants of the key name.
+ *
+ * @param {object} input - record input object.
+ * @param {string} camelKey - preferred camelCase property name.
+ * @param {string} snakeKey - snake_case alias to fall back to.
+ * @returns {number} the validated non-negative integer value.
+ */
 function integerField(input, camelKey, snakeKey) {
   const rawValue = fieldValue(input, camelKey, snakeKey)
   if (rawValue === undefined || rawValue === null || rawValue === '') {
@@ -345,6 +529,16 @@ function integerField(input, camelKey, snakeKey) {
   return value
 }
 
+/**
+ * Append a completed review entry to the `reviews.toml` state file.
+ *
+ * Creates the parent directories if absent, then atomically appends a
+ * `[[reviews]]` TOML block under an exclusive file lock. Accepts both camelCase
+ * and snake_case field names for interoperability with the ODW workflow.
+ *
+ * @param {object} input - record input; must include `stateFile`, `headCommit`, `commitCount`, and `findingsTotal`.
+ * @returns {{ ok: boolean, stateFile: string, headCommit: string }} confirmation of the recorded entry.
+ */
 function appendReview(input) {
   const rawStateFile = input.stateFile || input.state_file
   if (!rawStateFile) {
@@ -382,6 +576,11 @@ function appendReview(input) {
   return { ok: true, stateFile, headCommit }
 }
 
+/**
+ * Read all of stdin and parse it as JSON.
+ *
+ * @returns {Promise<unknown>} the parsed JSON value.
+ */
 async function readStdinJson() {
   const chunks = []
   for await (const chunk of stdin) {
@@ -394,6 +593,11 @@ async function readStdinJson() {
   return JSON.parse(text)
 }
 
+/**
+ * CLI entry point: dispatch `prepare` or `record` sub-commands and print JSON results.
+ *
+ * @returns {Promise<void>}
+ */
 async function main() {
   const [command, ...rest] = process.argv.slice(2)
   const rawArgs = parseArgs(rest)
@@ -415,4 +619,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   })
 }
 
-export { appendReview, parseReviewedHeads, prepare, remoteOwnerName, slug }
+export { appendReview, parseReviewedHeads, prepare, reapStaleLock, remoteOwnerName, slug, withStateLock }

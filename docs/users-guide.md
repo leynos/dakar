@@ -17,9 +17,10 @@ The installer calls Bun with the absolute checkout path and exposes
 `dakar-review`. The package remains private; the command is meant for local or
 git-based installation, not npm publication. `install.sh` accepts no install
 arguments; run `./install.sh --help` for its short usage text.
-Repeated installer runs remove Dakar's stale entry from Bun's global manifest
-and discard a Dakar-bearing global Bun lockfile before reinstalling, so a
-previous interrupted install does not leave duplicate `dakar` entries behind.
+Repeated installer runs first run `bun remove -g dakar` to drop any prior
+global Dakar package before reinstalling, so a previous interrupted
+installation does not leave duplicate `dakar` entries behind; this leaves the
+shared Bun lockfile and other global packages intact.
 
 If you prefer to call Bun directly, use an absolute path or `file:` URL:
 
@@ -241,11 +242,11 @@ Dry-run output is also JSON, but it describes the contract instead of a review:
           "type": "object",
           "properties": {
             "title": { "type": "string" },
-            "severity": { "type": "string" },
+            "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
             "path": { "type": "string" },
-            "line": { "type": "number" },
+            "line": { "type": "integer" },
             "detail": { "type": "string" },
-            "confidence": { "type": "number" }
+            "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
           }
         }
       }

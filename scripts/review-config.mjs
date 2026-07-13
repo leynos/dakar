@@ -14,6 +14,20 @@ import { fileURLToPath } from 'node:url'
 
 const DEFAULT_REPO_CONFIGS = ['.coderabbit.yaml', '.coderabbit.yml', 'coderabbit.yaml', 'coderabbit.yml']
 
+/**
+ * Resolve the CodeRabbit-compatible review config path, trying sources in priority order.
+ *
+ * Searches, in order: explicit `--config` argument, well-known repository filenames,
+ * the user's XDG config directory, then the bundled example. Returns a result
+ * object that records every path checked so the workflow output is auditable.
+ *
+ * @param {object} [opts] - options bag.
+ * @param {string} [opts.repoRoot] - repository root to search (default: `process.cwd()`).
+ * @param {string} [opts.config] - explicit config path supplied by the caller.
+ * @param {string} [opts.packageRoot] - Dakar package root for the bundled example fallback.
+ * @param {object} [opts.env] - environment variable map (default: `process.env`).
+ * @returns {{ ok: boolean, config: string, source: string, checked: string[], error?: string }} resolution result.
+ */
 export function resolveReviewConfig({
   repoRoot = process.cwd(),
   config,
@@ -57,6 +71,14 @@ export function resolveReviewConfig({
   return { ok: true, config: bundledExample, source: 'example', checked }
 }
 
+/**
+ * Parse key-value `--flag value` pairs from an argument vector.
+ *
+ * Kebab-case flag names are converted to camelCase keys in the returned object.
+ *
+ * @param {string[]} argv - argument tokens to parse.
+ * @returns {object} map of camelCase option names to their string values.
+ */
 function parseArgs(argv) {
   const parsed = {}
   for (let index = 0; index < argv.length; index += 1) {
@@ -74,6 +96,11 @@ function parseArgs(argv) {
   return parsed
 }
 
+/**
+ * CLI entry point: run the `resolve` sub-command and print the JSON result.
+ *
+ * @param {string[]} argv - argument tokens starting with the sub-command name.
+ */
 function run(argv) {
   const [command, ...rest] = argv
   if (command !== 'resolve') {

@@ -8,13 +8,21 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { prepare } from '../scripts/review-state.mjs'
+import { prepare, withStateLock } from '../scripts/review-state.mjs'
 
 const SCRIPT = new URL('../scripts/review-state.mjs', import.meta.url).pathname
 
@@ -99,4 +107,74 @@ test('a pre-existing state file without a trailing newline stays well-formed aft
   const content = readFileSync(stateFile, 'utf8')
   assert.equal((content.match(/\[\[reviews\]\]/gu) || []).length, 2)
   assert.match(content, /abca"\n\[\[reviews\]\]/u)
+})
+
+test('withStateLock returns the mutate result and releases the lock', () => {
+  const stateFile = join(stateDir(), 'reviews.toml')
+  mkdirSync(dirname(stateFile), { recursive: true })
+
+  const value = withStateLock(stateFile, () => 'done')
+
+  assert.equal(value, 'done')
+  assert.equal(existsSync(`${stateFile}.lock`), false)
+})
+
+test('withStateLock rethrows the mutate error and still releases the lock', () => {
+  const stateFile = join(stateDir(), 'reviews.toml')
+  mkdirSync(dirname(stateFile), { recursive: true })
+  const boom = new Error('mutate boom')
+
+  assert.throws(
+    () =>
+      withStateLock(stateFile, () => {
+        throw boom
+      }),
+    /mutate boom/u,
+  )
+  assert.equal(existsSync(`${stateFile}.lock`), false)
+})
+
+test('withStateLock does not mask a successful write when lock cleanup fails', () => {
+  const stateFile = join(stateDir(), 'reviews.toml')
+  const lockPath = `${stateFile}.lock`
+  mkdirSync(dirname(stateFile), { recursive: true })
+
+  // Replace the lock file with a directory during the critical section so the
+  // release-time unlink fails. The successful result must still be returned.
+  const value = withStateLock(stateFile, () => {
+    rmSync(lockPath)
+    mkdirSync(lockPath)
+    return 'kept'
+  })
+
+  assert.equal(value, 'kept')
+  rmSync(lockPath, { recursive: true, force: true })
+})
+
+test('withStateLock reaps a stale lock left by a terminated process', () => {
+  const stateFile = join(stateDir(), 'reviews.toml')
+  const lockPath = `${stateFile}.lock`
+  mkdirSync(dirname(stateFile), { recursive: true })
+  writeFileSync(lockPath, '999999 abandoned\n')
+  // Backdate the lock well beyond the staleness threshold (seconds since epoch).
+  const stale = Date.now() / 1000 - 120
+  utimesSync(lockPath, stale, stale)
+
+  const value = withStateLock(stateFile, () => 'recovered')
+
+  assert.equal(value, 'recovered')
+  assert.equal(existsSync(lockPath), false)
+})
+
+test('withStateLock preserves a fresh lock it does not own', () => {
+  const stateFile = join(stateDir(), 'reviews.toml')
+  const lockPath = `${stateFile}.lock`
+  mkdirSync(dirname(stateFile), { recursive: true })
+  writeFileSync(lockPath, `${process.pid} fresh\n`)
+
+  // A recently touched lock must not be reaped; acquisition fails after the
+  // bounded backoff and the other holder's lock is left intact.
+  assert.throws(() => withStateLock(stateFile, () => 'should not run'), /could not acquire/u)
+  assert.equal(existsSync(lockPath), true)
+  rmSync(lockPath, { force: true })
 })

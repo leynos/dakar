@@ -179,6 +179,50 @@ test('prepare ignores recorded heads older than the current merge base', () => {
   assert.match(second.warnings[0], /current merge base/u)
 })
 
+function createLinearFeatureRepo(count) {
+  const repo = mkdtempSync(join(tmpdir(), 'dakar-state-repo-'))
+  git(repo, ['init', '-b', 'main'])
+  git(repo, ['remote', 'add', 'origin', 'git@github.com:Acme/Widget.git'])
+  writeFileSync(join(repo, 'README.md'), '# Test\n')
+  git(repo, ['add', 'README.md'])
+  git(repo, ['commit', '-m', 'initial'])
+  git(repo, ['checkout', '-b', 'feature/linear'])
+  const commits = []
+  for (let index = 0; index < count; index += 1) {
+    writeFileSync(join(repo, `change-${index}.txt`), `change ${index}\n`)
+    git(repo, ['add', `change-${index}.txt`])
+    git(repo, ['commit', '-m', `change ${index}`])
+    commits.push(git(repo, ['rev-parse', 'HEAD']))
+  }
+  return { repo, commits }
+}
+
+test('prepare advances to the furthest reachable head even when recorded out of order', () => {
+  const { repo, commits } = createLinearFeatureRepo(5)
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))
+  const first = prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'main', head: 'HEAD' })
+
+  // Record a further-along head (commits[3]) BEFORE a nearer one (commits[1]);
+  // selection must rank by ancestry, not by recording order.
+  for (const index of [3, 1]) {
+    appendReview({
+      stateFile: first.stateFile,
+      reviewId: `review-${index}`,
+      baseCommit: first.mergeBase,
+      headCommit: commits[index],
+      commitCount: 1,
+      findingsTotal: 0,
+      summary: `recorded ${index}`,
+    })
+  }
+
+  const second = prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'main', head: 'HEAD' })
+  assert.equal(second.reviewBase, commits[3])
+  assert.equal(second.lastReviewedHead, commits[3])
+  assert.equal(second.commitCount, 1)
+  assert.deepEqual(second.changedFiles, ['change-4.txt'])
+})
+
 test('prepare reports alreadyReviewed at a recorded head', () => {
   const repo = createRepo()
   const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))

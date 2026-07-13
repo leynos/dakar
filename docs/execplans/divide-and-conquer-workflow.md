@@ -457,14 +457,14 @@ Live smoke command:
 
 ```bash
 odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-smoke-adapters","maxTasks":1,"maxCandidates":1,"maxFindings":1}'
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-smoke-adapters","maxTasks":2,"maxCandidates":1,"maxFindings":1}'
 ```
 
-Observed result on 2026-06-30T00:13:06Z: run
-`20260630-000828-d9d5a6` returned `ok: true`, recorded history under
-`/tmp/dakar-review-smoke-adapters/dakar/leynos/dakar/initial-workflow/reviews.toml`,
-used `codex-high` for the source task, verified one stale candidate as
-`not_applicable`, and produced a pass report with no accepted findings.
+The smoke run must be re-executed with the corrected `maxTasks:2` command to
+capture fresh evidence. The expected observable outcome is that both a
+changed-file review task and the review-summary task run, verification and
+synthesis complete successfully, and a history entry is recorded under the
+configured `stateRoot`.
 
 Quality criteria:
 

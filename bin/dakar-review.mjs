@@ -40,6 +40,12 @@ const OPTION_SPECS = new Map([
   ['version', { key: 'version', value: false }],
 ])
 
+/**
+ * Parse the CLI argument vector into a plain options object.
+ *
+ * @param {string[]} argv - argument tokens, excluding the node/script prefix.
+ * @returns {object} key-value map of resolved option values.
+ */
 function parseArgs(argv) {
   const parsed = {}
   for (let index = 0; index < argv.length; index += 1) {
@@ -68,6 +74,13 @@ function parseArgs(argv) {
   return parsed
 }
 
+/**
+ * Parse a CLI option value as a finite number, throwing on invalid input.
+ *
+ * @param {string} name - option name used in the error message.
+ * @param {string} value - raw string value from the argument vector.
+ * @returns {number} the parsed numeric value.
+ */
 function numberValue(name, value) {
   const number = Number(value)
   if (!Number.isFinite(number)) {
@@ -76,6 +89,12 @@ function numberValue(name, value) {
   return number
 }
 
+/**
+ * Extract and parse the first JSON object found in a string of text.
+ *
+ * @param {string} text - raw text, typically ODW stdout.
+ * @returns {object} the parsed JSON object.
+ */
 function extractJson(text) {
   const start = text.indexOf('{')
   if (start === -1) {
@@ -84,6 +103,12 @@ function extractJson(text) {
   return JSON.parse(text.slice(start))
 }
 
+/**
+ * Extract the ODW run identifier from the output of a non-waiting `odw run` call.
+ *
+ * @param {string} text - raw stdout from ODW.
+ * @returns {string} the run id in `YYYYMMDD-HHMMSS-<hex>` format.
+ */
 function extractRunId(text) {
   const match = text.match(/\b\d{8}-\d{6}-[0-9a-f]+\b/u)
   if (!match) {
@@ -92,6 +117,15 @@ function extractRunId(text) {
   return match[0]
 }
 
+/**
+ * Read `AGENTS.md` from the repository root, returning null when absent.
+ *
+ * Content is truncated to 24,000 characters so large files do not overflow
+ * the workflow argument budget.
+ *
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @returns {{ source: string, content: string, truncated: boolean } | null} parsed instructions, or null.
+ */
 function readAgentInstructions(repoRoot) {
   const agentsPath = join(repoRoot, 'AGENTS.md')
   if (!existsSync(agentsPath)) {
@@ -105,6 +139,13 @@ function readAgentInstructions(repoRoot) {
   }
 }
 
+/**
+ * Resolve configuration and assemble the `--args` object passed to the ODW workflow.
+ *
+ * @param {object} options - parsed CLI options from `parseArgs`.
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @returns {object} workflow arguments ready to be JSON-serialised.
+ */
 function buildWorkflowArgs(options, repoRoot) {
   const resolvedConfig = resolveReviewConfig({ repoRoot, config: options.config, packageRoot })
   if (resolvedConfig.ok === false) {
@@ -138,6 +179,14 @@ function buildWorkflowArgs(options, repoRoot) {
   return workflowArgs
 }
 
+/**
+ * Build the `odw run` argument array for launching the workflow.
+ *
+ * @param {object} options - parsed CLI options.
+ * @param {object} workflowArgs - serialisable workflow arguments.
+ * @param {boolean} wait - when true, appends `--wait` and `--timeout` flags.
+ * @returns {string[]} argument array suitable for passing to `spawnSync`.
+ */
 function buildOdwRunArgs(options, workflowArgs, wait) {
   const odwArgs = [
     'run',
@@ -157,6 +206,15 @@ function buildOdwRunArgs(options, workflowArgs, wait) {
   return odwArgs
 }
 
+/**
+ * Build an `odw <command> <runId>` argument array, optionally including `--runs-root`.
+ *
+ * @param {string} command - ODW sub-command (e.g. `'result'` or `'logs'`).
+ * @param {object} options - parsed CLI options.
+ * @param {string} runId - ODW run identifier.
+ * @param {string[]} [extraArgs] - additional arguments appended after the run id.
+ * @returns {string[]} argument array suitable for passing to `spawnSync`.
+ */
 function buildRunScopedArgs(command, options, runId, extraArgs = []) {
   const args = [command, runId]
   if (options.runsRoot) {
@@ -166,6 +224,12 @@ function buildRunScopedArgs(command, options, runId, extraArgs = []) {
   return args
 }
 
+/**
+ * Write the workflow result to stdout in the requested format.
+ *
+ * @param {object} output - the ODW workflow result object.
+ * @param {string} format - `'json'` or `'markdown'`.
+ */
 function printWorkflowOutput(output, format) {
   if (format === 'markdown') {
     process.stdout.write(`${output.reportMarkdown || JSON.stringify(output, null, 2)}\n`)
@@ -174,6 +238,15 @@ function printWorkflowOutput(output, format) {
   }
 }
 
+/**
+ * Extract a single-line summary sentence from a workflow output object.
+ *
+ * Returns the first non-heading, non-empty line from `reportMarkdown`, or a
+ * generic fallback when none is present.
+ *
+ * @param {object} output - the ODW workflow result object.
+ * @returns {string} a one-line summary suitable for embedding in a TOML field.
+ */
 function summarizeReport(output) {
   const markdown = String(output.reportMarkdown || '').trim()
   if (!markdown) {
@@ -271,6 +344,13 @@ function recoverRecordFailure(output) {
   return output
 }
 
+/**
+ * Run ODW synchronously with `--wait`, suppressing all log output to stderr.
+ *
+ * @param {object} options - parsed CLI options.
+ * @param {object} workflowArgs - workflow arguments to pass via `--args`.
+ * @returns {{ output?: object, status?: number }} parsed result or an exit status on failure.
+ */
 function runOdwQuiet(options, workflowArgs) {
   const result = spawnSync(options.odwBin || 'odw', buildOdwRunArgs(options, workflowArgs, true), {
     encoding: 'utf8',
@@ -291,6 +371,17 @@ function runOdwQuiet(options, workflowArgs) {
   return { output: recoverRecordFailure(extractJson(result.stdout)) }
 }
 
+/**
+ * Spawn `odw logs --follow` and stream its output to stderr, resolving when it exits.
+ *
+ * Kills the child process and resolves with exit code 124 if `timeoutMs` elapses
+ * before the log stream closes naturally.
+ *
+ * @param {string} odwBin - path or name of the ODW executable.
+ * @param {string[]} args - argument array for the `odw logs` sub-command.
+ * @param {number} timeoutMs - maximum milliseconds to follow before killing.
+ * @returns {Promise<number>} exit code of the child, or 124 on timeout.
+ */
 function followOdwLogs(odwBin, args, timeoutMs) {
   return new Promise((resolvePromise) => {
     const child = spawn(odwBin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -313,6 +404,14 @@ function followOdwLogs(odwBin, args, timeoutMs) {
   })
 }
 
+/**
+ * Poll `odw result` until the run completes or the deadline is reached.
+ *
+ * @param {object} options - parsed CLI options.
+ * @param {string} runId - ODW run identifier to query.
+ * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
+ * @returns {Promise<object>} the parsed and (if needed) record-recovered workflow result.
+ */
 async function waitForOdwResult(options, runId, timeoutMs = (options.timeout || 900) * 1000) {
   const odwBin = options.odwBin || 'odw'
   const deadline = Date.now() + timeoutMs
@@ -336,6 +435,16 @@ async function waitForOdwResult(options, runId, timeoutMs = (options.timeout || 
   throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 900}s`)
 }
 
+/**
+ * Run ODW asynchronously, streaming live log output to stderr while preserving a clean stdout result.
+ *
+ * Launches a non-waiting `odw run`, follows logs via {@link followOdwLogs}, then
+ * fetches the final result via {@link waitForOdwResult}.
+ *
+ * @param {object} options - parsed CLI options.
+ * @param {object} workflowArgs - workflow arguments to pass via `--args`.
+ * @returns {Promise<{ output?: object, status?: number }>} parsed result or an exit status on failure.
+ */
 async function runOdwWithTelemetry(options, workflowArgs) {
   const odwBin = options.odwBin || 'odw'
   const result = spawnSync(odwBin, buildOdwRunArgs(options, workflowArgs, false), {
@@ -391,6 +500,11 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   }
 }
 
+/**
+ * Return the CLI help string describing all available options.
+ *
+ * @returns {string} formatted usage text.
+ */
 function usage() {
   return `Usage: dakar-review [options]
 
@@ -417,6 +531,12 @@ Options:
 `
 }
 
+/**
+ * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
+ *
+ * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
+ * @returns {Promise<number>} process exit code; 0 on success, 1 on failure.
+ */
 async function run(argv) {
   const options = parseArgs(argv)
   if (options.help) {

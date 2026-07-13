@@ -28,27 +28,17 @@ if ! command -v node >/dev/null 2>&1; then
   exit 127
 fi
 
-bun_home=${BUN_INSTALL:-"$HOME/.bun"}
-bun_global_dir=$bun_home/install/global
-bun_global_manifest=$bun_global_dir/package.json
-bun_global_lock=$bun_global_dir/bun.lock
-
-if [ -f "$bun_global_manifest" ]; then
-  node - "$bun_global_manifest" <<'NODE'
-const { readFileSync, writeFileSync } = require('node:fs')
-
-const manifestPath = process.argv[2]
-const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-if (manifest.dependencies && Object.prototype.hasOwnProperty.call(manifest.dependencies, 'dakar')) {
-  delete manifest.dependencies.dakar
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-}
-NODE
+if ! command -v odw >/dev/null 2>&1; then
+  printf '%s\n' "install.sh: odw is required but was not found on PATH" >&2
+  printf '%s\n' "install.sh: install the ODW CLI (open-dynamic-workflows) and ensure 'odw' is on PATH before running Dakar" >&2
+  exit 127
 fi
 
-if [ -f "$bun_global_lock" ] && grep -q '"dakar"' "$bun_global_lock"; then
-  rm -f "$bun_global_lock"
-fi
+# Remove any prior global Dakar install so a re-run starts from a clean state.
+# bun remove updates the global package.json and shared bun.lock atomically and
+# leaves other global packages untouched; ignore its failure when Dakar is not
+# currently installed.
+bun remove -g dakar >/dev/null 2>&1 || true
 
 bun install -g "$script_dir"
 

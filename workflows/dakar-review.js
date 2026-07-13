@@ -202,6 +202,15 @@ const RECORD_SCHEMA = {
   required: ['ok'],
 }
 
+/**
+ * Produce a canonical `<model>/<reasoning>` name string from a model spec.
+ *
+ * Passes through strings that already contain a `/` unchanged, treating them
+ * as fully-qualified model identifiers.
+ *
+ * @param {object|string} spec - model spec object with `model` and optional `reasoning`, or a plain string.
+ * @returns {string} fully-qualified model name.
+ */
 function modelName(spec) {
   const model = String(spec.model || spec)
   if (model.includes('/')) {
@@ -210,27 +219,67 @@ function modelName(spec) {
   return `${model}/${spec.reasoning || 'default'}`
 }
 
+/**
+ * Strip the reasoning suffix from a fully-qualified model name, returning the base model id.
+ *
+ * @param {string} model - model name, optionally in `<base>/<reasoning>` form.
+ * @returns {string} base model identifier before any `/`.
+ */
 function baseModel(model) {
   return String(model).split('/')[0]
 }
 
+/**
+ * Extract the reasoning level from a `<model>/<reasoning>` string, or return a fallback.
+ *
+ * @param {string} model - model name, optionally in `<base>/<reasoning>` form.
+ * @param {string} fallback - value to return when no reasoning suffix is present.
+ * @returns {string} reasoning level string.
+ */
 function reasoningFromModel(model, fallback) {
   const parts = String(model).split('/')
   return parts[1] || fallback
 }
 
+/**
+ * Map a reasoning level to the corresponding ODW adapter name.
+ *
+ * Returns `'codex-medium'` for any unrecognised reasoning value.
+ *
+ * @param {string} reasoning - reasoning level: `'low'`, `'medium'`, or `'high'`.
+ * @returns {string} ODW adapter name.
+ */
 function adapterForReasoning(reasoning) {
   return ['low', 'medium', 'high'].includes(reasoning) ? `codex-${reasoning}` : 'codex-medium'
 }
 
+/**
+ * Quote a value as a single-quoted POSIX shell word, escaping embedded single quotes.
+ *
+ * @param {unknown} value - value to quote; coerced to string.
+ * @returns {string} single-quoted shell word safe for inclusion in shell command strings.
+ */
 function shellWord(value) {
   return `'${String(value).replace(/'/g, "'\"'\"'")}'`
 }
 
+/**
+ * Find the review model spec assigned to a given role, falling back to the first configured model.
+ *
+ * @param {string} role - role label (e.g. `'high'`, `'mini'`, `'spark'`).
+ * @returns {object} model spec from `REVIEW_MODELS`.
+ */
 function modelForRole(role) {
   return REVIEW_MODELS.find((spec) => spec.role === role) || REVIEW_MODELS[0]
 }
 
+/**
+ * Format the repository AGENTS.md content as a labelled block for inclusion in agent prompts.
+ *
+ * Returns a no-op placeholder string when no agent instructions are available.
+ *
+ * @returns {string} formatted instructions block.
+ */
 function agentInstructionsBlock() {
   if (!AGENT_INSTRUCTIONS || !AGENT_INSTRUCTIONS.content) {
     return 'Repository AGENTS.md: none found at the repository root.'
@@ -245,6 +294,12 @@ function agentInstructionsBlock() {
     .join('\n')
 }
 
+/**
+ * Classify a file path into a review task kind based on its name and extension.
+ *
+ * @param {string} path - repo-relative file path.
+ * @returns {'tests'|'docs'|'dependency'|'config'|'source'|'unknown'} task kind.
+ */
 function classifyPath(path) {
   if (/\b(test|tests|spec|__tests__)\b/u.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/u.test(path)) {
     return 'tests'
@@ -264,6 +319,14 @@ function classifyPath(path) {
   return 'unknown'
 }
 
+/**
+ * Split an array into consecutive sub-arrays of at most `size` elements.
+ *
+ * @template T
+ * @param {T[]} values - array to split.
+ * @param {number} size - maximum length of each chunk.
+ * @returns {T[][]} array of chunks.
+ */
 function chunk(values, size) {
   const chunks = []
   for (let index = 0; index < values.length; index += size) {
@@ -272,6 +335,17 @@ function chunk(values, size) {
   return chunks
 }
 
+/**
+ * Build a task specification object for one review task.
+ *
+ * Selects a model role based on the task kind and derives adapter, model, and
+ * finding-count limits from the global configuration.
+ *
+ * @param {string} kind - task kind (e.g. `'source'`, `'tests'`, `'docs'`).
+ * @param {string[]} files - repo-relative file paths assigned to this task.
+ * @param {number} index - zero-based position within tasks of the same kind.
+ * @returns {object} task spec consumed by the review phase.
+ */
 function taskSpec(kind, files, index) {
   const role =
     kind === 'source' || kind === 'dependency'
@@ -296,10 +370,17 @@ function taskSpec(kind, files, index) {
   }
 }
 
-// Distribute a task budget across changed-file groups. Every group starts with
-// one slot; the remainder is handed to whichever group currently carries the
-// most files per slot, until the budget is exhausted or every group holds at
-// most one file per slot. Returns a Map of kind to slot count.
+/**
+ * Distribute a task-slot budget across changed-file groups proportionally.
+ *
+ * Every group starts with one slot; remaining slots are repeatedly awarded to
+ * the group with the highest files-per-slot load until the budget is exhausted
+ * or each group holds at most one file per slot.
+ *
+ * @param {{ kind: string, files: string[] }[]} groups - file groups to distribute across.
+ * @param {number} budget - total number of task slots available.
+ * @returns {Map<string, number>} map of task kind to allocated slot count.
+ */
 function distributeTaskSlots(groups, budget) {
   const slots = new Map(groups.map((group) => [group.kind, 1]))
   let remaining = budget - groups.length
@@ -326,6 +407,15 @@ function distributeTaskSlots(groups, budget) {
   return slots
 }
 
+/**
+ * Build the ordered task graph from the prepared review range descriptor.
+ *
+ * Groups changed files by kind, distributes the task-slot budget, chunks each
+ * group, and appends a mandatory `review-summary` task.
+ *
+ * @param {object} prepared - result from `review-state.mjs prepare`.
+ * @returns {object[]} ordered array of task spec objects.
+ */
 function buildTaskGraph(prepared) {
   const groups = new Map()
   for (const file of prepared.changedFiles || []) {
@@ -362,6 +452,11 @@ function buildTaskGraph(prepared) {
   return tasks
 }
 
+/**
+ * Return a static example task graph used in dry-run mode.
+ *
+ * @returns {object[]} array of representative task spec objects.
+ */
 function defaultTaskGraph() {
   return [
     taskSpec('source', ['src/example.js'], 0),
@@ -372,6 +467,13 @@ function defaultTaskGraph() {
   ].slice(0, Math.max(1, MAX_TASKS))
 }
 
+/**
+ * Build the natural-language prompt sent to a review-phase Codex agent.
+ *
+ * @param {object} task - task spec produced by `taskSpec`.
+ * @param {object} prepared - result from `review-state.mjs prepare`.
+ * @returns {string} multi-line prompt string.
+ */
 function taskPrompt(task, prepared) {
   const files = task.files.join(', ') || '(no changed files)'
   const fileArgs = task.files.map(shellWord).join(' ')
@@ -405,6 +507,12 @@ function taskPrompt(task, prepared) {
   ].join('\n')
 }
 
+/**
+ * Compute a deduplication key for a review candidate based on path, line, and title.
+ *
+ * @param {object} candidate - candidate finding object.
+ * @returns {string} colon-separated deduplication key.
+ */
 function candidateKey(candidate) {
   return [
     candidate.path || '',
@@ -413,11 +521,16 @@ function candidateKey(candidate) {
   ].join(':')
 }
 
-// Guard candidate paths before they reach shell-quoted verification commands.
-// The primary defence is a whitelist: a candidate may only reference a file that
-// git reported as changed in the reviewed range. The `..`/absolute-path checks
-// are defence-in-depth so a path can never traverse outside REPO_ROOT even if
-// the changed-file set were ever populated with something unexpected.
+/**
+ * Validate that a candidate file path is safe to use in a shell command.
+ *
+ * Guards against absolute paths, parent-directory traversal, and any path that
+ * is not present in the set of files git reported as changed in the reviewed range.
+ *
+ * @param {string} path - candidate-supplied file path.
+ * @param {Set<string>} changedFiles - set of repo-relative changed file paths from git.
+ * @returns {boolean} true when the path is safe to use in verification commands.
+ */
 function isSafeCandidatePath(path, changedFiles) {
   if (typeof path !== 'string' || path === '') {
     return false
@@ -435,6 +548,17 @@ function isSafeCandidatePath(path, changedFiles) {
   return changedFiles.has(path)
 }
 
+/**
+ * Merge, deduplicate, and whitelist candidates from all review-phase task results.
+ *
+ * Drops candidates with missing titles, duplicate keys, or unsafe paths. Caps
+ * the output at `MAX_CANDIDATES`.
+ *
+ * @param {object[]} taskResults - raw agent outputs from the Review phase.
+ * @param {object[]} taskGraph - task spec objects used to enrich each candidate.
+ * @param {string[]} changedFiles - git-reported changed file paths for path whitelisting.
+ * @returns {object[]} normalised, deduplicated candidate list.
+ */
 function normalizeCandidates(taskResults, taskGraph, changedFiles) {
   const seen = new Set()
   const changed = new Set(changedFiles || [])
@@ -476,6 +600,13 @@ function normalizeCandidates(taskResults, taskGraph, changedFiles) {
   return candidates
 }
 
+/**
+ * Build the natural-language prompt sent to a verification-phase Codex agent.
+ *
+ * @param {object} candidate - normalised candidate finding.
+ * @param {object} prepared - result from `review-state.mjs prepare`.
+ * @returns {string} multi-line prompt string.
+ */
 function verificationPrompt(candidate, prepared) {
   // candidate.path is guaranteed by normalizeCandidates() to be a whitelisted,
   // traversal-free changed file, so building sourcePath from it cannot escape
@@ -506,6 +637,12 @@ function verificationPrompt(candidate, prepared) {
   ].join('\n')
 }
 
+/**
+ * Count discarded findings by their rejection status.
+ *
+ * @param {{ status: string }[]} discarded - discarded finding objects.
+ * @returns {Record<string, number>} map of status string to occurrence count.
+ */
 function discardReasonCounts(discarded) {
   const counts = {}
   for (const item of discarded) {
@@ -514,6 +651,16 @@ function discardReasonCounts(discarded) {
   return counts
 }
 
+/**
+ * Filter candidates to those accepted (or severity-downgraded) by verifier verdicts.
+ *
+ * Merges verdict metadata onto each accepted candidate and caps the result at
+ * `MAX_FINDINGS`.
+ *
+ * @param {object[]} candidates - normalised candidates from the Review phase.
+ * @param {object[]} verdicts - verifier verdict objects from the Verify phase.
+ * @returns {object[]} accepted findings enriched with verification metadata.
+ */
 function acceptedFromVerdicts(candidates, verdicts) {
   const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]))
   const accepted = []
@@ -536,6 +683,13 @@ function acceptedFromVerdicts(candidates, verdicts) {
   return accepted.slice(0, MAX_FINDINGS)
 }
 
+/**
+ * Collect verdicts that rejected a candidate, including those referencing unknown candidate ids.
+ *
+ * @param {object[]} candidates - normalised candidates from the Review phase.
+ * @param {object[]} verdicts - verifier verdict objects from the Verify phase.
+ * @returns {object[]} discarded finding records with rejection reason and evidence.
+ */
 function discardedFromVerdicts(candidates, verdicts) {
   const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]))
   const discarded = []

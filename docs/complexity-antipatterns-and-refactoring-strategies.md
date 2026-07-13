@@ -123,7 +123,7 @@ maintenance costs.[^8]
 | Primary Focus | testability and execution paths | readability and human understanding |
 | Basis | rooted in graph theory | breaks in flow and nesting |
 | Nesting Penalty | counts paths only | adds cost for each nested level |
-| Method Calls | each path in a called method counts | generally free unless recursive |
+| Method Calls | measured separately per routine; a callee's paths do not add to the caller | generally free unless recursive |
 | Logical Operators | each condition is a decision point | mixed operators raise the score |
 | Use Case Example | high Cyclomatic Complexity, low cognitive load in simple switch | deep nesting raises cognitive load |
 
