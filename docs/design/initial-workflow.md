@@ -1,8 +1,11 @@
 # Dakar incremental review workflow design
 
-Status: First routed workflow pass implemented
+Status: First routed workflow pass implemented; compiled source boundary proposed
 Audience: Developers implementing and operating Dakar workflows
-Date: 2026-06-29
+Date: 2026-07-14
+Companion documents:
+[`docs/dakar-review-design.md`](../dakar-review-design.md) and
+[`docs/adr-001-compile-odw-workflow-from-typescript.md`](../adr-001-compile-odw-workflow-from-typescript.md)
 
 ## Problem
 
@@ -471,10 +474,12 @@ task objects with `taskId`, `dependsOn`, `kind`, `assignedModel`,
 `contextPack`, `maxFindings`, `schema`, and `verificationPolicy`. It should not
 hide the graph inside a monolithic prompt.
 
-Current ODW realities shape the implementation:
+Current ODW realities shape the runtime artefact:
 
-- The workflow file must use a literal `meta` export, injected primitives, and
-  no workflow-level imports.
+- `workflows/dakar-review.js` must use one literal `meta` export, injected
+  primitives, a top-level return, and no runtime imports. ADR 001 proposes
+  compiling that artefact from ordinary TypeScript modules rather than making
+  the runtime file the maintainable source boundary.
 - Deterministic filesystem and git work stay in local helpers or host-invoked
   commands because ODW agent calls do not share a reliable mutable filesystem
   in copy mode.
@@ -515,6 +520,40 @@ The candidate and verdict schemas should include enough fields for audit:
 ODW prompts should be built from stable prefix blocks first and dynamic
 per-task tails last. This matches prompt-cache guidance and also keeps smaller
 agents from receiving broad context they cannot use.
+
+
+### Compiled component boundary
+
+The proposed source of truth is `src/workflows/dakar-review/`. The component
+tree separates contracts that already exist in the monolith:
+
+- `meta.js` owns only the verbatim literal metadata export.
+- `main.ts` owns phases, agent dispatch, early returns, metrics, recording, and
+  final result assembly.
+- `types.ts` and `schemas.ts` own erased TypeScript shapes and runtime JSON
+  Schema contracts.
+- `config.ts` and `model-routing.ts` own argument defaults and adapter/model
+  selection.
+- `shell.ts` owns shell-word quoting.
+- `task-graph.ts` owns path classification, slot allocation, and task creation.
+- `candidates.ts` owns containment, normalization, caps, and verdict reduction.
+- `prompts.ts` owns stable prompt prefixes and dynamic tails.
+- `odw-globals.d.ts` declares injected ODW primitives for type-checking and
+  emits no runtime code.
+
+`main.ts` imports subsystem functions; subsystem modules never import
+`main.ts`. Run-scoped configuration passes into pure functions through explicit
+parameters. A factory requires a recorded reason and must not bind a value that
+changes between phases. Prompt construction receives the resolved policy path
+after the Resolve Config phase, so it cannot retain the initial `auto`
+placeholder. Candidate
+containment remains before verifier command construction.
+
+The compiler concatenates `meta.js` verbatim, a flat esbuild ESM bundle rooted
+at `main.ts`, and `return await workflowMain()`. It rejects loader hazards
+before replacing the committed artefact. The compiler mechanism and generated
+artefact policy are normative in ADR 001; the contributor rules belong in
+`docs/developers-guide.md`.
 
 ## Scoping bounded tasks
 
@@ -869,6 +908,17 @@ The ODW script has a `dryRun` mode so syntax and metadata can be checked
 without launching review agents. The routed dry-run contract is covered by
 `tests/workflow-dry-run.test.mjs`; state-range behaviour is covered by
 `tests/review-state.test.mjs`.
+
+Compilation adds four verification boundaries without changing runtime
+behaviour:
+
+- TypeScript rejects non-erasable syntax and invalid cross-module shapes.
+- Compiler negative probes reject duplicate metadata, module wrappers,
+  surviving imports or exports, omitted declared runtime modules,
+  invalid entry counts, and loader-wrap parse failures.
+- Direct module tests replace helper tests that slice generated workflow text.
+- Freshness, ODW dry-run, CLI, and isolated live-smoke checks exercise the
+  generated artefact that users run.
 
 ## Failure modes
 

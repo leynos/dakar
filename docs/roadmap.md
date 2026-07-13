@@ -252,59 +252,61 @@ changes. See `docs/dakar-review-design.md` §§8-9.
   - Success: synthesis reports when verifier fan-out or low-value task types
     dominate spend.
 
-## 5. Vertical slice: Workflow decomposition without breaking ODW
+## 5. Vertical slice: Compile the ODW workflow from typed modules
 
-Idea: if Dakar decomposes the workflow around ODW-supported boundaries rather
-than ordinary JavaScript imports, maintainability can improve without losing
-workflow validity.
+Idea: if Dakar keeps typed source modules and compiles them into one checked,
+committed ODW artefact, maintainability can improve without adding runtime
+module or child-workflow boundaries.
 
 This phase addresses the valid module-size concern from self-review while
-respecting ODW's script dialect.
+preserving the installed workflow, CLI, state, and result contracts.
 
-### 5.1. Decide the decomposition boundary
+### 5.1. Adopt the source-to-artefact boundary
 
-This step answers which parts of the workflow can move safely and which must
-remain in the ODW file. See `docs/dakar-review-design.md` §4.
+This step establishes the architectural and compiler contracts before moving
+behaviour. See `docs/dakar-review-design.md` §4 and ADR 001.
 
-- [ ] 5.1.1. Document which workflow concerns can move to child workflows,
-  helper scripts, or generated prompt artefacts.
-  - Success: one accepted design update explains why ordinary imports are not
-    the decomposition mechanism.
-- [ ] 5.1.2. Identify the smallest split that reduces the main workflow below
-  the configured size target.
+- [ ] 5.1.1. Accept the TypeScript source and generated ODW artefact decision.
+  - Success: ADR 001 and the companion designs agree on source ownership,
+    module boundaries, rejected alternatives, and compatibility invariants.
+- [ ] 5.1.2. Add the fail-closed compiler, TypeScript restriction, and freshness
+  gates without behavioural decomposition.
   - Requires 5.1.1.
-  - Success: the split keeps dry-run validation and live review semantics.
+  - Success: a mechanically equivalent `workflows/dakar-review.js` is generated
+    deterministically and passes existing dry-run and CLI tests.
 
-### 5.2. Extract stable artefacts before code movement
+### 5.2. Extract directly testable workflow components
 
-This step answers whether schemas and prompt templates can become external
-artefacts without adding runtime ambiguity. See
-`docs/dakar-review-design.md` §§5 and 10.
+This step moves existing contracts behind typed module boundaries without
+changing review behaviour. See `docs/design/initial-workflow.md` and the
+approved ExecPlan.
 
-- [ ] 5.2.1. Move JSON Schemas into validated artefacts or a helper that ODW
-  can consume safely.
+- [ ] 5.2.1. Extract types, schemas, configuration, model routing, task
+  planning, and candidate processing with direct module tests.
   - Requires 5.1.2.
-  - Success: dry-run still exposes the exact candidate, verdict, and synthesis
-    schemas.
-- [ ] 5.2.2. Extract prompt templates while preserving stable prefix caching.
+  - Success: helper tests import source modules instead of slicing generated
+    workflow text, and dry-run schemas and routing remain unchanged.
+- [ ] 5.2.2. Extract prompt construction and reduce `main.ts` to orchestration.
   - Requires 5.2.1.
-  - Success: prompts remain inspectable and static prefixes stay ahead of
-    dynamic diff content.
+  - Success: resolved policy, AGENTS context, shell quoting, candidate
+    containment, phase order, metrics, and record recovery remain unchanged.
 
-### 5.3. Validate decomposition end to end
+### 5.3. Validate generated workflow parity end to end
 
-This step answers whether the split preserves the review workflow's observable
-contract. See `docs/dakar-review-design.md` §12.
+This step proves that the source split preserves the workflow users run. See
+`docs/dakar-review-design.md` §12.
 
-- [ ] 5.3.1. Run dry-run and CLI contract checks against the decomposed
-  workflow.
+- [ ] 5.3.1. Run compile-time, module, freshness, dry-run, and CLI contract
+  checks against the generated workflow.
   - Requires 5.2.2.
-  - Success: output schemas, telemetry mode, record recovery, and AGENTS-aware
-    context remain unchanged.
-- [ ] 5.3.2. Run one isolated live review smoke after decomposition.
+  - Success: type restrictions, compiler negative probes, deterministic builds,
+    output schemas, telemetry mode, record recovery, and AGENTS-aware context
+    all pass their documented gates.
+- [ ] 5.3.2. Run one isolated live review and repeat it at the recorded head.
   - Requires 5.3.1.
-  - Success: the workflow prepares, reviews, verifies, synthesizes, records,
-    and exposes ledger data without manual repair.
+  - Success: the workflow prepares, reviews, verifies, synthesizes, records the
+    reviewed head under isolated XDG state, and the second run returns
+    `skipped: true` without duplicate history.
 
 ## 6. Deferred extensions after the core v1 promise
 

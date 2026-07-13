@@ -4,6 +4,8 @@ This guide is for maintainers working on Dakar's local ODW review workflow.
 The primary architecture reference is
 [`docs/dakar-review-design.md`](dakar-review-design.md). The initial design
 record remains at [`docs/design/initial-workflow.md`](design/initial-workflow.md),
+the proposed compilation boundary is recorded in
+[`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md),
 and delivery plans live under [`docs/execplans/`](execplans/).
 
 ## 1. Local validation
@@ -48,7 +50,7 @@ entries by hand.
 
 ## 2. Workflow implementation conventions
 
-`workflows/dakar-review.js` must remain a pure ODW workflow file:
+`workflows/dakar-review.js` must remain a pure ODW runtime artefact:
 
 - keep a literal `meta` export;
 - do not add Node imports;
@@ -57,6 +59,47 @@ entries by hand.
 - use JSON Schemas for every agent output consumed by workflow JavaScript;
 - filter null or failed slots after `parallel()` and `pipeline()`;
 - keep reductions deterministic and independent of completion order.
+
+ADR 001 proposes moving the maintainable source to
+`src/workflows/dakar-review/` while keeping that runtime contract unchanged.
+After the decision is accepted and implemented, never hand-edit the generated
+artefact. Edit the source tree, run `make workflow-build`, and commit source and
+artefact together.
+
+The proposed source tree has these responsibilities:
+
+- `meta.js`: one literal metadata export, concatenated verbatim;
+- `main.ts`: the composition root, phase transitions, agent dispatch, metrics,
+  record input, and final result;
+- `odw-globals.d.ts`: ambient declarations for every injected ODW primitive;
+- `types.ts` and `schemas.ts`: erased cross-module types and runtime JSON
+  Schemas;
+- `config.ts` and `model-routing.ts`: argument defaults and adapter/model
+  selection;
+- `shell.ts`: the shared shell-word quoting authority;
+- `task-graph.ts`: path classification, slot distribution, and task creation;
+- `candidates.ts`: candidate containment, normalization, and verdict
+  reduction; and
+- `prompts.ts`: stable prompt prefixes and dynamic prompt tails.
+
+Keep the graph acyclic ESM. Relative imports use explicit `.ts` extensions,
+type-only dependencies use `import type`, and TypeScript remains restricted to
+erasable syntax. ODW primitives are ambient and must never be imported.
+
+Use pure functions with explicit configuration parameters by default.
+Introduce a factory only when a dependency is genuinely bound once and record
+the reason in the design or ExecPlan decision log. Never bind a value that
+changes between phases: prompt construction must receive the policy path
+resolved by the Resolve Config phase rather than capture the initial `auto`
+placeholder. Internal bundle names are not interfaces; only the exact
+`workflowMain` entry is load-bearing. Declare every runtime module in the build
+manifest and wire it from `main.ts` so the compiler can compare the manifest
+with esbuild's metafile.
+
+Source tests should import the narrow module they exercise. Do not slice the
+generated artefact to recover helpers: esbuild may normalize quotes, remove
+comments, and reorder declarations. Artefact tests remain responsible for the
+ODW loader shape, dry-run contract, CLI integration, and installed behaviour.
 
 The workflow should keep deterministic git and filesystem work in
 `scripts/review-state.mjs`. Agent prompts may ask Codex to run that helper, but
@@ -142,8 +185,9 @@ reports include only accepted findings.
 
 When adding a new task kind, update these places together:
 
-- `TASK_KINDS` in `workflows/dakar-review.js`;
-- `buildTaskGraph()` and `taskSpec()`;
+- `TASK_KINDS`, `buildTaskGraph()`, and `taskSpec()` in
+  `workflows/dakar-review.js` before ADR 001 is implemented, or their
+  `src/workflows/dakar-review/task-graph.ts` definitions afterwards;
 - the dry-run contract test in `tests/workflow-dry-run.test.mjs`;
 - the workflow contract section in `docs/design/initial-workflow.md`;
 - user-facing behaviour in `docs/users-guide.md` if the change affects
@@ -172,6 +216,8 @@ contracts belong in `tests/workflow-dry-run.test.mjs`.
 Update `docs/users-guide.md` for user-visible command, argument, result, or
 state-path changes. Update this developer's guide for maintainer-facing
 conventions. Update `docs/design/initial-workflow.md` for architecture and
-component contract changes. Use an Architecture Decision Record only when the
-decision is narrow, accepted, and important to preserve independently from the
-living design.
+component contract changes. Update `docs/dakar-review-design.md` when system
+boundaries or verification invariants change. Use an Architecture Decision
+Record when a narrow architectural choice is important to preserve
+independently from the living design; proposed records must remain visibly
+proposed until approved.
