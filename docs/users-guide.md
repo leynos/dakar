@@ -17,10 +17,10 @@ The installer calls Bun with the absolute checkout path and exposes
 `dakar-review`. The package remains private; the command is meant for local or
 git-based installation, not npm publication. `install.sh` accepts no install
 arguments; run `./install.sh --help` for its short usage text.
-Repeated installer runs first run `bun remove -g dakar` to drop any prior
-global Dakar package before reinstalling, so a previous interrupted
-installation does not leave duplicate `dakar` entries behind; this leaves the
-shared Bun lockfile and other global packages intact.
+On each repeated installer run, `install.sh` first executes
+`bun remove -g dakar` before reinstalling, preventing an interrupted
+installation from leaving duplicate `dakar` entries while keeping the shared
+Bun lockfile and other global packages intact.
 
 If you prefer to call Bun directly, use an absolute path or `file:` URL:
 

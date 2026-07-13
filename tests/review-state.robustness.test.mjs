@@ -22,7 +22,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { prepare, withStateLock } from '../scripts/review-state.mjs'
+import { prepare, reapStaleLock, withStateLock } from '../scripts/review-state.mjs'
 
 const SCRIPT = new URL('../scripts/review-state.mjs', import.meta.url).pathname
 
@@ -177,4 +177,70 @@ test('withStateLock preserves a fresh lock it does not own', () => {
   assert.throws(() => withStateLock(stateFile, () => 'should not run'), /could not acquire/u)
   assert.equal(existsSync(lockPath), true)
   rmSync(lockPath, { force: true })
+})
+
+test('reapStaleLock preserves a replacement lock', () => {
+  const stale = { dev: 1, ino: 2, mtimeMs: 1_000 }
+  const replacement = { dev: 1, ino: 3, mtimeMs: 1_000 }
+  let statCalls = 0
+  let unlinked = false
+
+  const retry = reapStaleLock('/state.lock', {
+    now: () => 60_000,
+    stat: () => [stale, replacement][statCalls++],
+    unlink: () => {
+      unlinked = true
+    },
+  })
+
+  assert.equal(retry, false)
+  assert.equal(unlinked, false)
+})
+
+test('reapStaleLock preserves a lock refreshed before unlink', () => {
+  const stale = { dev: 1, ino: 2, mtimeMs: 1_000 }
+  const refreshed = { ...stale, mtimeMs: 50_000 }
+  let statCalls = 0
+  let unlinked = false
+
+  const retry = reapStaleLock('/state.lock', {
+    now: () => 60_000,
+    stat: () => [stale, refreshed][statCalls++],
+    unlink: () => {
+      unlinked = true
+    },
+  })
+
+  assert.equal(retry, false)
+  assert.equal(unlinked, false)
+})
+
+test('reapStaleLock retries when the stale lock vanishes before the second stat', () => {
+  const stale = { dev: 1, ino: 2, mtimeMs: 1_000 }
+  let statCalls = 0
+
+  const retry = reapStaleLock('/state.lock', {
+    now: () => 60_000,
+    stat: () => {
+      statCalls += 1
+      if (statCalls === 1) return stale
+      throw Object.assign(new Error('vanished'), { code: 'ENOENT' })
+    },
+  })
+
+  assert.equal(retry, true)
+})
+
+test('reapStaleLock retries when the stale lock vanishes during unlink', () => {
+  const stale = { dev: 1, ino: 2, mtimeMs: 1_000 }
+
+  const retry = reapStaleLock('/state.lock', {
+    now: () => 60_000,
+    stat: () => stale,
+    unlink: () => {
+      throw Object.assign(new Error('vanished'), { code: 'ENOENT' })
+    },
+  })
+
+  assert.equal(retry, true)
 })

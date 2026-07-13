@@ -353,23 +353,44 @@ const STALE_LOCK_MS = 30_000
  * A stale or already-vanished lock is removed so acquisition can proceed.
  *
  * @param {string} lockPath - path to the lock sentinel file.
+ * @param {object} [operations] - injectable filesystem and clock operations.
+ * @param {typeof statSync} [operations.stat] - lock stat operation.
+ * @param {typeof unlinkSync} [operations.unlink] - lock unlink operation.
+ * @param {() => number} [operations.now] - current time in milliseconds.
  * @returns {boolean} true if the caller should retry acquisition immediately.
  */
-function reapStaleLock(lockPath) {
+function reapStaleLock(lockPath, { stat = statSync, unlink = unlinkSync, now = Date.now } = {}) {
   let stats
   try {
-    stats = statSync(lockPath)
+    stats = stat(lockPath)
   } catch (error) {
     if (error.code === 'ENOENT') {
       return true
     }
     throw error
   }
-  if (Date.now() - stats.mtimeMs < STALE_LOCK_MS) {
+  if (now() - stats.mtimeMs < STALE_LOCK_MS) {
+    return false
+  }
+  let freshStats
+  try {
+    freshStats = stat(lockPath)
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return true
+    }
+    throw error
+  }
+  if (
+    freshStats.dev !== stats.dev ||
+    freshStats.ino !== stats.ino ||
+    freshStats.mtimeMs !== stats.mtimeMs ||
+    now() - freshStats.mtimeMs < STALE_LOCK_MS
+  ) {
     return false
   }
   try {
-    unlinkSync(lockPath)
+    unlink(lockPath)
   } catch (error) {
     if (error.code !== 'ENOENT') {
       return false
