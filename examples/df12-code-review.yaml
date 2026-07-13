@@ -1,0 +1,835 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-GB
+
+tone_instructions: Give feedback in the imperative mood. Avoid softeners such as "consider" or "you may". Use "~~~"
+  fences to wrap AI agent prompts rather than triple backticks. Use en-GB-oxendict (-ize/-yse/-our) spelling and
+  grammar.
+
+early_access: true
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary_instructions: If the PR includes a *new* execplan document, reference it in the summary. Try to link
+    changes to the relevant design document, issue, ADR or RFC.
+  high_level_summary_in_walkthrough: true
+  auto_title_instructions: >-
+    The title should be derived from the purpose of the original push to the PR.
+
+
+    If a PR contains a *new* execplan, the title should be drawn from the execplan, and must not describe the PR's
+    purpose as "planning" (unless the execplan describes a purely planning task).
+
+
+    Changes that implement a roadmap task must reference the roadmap item by number in the title, e.g., `(1.2.3.)`
+
+
+    Changes that fix an issue must reference the issue by number in the title, e.g., `(#123)`
+  collapse_walkthrough: false
+  estimate_code_review_effort: false
+  labeling_instructions:
+    - label: Roadmap
+      instructions: A task explicitly aligned with a roadmap item.
+    - label: Issue
+      instructions: A task explicitly aligned with a GitHub issue
+  auto_apply_labels: true
+  path_instructions:
+    - path: "**/*.rs"
+      instructions: >-
+        - Seek to keep the cognitive complexity of functions no more than 9.
+
+        - Adhere to single responsibility and CQRS
+
+        - Place function attributes **after** doc comments.
+
+        - Do not use `return` in single-line functions.
+
+        - Move conditionals with >2 branches into a predicate function.
+
+        - Avoid `unsafe` unless absolutely necessary.
+
+        - Every module **must** begin with a `//!` doc comment that explains the module's purpose and utility.
+
+        - Comments and docs must follow en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize,"
+        "synthesized," "polymerization," "analyse," "colour," "behaviour").
+
+        - Lints must not be silenced except as a **last resort**.
+          - `#[allow]` is **forbidden**.
+          - Only **narrowly scoped** `#[expect(lint, reason = "...")]` is allowed.
+          - No lint groups, no blanket or file-wide suppression.
+          - Lint suppressions must always include a justification.
+          - Include `FIXME:` with link if and only if a fix is expected.
+        - Where code is only used by specific features, it must be conditionally compiled or a conditional expectation
+        for unused_code applied.
+
+        - Use `rstest` fixtures for shared setup and to avoid repetition between tests.
+
+        - Replace duplicated tests with `#[rstest(...)]` parameterised cases.
+
+        - Prefer `mockall` for mocks/stubs.
+
+        - Prefer `.expect()` over `.unwrap()` in tests.
+
+        - `.expect()` and `.unwrap()` are forbidden outside of tests. Errors *must* be propagated.
+
+        - Ensure that any API or behavioural changes are reflected in the documentation in `docs/`
+
+        - Ensure that any completed roadmap steps are recorded in the appropriate roadmap in `docs/`
+
+        - Files must not exceed 400 lines in length
+          - Large modules must be decomposed
+          - Long match statements or dispatch tables should be decomposed by domain and collocated with targets
+          - Large blocks of inline data (e.g., test fixtures, constants or templates) must be moved to external files and inlined at compile-time or loaded at run-time.
+        - Environment access (env::set_var and env::remove_var) are always unsafe in Rust 2024 and MUST be marked as
+        such 
+          - For testing of functionality depending upon environment variables, dependency injection and the `mockable` crate are the preferred option.
+          - If mockable cannot be used, env mutations in tests MUST be wrapped in shared guards and mutexes placed in a shared `test_utils` or `test_helpers` crate.  Direct environment mutation is FORBIDDEN in tests.
+         - Rust Edition 2024 is a valid and finalized edition that was officially released as part of Rust 1.85.0 on February 20, 2025. It can be used in Cargo.toml files with `edition = "2024"`.
+        - Dependency versions in Cargo.toml should make use of implicit semver caret versioning and must not explicitly
+        include carets.
+    - path: "**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
+      instructions: >-
+        - Keep complexity low and functions small, meaningful, and single responsibility. Follow command/query
+        segregation.
+
+        - Prefer clear, explicit code over terse or obscure idioms. Extract helpers when they make intent clearer.
+
+        - Group related parameters into typed objects rather than long positional parameter lists.
+
+        - Prefer `const`, `readonly`, and returning new objects over mutating inputs.
+
+        - When branching becomes complex, extract predicate helpers or lookup tables. Exhaustive `switch` logic should
+        include a `never` guard.
+
+        - Every module must begin with a `/** @file ... */` JSDoc block explaining its purpose, responsibilities, and
+        usage.
+
+        - Comments and docs must follow en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize,"
+        "synthesized," "polymerization," "analyse," "colour," "behaviour"), except where external API names require
+        otherwise.
+
+        - Use ESM for source modules and public library surfaces.
+
+        - Prefer `node --test` and `node` for JavaScript and TypeScript script invocations. Prefer Makefile targets over
+        direct package scripts where available.
+
+        - Keep TypeScript compiler strictness enabled, including `strict`, `noUncheckedIndexedAccess`,
+        `exactOptionalPropertyTypes`, `noImplicitOverride`, `useUnknownInCatchVariables`,
+        `noPropertyAccessFromIndexSignature`, and `isolatedModules` where the project supports them.
+
+        - Export explicit public entry points through `package.json` `exports` and `types`. Avoid wildcard re-exports
+        that hide breaking changes.
+
+        - Validate I/O boundaries such as network responses, fixture payloads, and persisted data with explicit parsers
+        or a schema library where that dependency is justified.
+
+        - Prefer branded types, narrow domain types, or small immutable objects where they prevent accidental mixing of
+        unrelated primitive values.
+
+        - Centralize time, random number generation, and other ambient state behind adapters rather than calling
+        `Date.now()` or `Math.random()` directly in business logic.
+
+        - Use discriminated unions for recoverable conditions that callers branch on.
+
+        - Reserve `Error` subclasses for exceptional paths and attach `cause` where available.
+
+        - Convert unknown thrown values and third-party failures to project-owned error shapes at API or command
+        boundaries.
+
+        - Avoid non-null assertions and unchecked casts in production code. Tests that need hard assertions must include
+        a failure message explaining the expected invariant.
+
+        - Lint and type suppressions must be a last resort, tightly scoped, and include a clear justification. Blanket
+        suppressions are forbidden.
+
+        - Use `node --test` for unit coverage and keep tests deterministic.
+
+        - Prefer factories and builders over repeated ad hoc fixture object literals.
+
+        - Replace duplicated tests with parameterised cases, compact table-driven loops, or property tests where the
+        behaviour spans a range of inputs, states, orderings, or transitions.
+
+        - Snapshot tests must be limited to meaningful output contracts, paired with semantic assertions, and normalized
+        for nondeterministic fields.
+
+        - Use behavioural tests for externally observable behaviour, integration contracts, persistence, command-line
+        behaviour, network boundaries, or other system-level behaviour.
+
+        - Prefer dependency injection over direct mutation of process-wide state such as environment variables, clocks,
+        random number generators, current working directory, or global fetch. If mutation is unavoidable, guard and
+        restore it in shared test helpers.
+
+        - Prefer structured diagnostics or explicit diagnostic events over ad hoc `console.log` output in library code.
+        Libraries must not install global loggers, metrics exporters, or process-wide handlers as an import side effect.
+
+        - Direct dependency versions should use caret requirements unless a narrower range is explicitly justified.
+        Avoid wildcard, broad inequality, or open-ended version ranges.
+
+        - Commit lockfiles and rebuild them deliberately when major tool upgrades require it.
+
+        - Files must not exceed 400 logical lines:
+          - Decompose large modules into feature-oriented files
+          - Split large `switch` statements or dispatch tables by domain and collocate with targets
+          - Move bulky fixtures, templates, or snapshots to external files when appropriate.
+    - path: "**/*.md"
+      instructions: >-
+        - Avoid 2nd person or 1st person pronouns ("I", "you", "we"), exceptions: README.md, BDD .feature files.
+
+        - Use en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize," "synthesized,"
+        "polymerization," "analyse," "colour," "behaviour").
+
+        - Headings must not be wrapped.
+
+        - Documents must start with a level 1 heading.
+
+        - Headings must correctly increase or decrease by no more than one level at a time
+
+        - Use GitHub-flavoured Markdown style for footnotes and endnotes.
+
+        - Numbered footnotes must be numbered by order of appearance in the document.
+
+        - The words "caveat" and "outwith" are acceptable in documentation.
+
+
+        ## Triage annotations
+
+
+        Include a "Triage:" paragraph followed by any of the following tags verbatim (with backticks) if they apply,
+        separated by spaces:
+
+
+        - For comments relating to spelling, include the text "`[type:spelling]`"
+
+        - For comments relating to grammatical errors, include the text "`[type:grammar]`"
+
+        - For comments relating to markdown syntax, include the text "`[type:syntax/md]`"
+
+        - For comments relating to style, include the text "`[type:docstyle]`"
+    - path: "**/*.py"
+      instructions: >-
+        - Keep C90 / mccabe complexity ≤ 9
+
+        - Follow single responsibility and CQRS (command/query segregation)
+
+        - Prefer structural pattern matching over `isinstance()` or imperative decomposition.
+
+        - Docstrings must follow the `numpy` style guide. Use a single-line summary for private functions and methods,
+        and full structured docs for all public interfaces.
+
+        - Move conditionals with >2 branches to predicate/helper functions
+
+        - Avoid `eval`, `exec`, `pickle`, monkey-patching, `ctypes`, unsafe shell
+
+        - Every module must begin with a triple-quoted docstring explaining its purpose, utility, and usage, including
+        example calls if appropriate.
+
+        - Comments and docs must follow en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize,"
+        "synthesized," "polymerization," "analyse," "colour," "behaviour").
+
+        - Lint suppressions:
+          - Blanket `# noqa`, file-level skips, and categories are **forbidden**
+          - Only narrow in-line disables (`# noqa: XYZ`) are permitted, must be accompanied by justification and used only as a last resort.
+          - If (and only if) a fix is required a `FIXME:` with a ticket link must be included
+        - Use `pytest` fixtures for shared setup (`conftest.py` or `fixtures/`)
+
+        - Replace duplicate tests with `@pytest.mark.parametrize`
+
+        - Prefer `pytest-mock` or `unittest.mock` for stubs/mocks
+
+        - Use `assert …, "message"` over bare asserts
+
+        - Reflect all API/behaviour changes in `docs/` and update roadmap on completion
+
+        - Files must not exceed 400 logical lines:
+          - Decompose large modules into subpackages
+          - Split large `match/case` or dispatch tables by domain and collocate with targets if appropriate
+          - Move bulky data (fixtures, templates) to external files for parsing at runtime
+        - Mutable defaults and shadowed built-ins are forbidden
+
+        - All code must have clear type hints using modern style (`A | B`, `list[str]`, `class Foo[A]:`, `type Bar =
+        int`, etc.), with ABC imports drawn from the correct stdlib module.
+
+        - All path manipulation must be performed using pathlib for cross platform safety. Do not use string
+        manipulation for extraction of path components or filename elements.
+
+        - Calls to typing.cast() should use strings rather than Python types to minimize the number of runtime imports.
+
+        - Type annotations should use PEP 604 style for union types e.g. (`X | Y`)
+  abort_on_close: false
+  auto_review:
+    auto_pause_after_reviewed_commits: 1
+  pre_merge_checks:
+    title:
+      requirements: The title must align with the original change in the PR. The title should only change when the scope of
+        the PR changes. If the change implements a roadmapped execplan, the roadmap item reference must be included in
+        the title, e.g. `(1.2.3.)`. If the change fixes an issue, the issue must be linked in the title with `(#nnn)`.
+    custom_checks:
+      - mode: error
+        name: Testing (Overall)
+        instructions: >-
+          All new functionality or behavioural changes must be guarded by substantive, rigorous, and well-founded tests.
+          Reviewers must be satisfied that the introduced tests genuinely exercise the changed behaviour rather than
+          merely increasing coverage, asserting implementation details, or checking that mocks were called.
+
+
+          Tests must not be vacuous. A test is vacuous if it would continue to pass after the relevant implementation
+          was removed, bypassed, inverted, replaced with a constant, or reduced to a no-op. Reviewers should look for
+          weak assertions, over-mocked dependencies, tautological expectations, unused fixtures, snapshots with no
+          meaningful oracle, and tests that merely verify the test setup rather than the product behaviour.
+
+
+          When reviewing tests, explicitly consider whether the test would fail for the most plausible incorrect
+          implementations of the change. If not, request stronger tests before merge.
+      - mode: warning
+        name: User-facing documentation
+        instructions: >-
+          New or changed user-facing functionality or behaviour must be clearly documented in the user's guide
+          (`docs/users-guide.md`).
+
+
+          Documentation must reflect the intended audience: API consumers for libraries, end users for tools or
+          applications. Where a product has multiple interface surfaces (e.g., a programatic API, a web UI and a CLI),
+          consider multiple `users-guide.md` documents.
+
+
+          The `README` should signpost core functionality, but should not descend into minutia. If the details concerned
+          do not answer "Why should I use this?", "How do I get started?" or "What makes this substantively different?"
+          it does not belong in the `README`.
+
+
+          Breaking changes, or new functionality should be signposted in an n+1 migration document (minor for pre-1.0.0,
+          major for post-1.0.0). Where new functionality requires a change in the approach to using the application or
+          library this must be clearly explained. Any renames, moves or conceptual changes in the UI for applications
+          must also be signposted.
+
+
+          If documentation is provided in multiple languages, following locales must be kept in sync with the lead
+          locale.
+      - mode: warning
+        name: Developer documentation
+        instructions: >-
+          New or changed internal APIs, architectural boundaries or abstractions, tooling or build requirements must be
+          clearly documented in the developer's guide (`docs/developers-guide.md`). Changes to the architecture or
+          system design must be reflected in the relevant design documents. Decisions must be recorded in the design
+          document or an ADR (depending on size and scope of the decision).
+
+
+          Completed roadmap items (if any) must be checked off, and if an execplan is present, it must be up to date,
+          reflecting the progress of the changes in the code.
+
+
+          If documentation is provided in multiple languages, following locales must be kept in sync with the lead
+          locale.
+      - mode: error
+        name: Module-level documentation
+        instructions: Language-specific source modules must carry appropriate module-level documentation clearly explaining
+          the module's purpose, utility and function. Rust modules use `//!`, JavaScript and TypeScript modules use
+          `/** @file ... */`, and Python modules use a triple-quoted module docstring. The documentation should also set
+          out the module's relationship to other components if not obvious.
+      - mode: warning
+        name: Testing (Unit and Behavioural)
+        instructions: Unit tests must verify meaningful local behaviour, edge cases, error paths, and invariants. Behavioural
+          tests must exercise the appropriate functional boundary and must not be disguised unit tests that only drive
+          internal helpers, mocks, or private implementation seams. End-to-end tests should be added where the change
+          affects externally observable workflows, integration contracts, persistence, command-line behaviour, network
+          boundaries, UI flows, or other system-level behaviour.
+      - mode: warning
+        name: Testing (Property / Proof)
+        instructions: Property tests, using proptest (Rust), Hypothesis (Python) or fast-check (TypeScript), or a bounded model
+          checker, such as Kani (Rust) or CrossHair (Python), should be recommended when the change introduces an
+          invariant over a range of inputs, states, orderings, or transitions. For introduced lemmas or proof
+          assumptions, an exhaustive proof, for example using Verus (Rust) or LemmaScript (TypeScript), should be
+          recommended. Any proof must be substantive, rigorous, and well-founded, not merely a restatement of the
+          assumed property. Axioms accepted in the proof must be genuinely axiomatic and not an excuse to avoid testing
+          stated assumptions.
+      - mode: warning
+        name: Testing (Compile-time / UI)
+        instructions: "For compile-time behaviour, a trybuild test is required. For text-based, structured, or UI-adjacent
+          output, snapshot tests should be recommended where appropriate. Snapshot tests must encode meaningful
+          behavioural expectations: they must not be so generic that they bless meaningless output, nor so brittle that
+          incidental formatting churn causes blithe failure cascades. Prefer focused snapshots, stable serialization,
+          explicit redaction of nondeterministic fields, and small semantic assertions around the snapshot when that
+          improves reviewability."
+      - mode: error
+        name: Unit Architecture
+        instructions: >-
+          Changes must preserve a clear separation between queries, commands, fallible operations, and side-effects.
+          Query paths must not perform writes, mutate externally visible state, trigger network calls, emit irreversible
+          side-effects, depend on wall-clock time without an explicit abstraction, or hide fallible work behind
+          apparently pure read APIs. Where a read operation can fail for environmental reasons, such as I/O, storage,
+          network access, permissions, parsing, locking, or remote service availability, that fallibility must be
+          explicit in the API and handled at an appropriate boundary.
+
+
+          Command paths may perform validation, mutation, persistence, publication, notification, or other side-effects,
+          but these responsibilities must be visible in their names, types, return values, and tests. Commands should
+          not smuggle query orchestration, presentation logic, or unrelated workflow policy into the same unit. If a
+          command needs data, it should obtain it through an explicit dependency or query service rather than reaching
+          through global state, hidden singletons, or ambient context.
+
+
+          Dependencies must be injectable at the boundary where they are needed. Code must avoid hard-coded clients,
+          clocks, random number generators, file systems, environment access, process execution, global registries,
+          static mutable state, and network handles unless they are deliberately isolated behind a small interface.
+          Dependency injection should improve substitutability and testability without producing an over-abstracted fog
+          machine of one-method traits. Prefer narrow, purpose-shaped interfaces over large service bags.
+
+
+          Components must remain composable. New functionality should be expressible as small units with explicit
+          inputs, outputs, errors, and side-effects. Avoid designs that require callers to construct half the
+          application to exercise one behaviour, or that entangle persistence, transport, business rules, formatting,
+          logging, metrics, and orchestration in the same object. Composition should happen at the edges; domain
+          behaviour should remain portable enough to test without theatrical scaffolding.
+
+
+          Each unit must have a single, coherent responsibility. Reviewers should challenge changes that make a
+          function, type, module, handler, or service responsible for multiple unrelated concerns. A useful smell is
+          whether the unit now has more than one reason to change: business policy, storage shape, transport protocol,
+          rendering format, retry strategy, authorization, observability, or test harness convenience. If so, request a
+          split unless the coupling is deliberately justified.
+
+
+          Tests must reflect these architectural boundaries. Query tests should prove that query paths are read-only and
+          do not trigger command-side effects. Command tests should verify intended mutations and side-effects through
+          explicit dependencies. Behavioural and end-to-end tests should exercise the real functional boundary, not a
+          unit test dressed in a cloak and calling itself architecture. Mocking should verify contracts at seams, not
+          implementation gossip inside the unit.
+
+
+          When reviewing, explicitly ask whether the change makes fallibility, state mutation, dependencies, and
+          responsibilities more visible or less visible. If the answer is “less visible”, request refactoring before
+          merge.
+      - mode: warning
+        name: Domain Architecture
+        instructions: >-
+          Domain logic must remain segregated from adapter, transport, persistence, framework, and infrastructure
+          concerns. Core domain code should express business concepts, invariants, policies, commands, queries, and
+          errors in domain language rather than leaking HTTP, SQL, ORM, filesystem, queue, UI, CLI, or vendor-specific
+          details into the model.
+
+
+          Use adapter boundaries where external systems, frameworks, storage engines, or protocols meet the domain.
+          Prefer adapter, command, and repository patterns where they make responsibilities clearer, dependencies
+          injectable, and tests more meaningful. Repositories should expose domain-shaped operations rather than
+          mirroring storage tables or remote API endpoints. Adapters should translate between external representations
+          and domain concepts without smuggling business policy into the translation layer.
+
+
+          Domain logic must not reach into adapter implementation concerns. It must not depend on transport headers,
+          database transactions, ORM sessions, serialization formats, retry mechanisms, HTTP status codes, environment
+          variables, filesystem paths, or client-specific error shapes unless those have first been translated into
+          explicit domain concepts.
+
+
+          Command units must be honest about the properties they claim to enforce. A command that validates uniqueness,
+          authorization, idempotency, ordering, consistency, or state transitions must either enforce that property at
+          the correct boundary or clearly delegate it to a dependency that guarantees it. Do not name, document, or test
+          a command as if it enforces an invariant when it only checks a local precondition, trusts stale data, or
+          relies on caller discipline.
+
+
+          When reviewing, ask whether the change makes the domain model more independent, more explicit, and easier to
+          test without infrastructure. If not, request a cleaner boundary before merge.
+      - mode: warning
+        name: Observability
+        instructions: >-
+          Changes that introduce or alter operational behaviour must provide enough observability for maintainers to
+          diagnose expected failures, degraded behaviour, and unexpected state transitions in production.
+
+
+          Logging must be placed at meaningful decision points and failure boundaries, not sprinkled through
+          implementation details. Logs must include stable contextual fields where useful, such as operation name,
+          request or correlation identifier, entity identifier, retry attempt, elapsed time, state transition, and error
+          category. Logs must not include secrets, credentials, tokens, raw personal data, customer payloads, or
+          high-cardinality fields unless explicitly justified.
+
+
+          Metrics must be added or updated when the change affects throughput, latency, error rates, queue depth, retry
+          behaviour, cache behaviour, resource consumption, or externally observable reliability. Metrics must have
+          bounded cardinality and clear names. A metric whose labels can grow with user IDs, request IDs, filenames,
+          email addresses, URLs, free-form error strings, or unbounded domain values must be rejected unless those
+          values are bucketed, hashed safely, or removed.
+
+
+          Tracing must be used where the change crosses process, service, storage, queue, network, or async task
+          boundaries. Spans should identify the logical operation and include timing-relevant attributes, but must avoid
+          sensitive payloads and unbounded labels.
+
+
+          New alerts must correspond to actionable failure modes. Do not add alerts for expected transient failures,
+          individual request failures, or symptoms already covered by a higher-quality signal. If a change introduces a
+          new operational failure mode, reviewers should ask whether it can be detected, diagnosed, and remediated
+          without reading source code or reproducing the issue locally.
+      - mode: error
+        name: Security and Privacy
+        instructions: >-
+          Changes must not introduce secrets, authentication bypasses, authorization gaps, injection risks, unsafe
+          deserialization, over-broad permissions, or accidental exposure of user, customer, or operationally sensitive
+          data.
+
+
+          Secrets must not appear in source code, tests, fixtures, snapshots, logs, documentation, comments, generated
+          files, or committed configuration. Test credentials must be clearly fake and unusable. Any new use of
+          environment variables, secret stores, tokens, keys, certificates, or credentials must keep secret values out
+          of logs, errors, telemetry, snapshots, and panic messages.
+
+
+          Authentication and authorization checks must occur at the correct trust boundary. A handler, command, job, or
+          adapter that performs privileged work must not rely on caller discipline unless the type, API, or enclosing
+          boundary makes that guarantee explicit. Reviewers should reject changes that move security decisions into
+          presentation code, client-side checks, untrusted request fields, or undocumented preconditions.
+
+
+          Inputs that cross trust boundaries must be validated, parsed, encoded, or parameterized according to the sink
+          they reach. SQL, shell commands, file paths, URLs, HTML, templates, regular expressions, serialization
+          formats, and query languages must not be constructed through unsafe string concatenation when safer APIs are
+          available.
+
+
+          Permissions must be minimal. New tokens, roles, IAM policies, filesystem permissions, network access, database
+          grants, and service scopes must be no broader than the operation requires. Wildcards, admin roles, global
+          write access, and cross-tenant access require explicit justification.
+
+
+          Privacy-sensitive data must be minimized. Changes must not expose raw personal data, customer content, tenant
+          identifiers, private metadata, or internal operational data through APIs, logs, traces, metrics, errors,
+          snapshots, caches, test fixtures, or documentation unless the exposure is intentional, necessary, and
+          protected at the correct boundary.
+      - mode: warning
+        name: Performance and Resource Use
+        instructions: >-
+          Changes must avoid avoidable algorithmic regressions, unbounded resource growth, excessive allocation,
+          unnecessary cloning, blocking work on hot paths, and repeated I/O where cached or batched access would be
+          appropriate.
+
+
+          Reviewers must check the expected input sizes and growth behaviour of new loops, joins, searches, sorts,
+          recursive walks, graph traversals, regular expressions, retries, polling loops, and background jobs. Code that
+          changes from linear to quadratic or worse behaviour must be justified with realistic bounds and tests or
+          benchmarks where the risk is material.
+
+
+          Memory use must be bounded by design. New collections, buffers, caches, queues, snapshots, task sets, and
+          accumulated results must have clear ownership, eviction, backpressure, size limits, streaming behaviour, or
+          documented input bounds. Code must not collect an unbounded iterator, response body, file, database result
+          set, or message stream into memory unless the bound is explicit and acceptable.
+
+
+          Avoid unnecessary cloning, copying, serialization, deserialization, formatting, allocation, and conversion in
+          hot paths. In Rust specifically, reviewers should challenge clones, reference-counted pointers, heap
+          allocation, dynamic dispatch, and string construction that appear to bypass ownership design rather than
+          express shared ownership or required lifetime separation.
+
+
+          I/O must be intentional. Avoid repeated database queries, filesystem walks, network calls, process execution,
+          lock acquisition, cache misses, or remote service calls inside per-item loops when batching, prefetching,
+          streaming, indexing, or caching would be more appropriate.
+
+
+          Blocking operations must not run on async executors, event loops, UI threads, request hot paths, or
+          latency-sensitive workers unless isolated through an appropriate blocking pool, queue, worker, or backpressure
+          mechanism. New retries, timeouts, and polling loops must have bounded attempts, jitter where appropriate, and
+          cancellation behaviour.
+
+
+          For material performance-sensitive changes, reviewers should request a benchmark, profiling evidence,
+          complexity note, load test, or regression test that reflects realistic input size rather than toy data.
+      - mode: warning
+        name: Concurrency and State
+        instructions: >-
+          Changes involving shared state, async execution, ordering, cancellation, locks, transactions, task lifetimes,
+          or parallelism must make the concurrency model explicit and test the behaviours most likely to fail under
+          interleaving.
+
+
+          Newly introduced shared mutable state should be avoided unless clearly justified. Prefer isolated ownership,
+          private state behind a narrow API, actor-style encapsulation, or message passing via channels/queues. If
+          shared mutability is required, keep it local, synchronize it explicitly, document its invariants, and test the
+          relevant concurrent or re-entrant paths.
+
+
+          Shared mutable state must be have a clear owner and synchronization strategy. Reviewers should reject changes
+          where state can be mutated through multiple paths without an explicit lock, transaction, actor, channel,
+          atomic protocol, ownership boundary, or single-threaded executor guarantee. Global mutable state, lazy
+          singletons, process-wide registries, and static caches require explicit justification and reset behaviour for
+          tests.
+
+
+          Locking must be narrow, ordered, and safe under failure. Code must not hold locks across awaits, blocking I/O,
+          callbacks, user-provided code, network calls, process execution, long computations, or re-entrant calls unless
+          the design explicitly requires it and documents why it is safe. Multiple locks must have a consistent
+          acquisition order. Lock poisoning, timeout, contention, and cancellation behaviour must be handled
+          deliberately.
+
+
+          Async tasks must have owned lifetimes. Spawned tasks, background workers, subscriptions, timers, watchers, and
+          streams must have clear cancellation, shutdown, error propagation, and resource cleanup. Fire-and-forget work
+          must be rejected unless loss, duplication, and shutdown behaviour are acceptable and documented.
+
+
+          Ordering guarantees must be honest. If correctness depends on FIFO processing, idempotency, monotonic
+          versions, causal ordering, deduplication, exactly-once effects, at-least-once delivery, or transaction
+          isolation, the implementation must enforce that property at the correct boundary. Do not claim an ordering or
+          consistency property that only holds in a single-threaded happy path.
+
+
+          State transitions must be atomic where partial updates would be externally observable or hard to recover.
+          Commands that update multiple stores, publish messages, mutate files, or combine persistence with side-effects
+          must define what happens on partial failure, retry, cancellation, and duplicate execution.
+
+
+          Tests should exercise risky interleavings where practical: cancellation during work, repeated retries,
+          duplicate messages, concurrent commands, lock contention, out-of-order events, stale reads, partial failures,
+          and shutdown while work is in flight. If deterministic testing is difficult, reviewers should request smaller
+          units, injectable schedulers or clocks, model tests, stress tests, loom-style tests, or property tests over
+          operation sequences.
+      - mode: warning
+        name: Architectural Complexity and Maintainability
+        instructions: >-
+          Changes must keep architectural complexity proportional to the problem being solved. Reviewers should
+          challenge new abstractions, layers, traits, interfaces, frameworks, registries, code generators, macros,
+          background workers, state machines, or orchestration mechanisms unless they simplify a real seam, isolate a
+          real dependency, enforce a real invariant, or remove demonstrable duplication.
+
+
+          Any introduced abstraction must either reduce net complexity at the point of introduction or have a clear,
+          stated reuse strategy. A new abstraction is justified if it makes the current change easier to understand,
+          test, extend, or verify without requiring future speculative work. If the abstraction is intended for reuse,
+          the PR must explain the expected reuse path, the kinds of consumers it is designed for, and why introducing it
+          now is better than waiting for the second concrete use case.
+
+
+          Do not introduce abstraction as a promissory note. Reviewers should reject generic traits, service layers,
+          adapters, builders, registries, configuration systems, or extension points that add indirection without an
+          immediate simplifying effect or a credible near-term reuse plan. Abstractions should have names, boundaries,
+          and contracts that reflect actual domain or architectural pressure rather than anticipated future shapes.
+
+
+          New architecture must have a clear maintenance story. A change should not make ordinary development require
+          knowledge of hidden lifecycle hooks, implicit registration, global mutable state, reflection-like discovery,
+          generated code paths, undocumented conventions, or multiple parallel extension mechanisms. Prefer explicit
+          construction, explicit dependencies, small modules, and boring composition unless the problem genuinely
+          requires something heavier.
+
+
+          Avoid circular package, crate, or module dependencies. Domain, application, adapter, and infrastructure layers
+          must form a directed dependency graph. If a new dependency edge creates or risks a cycle, reviewers should
+          request a boundary extraction, interface inversion, shared kernel module, adapter split, or relocation of
+          common types. Do not resolve cycles by adding global state, widening visibility, introducing callback tangles,
+          or moving unrelated concepts into a dumping-ground “common” package.
+
+
+          Shared code must have a coherent home. A new helper, trait, type, macro, utility, or abstraction should live
+          at the lowest layer that can own it without importing higher-level concerns. Reviewers should reject changes
+          that place domain concepts in infrastructure packages, adapter-specific types in shared modules, or one
+          feature’s private convenience code in a global utility namespace.
+
+
+          Do not introduce a not-invented-here implementation when the repository already contains an equivalent
+          implementation, abstraction, utility, command, repository, adapter, test helper, parser, serializer,
+          scheduler, retry policy, cache, configuration mechanism, or error type. Reuse the existing in-repo
+          implementation unless it is demonstrably unsuitable, and document the reason if a replacement or parallel
+          implementation is necessary.
+
+
+          Do not introduce a bespoke implementation when a pre-existing and approved third-party dependency in the
+          repository already provides the required behaviour. Prefer the established dependency for common concerns such
+          as parsing, serialization, validation, globbing, retry/backoff, time handling, IDs, URL handling,
+          cryptography, concurrency primitives, logging, tracing, metrics, temporary files, async utilities, and test
+          assertions. New custom code in these areas must be justified by a repo-specific requirement.
+
+
+          New dependencies also require scrutiny. Do not add a third-party dependency for trivial functionality,
+          abandoned packages, unmaintained crates, large transitive dependency trees, duplicate functionality,
+          incompatible licences, or behaviour that the repository already implements well. If adding a dependency is
+          justified, prefer small, maintained, well-scoped libraries that match the project’s existing dependency
+          policy.
+
+
+          Reviewers should ask whether the change reduces the number of concepts a future maintainer must understand. If
+          it adds a new concept, the concept must earn its keep through clearer boundaries, safer invariants, better
+          reuse, simpler tests, or reduced operational risk. If the change merely adds another way to do something the
+          codebase already does, request consolidation before merge.
+      - mode: error
+        name: Rust Compiler Lint Integrity
+        instructions: >-
+          Rust changes must preserve the compiler’s ability to detect genuinely unused code, unused imports, stale
+          helper surfaces, and unnecessary ownership work. Do not add or retain `#[allow(dead_code)]`,
+          `#[allow(unused_imports)]`, `#[allow(unused)]`, or equivalent broad lint suppressions where they prevent the
+          compiler from reporting real unused functions, methods, fields, modules, constants, imports, re-exports, or
+          test helpers.
+
+
+          Lint suppressions must not be used to hide overly broad module boundaries. If a shared test-support module,
+          facade, prelude, or re-export block causes unused-code warnings because it is compiled into binaries or
+          harnesses that do not use it, narrow the compilation boundary instead. Prefer harness-specific support roots,
+          local imports, smaller modules, `cfg` gates, or direct inclusion of helpers only where they are needed. The
+          compiled module graph should reflect real use.
+
+
+          Unused imports and dead-code warnings must not be silenced by artificial references. Do not add `touch_*`
+          helpers, `const _: fn(...) = ...` anchors, signature assertions, fake reads, re-export-only references, or
+          other lint appeasement code unless they serve a real behavioural purpose. Such references do not count as
+          usage during review.
+
+
+          Rust changes must not use excessive `clone()` calls to hide unclear ownership, overly broad lifetimes, awkward
+          borrowing boundaries, or avoidable data movement. A clone should express a real ownership decision, not merely
+          pacify the borrow checker. Reviewers should treat unexplained cloning of `String`, `Vec`, `HashMap`,
+          `PathBuf`, large domain structs, request or response payloads, AST nodes, configuration trees, buffers, or
+          collections inside loops as suspicious until justified.
+
+
+          Prefer borrowing, narrower scopes, ownership transfer, iterator references, split data structures, smaller
+          helper APIs, or explicit lifetime-aware interfaces where those choices preserve clarity. If a function only
+          needs to read a value, it should normally accept a reference rather than require the caller to clone. If only
+          part of a value is needed, prefer passing that part rather than cloning the containing structure. If multiple
+          consumers need access, consider whether shared ownership, interior mutability, `Cow`, an arena, an identifier
+          handle, or a more precise data model better represents the domain.
+
+
+          Clones are acceptable when they are cheap, intentional, and semantically meaningful. Examples include cloning
+          `Arc` or `Rc` to record shared ownership, cloning small value objects where the cost is negligible and clearer
+          than lifetime plumbing, taking an owned snapshot before mutation, moving owned data into a thread or async
+          task, preserving an immutable input for diagnostics, or crossing an API boundary that genuinely requires owned
+          data. Even then, prefer forms that make intent visible, such as `Arc::clone(&value)` for reference-counted
+          ownership.
+
+
+          Do not replace one borrow-checker error with a trail of `.clone()` calls unless the resulting ownership model
+          is still the simplest honest representation of the code. Clones introduced during implementation should be
+          revisited before merge. If the clone is required for correctness, locality, concurrency, or snapshot
+          semantics, the surrounding code should make that reason evident. If the clone is only there because “otherwise
+          the compiler complains”, request a cleaner ownership boundary.
+
+
+          Where a helper is genuinely part of an in-progress implementation, use an expectation attribute rather than an
+          allowance. The expectation must be narrow, attached to the specific item, and linked in a comment to a GitHub
+          issue, roadmap task, or tracked implementation item that explains where and when the helper will be used. For
+          example:
+
+
+          ```rust
+
+          #[expect(
+              dead_code,
+              reason = "planned for trace replay mutation support; see #123"
+          )]
+
+          fn patch_trace_path(...) {
+              // ...
+          }
+
+          ```
+
+
+          An expectation is a temporary contract, not a hiding place. It must fail once the compiler no longer observes
+          the expected lint, and it must be removed when the planned use lands. Do not use module-level
+          `#![expect(...)]` unless every affected item is part of the same tracked implementation slice and the reason
+          names that slice explicitly.
+
+
+          Legacy code from deleted or replaced functionality must not be retained merely because it may be useful later.
+          If no current caller uses a helper, and no concrete tracked reuse exists, delete it. Version control already
+          preserves the old implementation. Keeping ghosts in the live tree increases review cost, confuses agents and
+          maintainers, and weakens compiler feedback.
+
+
+          Reviewers should ask whether the change makes unused code, stale helpers, and unnecessary ownership work
+          easier or harder for `rustc`, Clippy, and human reviewers to detect. If the answer is “harder”, request a
+          narrower module boundary, removal of stale code, removal or justification of unnecessary clones, or a properly
+          justified `#[expect(...)]` tied to planned work before merge.
+  tools:
+    github-checks:
+      timeout_ms: 120000
+    languagetool:
+      level: picky
+    clippy:
+      enabled: false
+    presidio:
+      enabled: false
+
+chat:
+  integrations:
+    jira:
+      usage: disabled
+    linear:
+      usage: disabled
+
+knowledge_base:
+  code_guidelines:
+    filePatterns:
+      - AGENTS.md
+      - .rules/*.md
+      - docs/**/*.md
+      - .cursor/*.mdc
+      - .rules/*.mdc
+  learnings:
+    scope: global
+  issues:
+    scope: global
+  jira:
+    usage: disabled
+  linear:
+    usage: enabled
+    team_keys:
+      - DF12
+  pull_requests:
+    scope: global
+  mcp:
+    usage: enabled
+  automatic_repository_linking: true
+
+code_generation:
+  docstrings:
+    path_instructions:
+      - path: "**/*.rs"
+        instructions: Function doc comments must be placed BEFORE function attributes.  New modules must have a module level
+          container comment (`//!`). Comment blocks must be wrapped. Example blocks should generally be marked `no_run`
+      - path: "**/*.py"
+        instructions: Always use `numpy` conventions for docstrings. Always wrap paragraphs at 88 columns. Provide code examples
+          where applicable.
+    language: en-GB
+  unit_tests:
+    path_instructions:
+      - path: "**/*.py"
+        instructions: Use pytest for Python tests. Use pytest parameterization where applicable. Prefer pytest monkeypatch to
+          unittest.mock. Use pytest fixtures to avoid repeated sections in tests. Use yield fixtures to effectively
+          teardown fixtures.
+      - path: "**/*.rs"
+        instructions: Use rstest for Rust tests where applicable. Use rstest parameterization where applicable. Prefer mockall
+          for mocking. Use rstest fixtures to avoid repeated sections in tests. Use RAII in fixtures to effectively
+          teardown resources.
+
+issue_enrichment:
+  auto_enrich:
+    enabled: true
+  labeling:
+    labeling_instructions:
+      - label: high
+        instructions: Likely to piss people off and likely to happen
+      - label: invalid
+        instructions: This doesn't seem right
+      - label: low
+        instructions: Ain't annoying anyone but the QA department
+      - label: medium
+        instructions: Could be disruptive, but might not happen
+      - label: enhancement
+        instructions: New feature or request
+      - label: critical
+        instructions: Fix this NOW or there WILL be hurt
+      - label: bug
+        instructions: Something isn't working
+      - label: testing
+        instructions: Someone forgot to write tests. Slap them with a trout.
+      - label: refactor
+        instructions: Sloppy code. Tidy up, you mucky human.
+      - label: wtf
+        instructions: You did what with macros?!?
+      - label: performance
+        instructions: Too sloooooow
+      - label: concurrency
+        instructions: Here be dragons
+      - label: documentation
+        instructions: Documentation ONLY
+    auto_apply_labels: true
