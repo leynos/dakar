@@ -41,3 +41,42 @@ test('repository config wins over user config', () => {
   assert.equal(result.source, 'repository')
   assert.equal(result.config, repoConfig)
 })
+
+test('bundled example is used only when it exists', () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'dakar-config-repo-'))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-config-xdg-'))
+  const packageRoot = mkdtempSync(join(tmpdir(), 'dakar-package-'))
+  const bundledExample = join(packageRoot, 'examples', 'df12-code-review.yaml')
+  mkdirSync(join(packageRoot, 'examples'), { recursive: true })
+  writeFileSync(bundledExample, 'reviews:\n  profile: bundled\n')
+
+  const result = resolveReviewConfig({
+    repoRoot,
+    packageRoot,
+    env: { XDG_CONFIG_HOME: xdgConfig },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.source, 'example')
+  assert.equal(result.config, bundledExample)
+  assert.equal(result.checked.at(-1), bundledExample)
+})
+
+test('missing bundled example returns a no-config failure', () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'dakar-config-repo-'))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-config-xdg-'))
+  const packageRoot = mkdtempSync(join(tmpdir(), 'dakar-package-'))
+  const bundledExample = join(packageRoot, 'examples', 'df12-code-review.yaml')
+
+  const result = resolveReviewConfig({
+    repoRoot,
+    packageRoot,
+    env: { XDG_CONFIG_HOME: xdgConfig },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.source, 'example')
+  assert.equal(result.config, bundledExample)
+  assert.equal(result.checked.at(-1), bundledExample)
+  assert.match(result.error, /bundled example config does not exist/u)
+})

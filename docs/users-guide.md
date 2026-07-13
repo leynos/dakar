@@ -59,6 +59,34 @@ argument is the branch or ref used to compute the merge base when there is no
 previous review history. The `repoRoot` argument points at the real git
 checkout being reviewed.
 
+## Command-line options
+
+`dakar-review` accepts the following options:
+
+- `--repo-root <path>` selects the Git checkout to review. The default is the
+  current working directory.
+- `--config <path>` selects a CodeRabbit YAML file relative to the repository
+  root.
+- `--base <ref>` selects the base ref for the first review. The default is
+  `origin/main`.
+- `--head <ref>` selects the head ref to review. The default is `HEAD`.
+- `--state-root <path>` overrides the review-history root.
+- `--max-tasks <number>`, `--max-candidates <number>`, and
+  `--max-findings <number>` override the workflow limits described below.
+- `--synthesis-model <model>` selects the synthesis model. The default is
+  `gpt-5.5`.
+- `--synthesis-reasoning <level>` selects `low`, `medium`, or `high` reasoning
+  for synthesis. The default is `high`.
+- `--timeout <seconds>` sets the ODW wait timeout. The default is `900`.
+- `--runs-root <path>` selects the ODW runs directory used for the run, logs,
+  and result.
+- `--format <json|markdown>` selects the output format. The default is `json`.
+- `--odw-bin <path>` selects the ODW executable. The default is `odw`.
+- `--telemetry` streams ODW logs to standard error while preserving the final
+  result on standard output.
+- `--dry-run` returns the workflow contract without launching review agents.
+- `--help` prints command usage, and `--version` prints the Dakar version.
+
 When `--config` is omitted, Dakar resolves review configuration in this order:
 
 1. Repository-local `.coderabbit.yaml`.

@@ -25,6 +25,7 @@ import assert from 'node:assert/strict'
 import { prepare, reapStaleLock, withStateLock } from '../scripts/review-state.mjs'
 
 const SCRIPT = new URL('../scripts/review-state.mjs', import.meta.url).pathname
+const DEAD_LOCK_MARKER = '999999 dead-owner 2026-01-01T00:00:00.000Z\n'
 
 function stateDir() {
   return mkdtempSync(join(tmpdir(), 'dakar-state-'))
@@ -155,7 +156,7 @@ test('withStateLock reaps a stale lock left by a terminated process', () => {
   const stateFile = join(stateDir(), 'reviews.toml')
   const lockPath = `${stateFile}.lock`
   mkdirSync(dirname(stateFile), { recursive: true })
-  writeFileSync(lockPath, '999999 abandoned\n')
+  writeFileSync(lockPath, DEAD_LOCK_MARKER)
   // Backdate the lock well beyond the staleness threshold (seconds since epoch).
   const stale = Date.now() / 1000 - 120
   utimesSync(lockPath, stale, stale)
@@ -179,6 +180,40 @@ test('withStateLock preserves a fresh lock it does not own', () => {
   rmSync(lockPath, { force: true })
 })
 
+test('withStateLock preserves an old live lock and its replacement', () => {
+  const stateRoot = stateDir()
+  const stateFile = join(stateRoot, 'dakar', 'acme', 'widget', 'feature-locking', 'reviews.toml')
+  const lockPath = `${stateFile}.lock`
+  const completedHead = 'd'.repeat(40)
+  const replacementMarker = `${process.pid} replacement-owner 2026-01-01T00:00:00.000Z\n`
+  mkdirSync(dirname(stateFile), { recursive: true })
+  writeFileSync(stateFile, `[[reviews]]\nhead_commit = "${completedHead}"\nstatus = "completed"\n`)
+
+  const value = withStateLock(stateFile, () => {
+    const stale = Date.now() / 1000 - 120
+    utimesSync(lockPath, stale, stale)
+    let competitorEntered = false
+
+    assert.throws(
+      () =>
+        withStateLock(stateFile, () => {
+          competitorEntered = true
+        }),
+      /could not acquire/u,
+    )
+    assert.equal(competitorEntered, false)
+
+    rmSync(lockPath)
+    writeFileSync(lockPath, replacementMarker)
+    return 'original-holder-completed'
+  })
+
+  assert.equal(value, 'original-holder-completed')
+  assert.equal(readFileSync(lockPath, 'utf8'), replacementMarker)
+  assert.match(readFileSync(stateFile, 'utf8'), new RegExp(`head_commit = "${completedHead}"`, 'u'))
+  rmSync(lockPath, { force: true })
+})
+
 test('reapStaleLock preserves a replacement lock', () => {
   const stale = { dev: 1, ino: 2, mtimeMs: 1_000 }
   const replacement = { dev: 1, ino: 3, mtimeMs: 1_000 }
@@ -187,6 +222,8 @@ test('reapStaleLock preserves a replacement lock', () => {
 
   const retry = reapStaleLock('/state.lock', {
     now: () => 60_000,
+    ownerAlive: () => false,
+    read: () => DEAD_LOCK_MARKER,
     stat: () => [stale, replacement][statCalls++],
     unlink: () => {
       unlinked = true
@@ -205,6 +242,8 @@ test('reapStaleLock preserves a lock refreshed before unlink', () => {
 
   const retry = reapStaleLock('/state.lock', {
     now: () => 60_000,
+    ownerAlive: () => false,
+    read: () => DEAD_LOCK_MARKER,
     stat: () => [stale, refreshed][statCalls++],
     unlink: () => {
       unlinked = true
@@ -221,6 +260,8 @@ test('reapStaleLock retries when the stale lock vanishes before the second stat'
 
   const retry = reapStaleLock('/state.lock', {
     now: () => 60_000,
+    ownerAlive: () => false,
+    read: () => DEAD_LOCK_MARKER,
     stat: () => {
       statCalls += 1
       if (statCalls === 1) return stale
@@ -236,6 +277,8 @@ test('reapStaleLock retries when the stale lock vanishes during unlink', () => {
 
   const retry = reapStaleLock('/state.lock', {
     now: () => 60_000,
+    ownerAlive: () => false,
+    read: () => DEAD_LOCK_MARKER,
     stat: () => stale,
     unlink: () => {
       throw Object.assign(new Error('vanished'), { code: 'ENOENT' })

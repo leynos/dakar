@@ -68,7 +68,16 @@ export function resolveReviewConfig({
 
   const bundledExample = join(resolve(packageRoot), 'examples', 'df12-code-review.yaml')
   checked.push(bundledExample)
-  return { ok: true, config: bundledExample, source: 'example', checked }
+  if (existsSync(bundledExample)) {
+    return { ok: true, config: bundledExample, source: 'example', checked }
+  }
+  return {
+    ok: false,
+    config: bundledExample,
+    source: 'example',
+    checked,
+    error: `bundled example config does not exist: ${bundledExample}`,
+  }
 }
 
 /**

@@ -7,13 +7,13 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { appendReview, prepare } from '../scripts/review-state.mjs'
+import { appendReview, prepare, resolveReachableHead } from '../scripts/review-state.mjs'
 
 function git(repo, args) {
   return execFileSync('git', ['-C', repo, ...args], {
@@ -152,6 +152,40 @@ test('prepare skips commits already recorded in reviews.toml', () => {
   assert.equal(second.reviewBase, first.headCommit)
   assert.equal(second.commitCount, 1)
   assert.deepEqual(second.changedFiles, ['two.txt'])
+})
+
+test('prepare resolves a unique recorded prefix to its canonical commit', () => {
+  const repo = createRepo()
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))
+  const first = prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'main', head: 'HEAD~1' })
+  mkdirSync(dirname(first.stateFile), { recursive: true })
+  writeFileSync(
+    first.stateFile,
+    `[[reviews]]\nhead_commit = "${first.headCommit.slice(0, 12)}"\nstatus = "completed"\n`,
+  )
+
+  const second = prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'main', head: 'HEAD' })
+
+  assert.equal(second.reviewBase, first.headCommit)
+  assert.equal(second.lastReviewedHead, first.headCommit)
+  assert.equal(second.commitCount, 1)
+})
+
+test('resolveReachableHead rejects an ambiguous recorded prefix', () => {
+  const reachable = new Map([
+    [`${'a'.repeat(39)}1`, 0],
+    [`${'a'.repeat(39)}2`, 1],
+  ])
+
+  assert.equal(resolveReachableHead(reachable, 'aaaaaaa'), null)
+})
+
+test('resolveReachableHead rejects non-canonical prefix syntax', () => {
+  const reachable = new Map([[`${'a'.repeat(39)}1`, 0]])
+
+  for (const recordedHead of ['', 'aaaaaa', 'not-a-sha', 'a'.repeat(41)]) {
+    assert.equal(resolveReachableHead(reachable, recordedHead), null)
+  }
 })
 
 test('prepare ignores recorded heads older than the current merge base', () => {

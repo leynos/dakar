@@ -8,7 +8,17 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import {
+  closeSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { stdin } from 'node:process'
@@ -178,6 +188,36 @@ function parseReviewedHeads(tomlText) {
 }
 
 /**
+ * Resolve a recorded review head to one canonical reachable commit.
+ *
+ * Full commit ids match directly. Historical abbreviated ids remain usable
+ * only when they identify exactly one commit on the current ancestry path.
+ *
+ * @param {Map<string, number>} reachableBases - canonical SHA to ancestry rank.
+ * @param {string} recordedHead - full or abbreviated recorded commit id.
+ * @returns {{ head: string, rank: number } | null} unique canonical match.
+ */
+function resolveReachableHead(reachableBases, recordedHead) {
+  if (!/^[0-9a-f]{7,40}$/u.test(recordedHead)) {
+    return null
+  }
+  if (reachableBases.has(recordedHead)) {
+    return { head: recordedHead, rank: reachableBases.get(recordedHead) }
+  }
+  let match = null
+  for (const [head, rank] of reachableBases) {
+    if (!head.startsWith(recordedHead)) {
+      continue
+    }
+    if (match !== null) {
+      return null
+    }
+    match = { head, rank }
+  }
+  return match
+}
+
+/**
  * Rank every commit that could serve as an incremental review base.
  *
  * A single `git rev-list --ancestry-path mergeBase..headCommit` yields exactly
@@ -264,25 +304,14 @@ function prepare(rawArgs) {
   const existing = readFile(stateFile)
   const reviewed = parseReviewedHeads(existing)
   const reachableBases = reachableReviewBases(repoRoot, mergeBase, headCommit)
-  const rankOfHead = (head) => {
-    if (reachableBases.has(head)) {
-      return reachableBases.get(head)
-    }
-    for (const [sha, rank] of reachableBases) {
-      if (sha.startsWith(head) || head.startsWith(sha)) {
-        return rank
-      }
-    }
-    return -1
-  }
   // Advance the review base to the recorded head that is furthest along the
   // ancestry path (smallest rank = closest to HEAD), independent of the order
   // in which reviews happened to be recorded. mergeBase remains the fallback.
   let furthestReachable = null
   for (const entry of reviewed) {
-    const rank = rankOfHead(entry.head)
-    if (rank >= 0 && (furthestReachable === null || rank < furthestReachable.rank)) {
-      furthestReachable = { head: entry.head, rank }
+    const resolvedHead = resolveReachableHead(reachableBases, entry.head)
+    if (resolvedHead && (furthestReachable === null || resolvedHead.rank < furthestReachable.rank)) {
+      furthestReachable = resolvedHead
     }
   }
   const reviewBase = furthestReachable ? furthestReachable.head : mergeBase
@@ -347,6 +376,39 @@ function sleepSync(milliseconds) {
 const STALE_LOCK_MS = 30_000
 
 /**
+ * Extract the owner process id from a lock sentinel.
+ *
+ * @param {string} marker - lock sentinel contents.
+ * @returns {number | null} positive owner pid, or null for an invalid marker.
+ */
+function lockOwnerPid(marker) {
+  const match = String(marker).match(/^(\d+)\s+/u)
+  if (!match) {
+    return null
+  }
+  const pid = Number(match[1])
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null
+}
+
+/**
+ * Check whether a process id still names a live process.
+ *
+ * Permission failures are treated as evidence of a live process. Unknown
+ * errors also fail safe so Dakar never reaps a lock it cannot prove abandoned.
+ *
+ * @param {number} pid - process id to probe.
+ * @returns {boolean} true unless the operating system reports no such process.
+ */
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code !== 'ESRCH'
+  }
+}
+
+/**
  * Reap a review-state lock left behind by a terminated process.
  *
  * A lock younger than {@link STALE_LOCK_MS} is considered live and left intact.
@@ -356,10 +418,15 @@ const STALE_LOCK_MS = 30_000
  * @param {object} [operations] - injectable filesystem and clock operations.
  * @param {typeof statSync} [operations.stat] - lock stat operation.
  * @param {typeof unlinkSync} [operations.unlink] - lock unlink operation.
+ * @param {typeof readFileSync} [operations.read] - lock marker read operation.
  * @param {() => number} [operations.now] - current time in milliseconds.
+ * @param {(pid: number) => boolean} [operations.ownerAlive] - owner liveness probe.
  * @returns {boolean} true if the caller should retry acquisition immediately.
  */
-function reapStaleLock(lockPath, { stat = statSync, unlink = unlinkSync, now = Date.now } = {}) {
+function reapStaleLock(
+  lockPath,
+  { stat = statSync, unlink = unlinkSync, read = readFileSync, now = Date.now, ownerAlive = processIsAlive } = {},
+) {
   let stats
   try {
     stats = stat(lockPath)
@@ -370,6 +437,28 @@ function reapStaleLock(lockPath, { stat = statSync, unlink = unlinkSync, now = D
     throw error
   }
   if (now() - stats.mtimeMs < STALE_LOCK_MS) {
+    return false
+  }
+  let marker
+  try {
+    marker = read(lockPath, 'utf8')
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return true
+    }
+    return false
+  }
+  const ownerPid = lockOwnerPid(marker)
+  if (ownerPid === null || ownerAlive(ownerPid)) {
+    return false
+  }
+  let freshMarker
+  try {
+    freshMarker = read(lockPath, 'utf8')
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return true
+    }
     return false
   }
   let freshStats
@@ -385,6 +474,7 @@ function reapStaleLock(lockPath, { stat = statSync, unlink = unlinkSync, now = D
     freshStats.dev !== stats.dev ||
     freshStats.ino !== stats.ino ||
     freshStats.mtimeMs !== stats.mtimeMs ||
+    freshMarker !== marker ||
     now() - freshStats.mtimeMs < STALE_LOCK_MS
   ) {
     return false
@@ -400,12 +490,38 @@ function reapStaleLock(lockPath, { stat = statSync, unlink = unlinkSync, now = D
 }
 
 /**
+ * Release a lock only while the path still identifies this holder's sentinel.
+ *
+ * @param {string} lockPath - path to the lock sentinel file.
+ * @param {string} marker - unique marker written by this holder.
+ * @param {{ dev: number, ino: number }} ownedStats - identity of the opened lock.
+ * @param {boolean} markerWritten - whether writing the unique marker succeeded.
+ */
+function releaseOwnedLock(lockPath, marker, ownedStats, markerWritten) {
+  try {
+    const currentMarker = readFileSync(lockPath, 'utf8')
+    const currentStats = statSync(lockPath)
+    if (
+      currentStats.dev !== ownedStats.dev ||
+      currentStats.ino !== ownedStats.ino ||
+      (markerWritten && currentMarker !== marker)
+    ) {
+      return
+    }
+    unlinkSync(lockPath)
+  } catch {
+    // A vanished or replaced lock already belongs to nobody or another holder.
+  }
+}
+
+/**
  * Run `mutate` while holding an exclusive lock on the state file.
  *
  * Serialises the read-modify-write in {@link appendReview} so a workflow record
  * step and a CLI recovery cannot interleave and clobber each other's entry. The
  * lock is an `O_EXCL` sentinel file next to the state file recording the owner
- * pid and timestamp; contending writers reap a stale lock (see
+ * pid, a unique acquisition token, and timestamp; contending writers reap a
+ * stale lock only after its owner exits (see
  * {@link reapStaleLock}) or wait with a bounded backoff before failing loudly.
  * Lock release is best-effort and never masks the outcome of `mutate`: a
  * successful write is still returned, and a failing write still throws its own
@@ -436,10 +552,14 @@ function withStateLock(stateFile, mutate) {
   if (handle === undefined) {
     throw new Error(`could not acquire review state lock at ${lockPath}`)
   }
+  const marker = `${process.pid} ${process.hrtime.bigint().toString(36)} ${new Date().toISOString()}\n`
+  const ownedStats = fstatSync(handle)
+  let markerWritten = false
   try {
-    // Record owner pid and time for diagnostics and staleness; failure to write
-    // this marker must not fail the critical section.
-    writeSync(handle, `${process.pid} ${new Date().toISOString()}\n`)
+    // Record a unique owner identity for liveness checks and safe release;
+    // failure to write this diagnostic marker must not fail the mutation.
+    writeSync(handle, marker)
+    markerWritten = true
   } catch {
     // Diagnostics only.
   }
@@ -458,11 +578,7 @@ function withStateLock(stateFile, mutate) {
   } catch {
     // The write above already reached disk; a failed close cannot lose it.
   }
-  try {
-    unlinkSync(lockPath)
-  } catch {
-    // A leftover lock is reaped as stale by the next writer.
-  }
+  releaseOwnedLock(lockPath, marker, ownedStats, markerWritten)
   if (failed) {
     throw failure
   }
@@ -640,4 +756,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   })
 }
 
-export { appendReview, parseReviewedHeads, prepare, reapStaleLock, remoteOwnerName, slug, withStateLock }
+export {
+  appendReview,
+  parseReviewedHeads,
+  prepare,
+  reapStaleLock,
+  remoteOwnerName,
+  resolveReachableHead,
+  slug,
+  withStateLock,
+}
