@@ -413,8 +413,31 @@ function candidateKey(candidate) {
   ].join(':')
 }
 
-function normalizeCandidates(taskResults, taskGraph) {
+// Guard candidate paths before they reach shell-quoted verification commands.
+// The primary defence is a whitelist: a candidate may only reference a file that
+// git reported as changed in the reviewed range. The `..`/absolute-path checks
+// are defence-in-depth so a path can never traverse outside REPO_ROOT even if
+// the changed-file set were ever populated with something unexpected.
+function isSafeCandidatePath(path, changedFiles) {
+  if (typeof path !== 'string' || path === '') {
+    return false
+  }
+  // Reject absolute POSIX paths and Windows drive-letter/UNC forms.
+  if (path.startsWith('/') || path.startsWith('\\') || /^[a-zA-Z]:[\\/]/u.test(path)) {
+    return false
+  }
+  // Reject any parent-directory traversal segment.
+  if (path.split(/[\\/]+/u).some((segment) => segment === '..')) {
+    return false
+  }
+  // Whitelist: the path must be one of the reviewed changed files, which are
+  // repo-relative and therefore always resolve within REPO_ROOT.
+  return changedFiles.has(path)
+}
+
+function normalizeCandidates(taskResults, taskGraph, changedFiles) {
   const seen = new Set()
+  const changed = new Set(changedFiles || [])
   const byTask = new Map(taskGraph.map((task) => [task.taskId, task]))
   const candidates = []
   for (const result of taskResults.filter(Boolean)) {
@@ -438,6 +461,11 @@ function normalizeCandidates(taskResults, taskGraph) {
       if (!candidate.title || !candidate.path || seen.has(key)) {
         continue
       }
+      // Drop candidates whose path is not a reviewed changed file or attempts
+      // path traversal, before it can flow into a verification command.
+      if (!isSafeCandidatePath(candidate.path, changed)) {
+        continue
+      }
       seen.add(key)
       candidates.push(candidate)
       if (candidates.length >= MAX_CANDIDATES) {
@@ -449,6 +477,9 @@ function normalizeCandidates(taskResults, taskGraph) {
 }
 
 function verificationPrompt(candidate, prepared) {
+  // candidate.path is guaranteed by normalizeCandidates() to be a whitelisted,
+  // traversal-free changed file, so building sourcePath from it cannot escape
+  // REPO_ROOT. The shell-quoting below remains as defence-in-depth.
   const sourcePath = `${REPO_ROOT}/${candidate.path}`
   return [
     'You are the high-reasoning verifier for Dakar code review.',
@@ -633,7 +664,7 @@ const taskResults = (
     ),
   )
 ).filter(Boolean)
-const candidates = normalizeCandidates(taskResults, taskGraph)
+const candidates = normalizeCandidates(taskResults, taskGraph, prepared.changedFiles)
 
 phase('Verify')
 const verdicts =
