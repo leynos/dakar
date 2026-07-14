@@ -23,6 +23,7 @@ async function fixture(t, { meta = 'export const meta = {}\n', main, modules = {
     entry: path.join(directory, 'main.ts'),
     banner: path.join(directory, 'meta.js'),
     outFile: path.join(directory, 'workflow.js'),
+    runtimeModules: ['main.ts'],
   }
 }
 

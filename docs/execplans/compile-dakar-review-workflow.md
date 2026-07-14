@@ -163,9 +163,12 @@ the `Decision log`, and request direction.
 - [x] (2026-07-14 05:14Z) WI-3: Added the parameterized, atomic, fail-closed
   esbuild compiler, committed generated artefact, bidirectional runtime
   manifest, freshness gate, compiler probes, and typed `workflowMain` spine.
-- [ ] WI-4: Extract schemas, types, configuration, and model routing.
-- [ ] WI-5: Extract the task graph and candidate processing.
-- [ ] WI-6: Extract prompt construction and reduce the entry to orchestration.
+- [x] (2026-07-14 06:47Z) WI-4: Extracted schemas, exact result types,
+  immutable configuration, model routing, and the sole shell-quoting helper.
+- [x] (2026-07-14 06:47Z) WI-5: Extracted pure task-graph and candidate
+  processing modules and replaced generated-source slicing with direct imports.
+- [x] (2026-07-14 06:47Z) WI-6: Extracted pure prompt construction, reduced
+  `main.ts` to orchestration, and added a fake-primitives artefact test.
 - [ ] WI-7: Synchronize contributor and user documentation.
 - [ ] WI-8: Prove deterministic, runtime, CLI, and state parity.
 
@@ -223,6 +226,15 @@ the `Decision log`, and request direction.
   next run passed.
   Impact: ENOSPC is treated as environmental evidence, not a product failure;
   cleanup is limited to inactive disposable cache/test paths.
+
+- Observation: a `Map` of prompts in the artefact harness could hide duplicate
+  agent labels, while broad fixture catches could turn assertion failures into
+  simulated ODW null slots.
+  Evidence: the first WI-4--WI-6 CodeRabbit review identified both blind spots;
+  exact label order/count and a dedicated `FixtureFailure` now distinguish
+  expected slot failure from a broken test fixture.
+  Impact: the harness proves that every expected orchestration call occurs once
+  and propagates unexpected errors.
 
 ## Decision log
 
@@ -294,6 +306,14 @@ the `Decision log`, and request direction.
   enter history and be skipped later.
   Date/Author: 2026-07-14, Codex after CodeRabbit implementation review.
 
+- Decision: freeze resolved model arrays and their entries, clone configured
+  entries, and reject object model specifications without a non-empty `model`.
+  Rationale: `WorkflowConfig` is an immutable cross-module contract; retaining
+  caller-owned mutable entries or coercing an invalid object to
+  `[object Object]` would make routing depend on later mutation or malformed
+  input.
+  Date/Author: 2026-07-14, Codex after CodeRabbit extraction review.
+
 ## Outcomes & retrospective
 
 Planning outcome: ADR 001, the living design, component design, developer
@@ -303,6 +323,13 @@ the proposed refactor changes no current user behaviour. Implementation began
 after the user explicitly requested execution on 2026-07-14. Update this
 section after every accepted milestone with observable results, remaining gaps,
 and any lesson that changes later work.
+
+Implementation outcome through WI-6: eight declared runtime modules now bundle
+into the committed artefact, `main.ts` is the only injected-primitive caller,
+and pure configuration, routing, graph, candidate, shell, and prompt contracts
+have direct TypeScript imports. The generated-workflow harness proves phase
+order, exact agent invocation, resolved-policy propagation, and failed-slot
+handling. Documentation synchronization and end-to-end live parity remain.
 
 ## Context and orientation
 
@@ -808,6 +835,10 @@ state path, and the second-run skip result. Do not paste full logs.
   dependency-expanding suggestions dispositioned in the Decision log. One
   rate-limit response was followed by the required randomized 67-minute
   `vsleep` before a successful retry.
+- WI-4--WI-6 at 2026-07-14 06:47Z: local and independent scrutineer runs passed
+  all four deterministic gates with 97 tests. CodeRabbit reported six schema,
+  immutability, routing, precedence, and fixture-strength concerns; all received
+  focused corrections and regression coverage before the milestone commit.
 
 ## Interfaces and dependencies
 

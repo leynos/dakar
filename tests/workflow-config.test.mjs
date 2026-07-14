@@ -1,0 +1,71 @@
+/** @file Unit-test workflow argument resolution from TypeScript source. */
+
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import { resolveWorkflowConfig } from '../src/workflows/dakar-review/config.ts'
+import { DEFAULT_REVIEW_MODELS } from '../src/workflows/dakar-review/model-routing.ts'
+
+test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
+  const config = resolveWorkflowConfig(undefined)
+
+  assert.equal(config.baseRef, 'origin/main')
+  assert.equal(config.headRef, 'HEAD')
+  assert.equal(config.repoRoot, '.')
+  assert.equal(config.dryRun, false)
+  assert.equal(config.maxCandidates, 30)
+  assert.equal(config.maxFindings, 20)
+  assert.equal(config.maxTasks, 8)
+  assert.equal(config.reviewModels, DEFAULT_REVIEW_MODELS)
+  assert.equal(config.synthesisModelName, 'gpt-5.5/high')
+  assert.equal(config.synthesisAdapter, 'codex-high')
+  assert.equal(Object.isFrozen(config), true)
+  assert.equal(Object.isFrozen(config.reviewModels), true)
+  assert.equal(config.reviewModels.every(Object.isFrozen), true)
+  assert.throws(() => config.reviewModels.push({ model: 'leak', reasoning: 'low' }), TypeError)
+})
+
+test('positive limits floor values, cap extremes, and reject invalid input', () => {
+  const config = resolveWorkflowConfig({
+    maxCandidates: 2.9,
+    maxFindings: 999,
+    maxTasks: 0,
+  })
+
+  assert.equal(config.maxCandidates, 2)
+  assert.equal(config.maxFindings, 200)
+  assert.equal(config.maxTasks, 8)
+})
+
+test('valid custom models replace defaults while malformed entries are discarded', () => {
+  const custom = { label: 'custom', model: 'custom-model', reasoning: 'low', role: 'high' }
+  const config = resolveWorkflowConfig({
+    models: [custom, { model: '', reasoning: 'high' }, { model: 'missing-reasoning' }],
+  })
+
+  assert.deepEqual(config.reviewModels, [custom])
+  assert.notEqual(config.reviewModels[0], custom)
+  assert.equal(Object.isFrozen(config.reviewModels), true)
+  assert.equal(Object.isFrozen(config.reviewModels[0]), true)
+  custom.model = 'mutated-after-resolution'
+  assert.equal(config.reviewModels[0].model, 'custom-model')
+})
+
+test('synthesis model reasoning selects the adapter and rejects unknown levels', () => {
+  const explicit = resolveWorkflowConfig({ synthesisModel: 'gpt-5.5/low' })
+  assert.equal(explicit.synthesisModelBase, 'gpt-5.5')
+  assert.equal(explicit.synthesisReasoning, 'low')
+  assert.equal(explicit.synthesisAdapter, 'codex-low')
+
+  const modelSuffixWins = resolveWorkflowConfig({
+    synthesisModel: 'gpt-5.5/low',
+    synthesisReasoning: 'high',
+  })
+  assert.equal(modelSuffixWins.synthesisReasoning, 'low')
+  assert.equal(modelSuffixWins.synthesisModelName, 'gpt-5.5/low')
+
+  const invalid = resolveWorkflowConfig({ synthesisModel: 'gpt-5.5/experimental' })
+  assert.equal(invalid.synthesisReasoning, 'high')
+  assert.equal(invalid.synthesisModelName, 'gpt-5.5/high')
+  assert.equal(invalid.synthesisAdapter, 'codex-high')
+})

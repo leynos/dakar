@@ -1,52 +1,21 @@
 /**
  * @file Prove candidate path handling resists path traversal.
  *
- * `normalizeCandidates` lives inside the ODW workflow body, so the tests slice
- * the declaration region above the control flow and compile it with inert
- * injected primitives (mirroring ODW's loader). The invariants under test: a
- * candidate may only reference a reviewed changed file, and traversal or
- * absolute paths are dropped before any candidate reaches a verification
- * command, even if they were somehow present in the changed-file set.
+ * The invariants under test: a candidate may only reference a reviewed changed
+ * file, and traversal or absolute paths are dropped before any candidate
+ * reaches a verification command, even if they were somehow present in the
+ * changed-file set.
  */
 
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const WORKFLOW_PATH = new URL('../workflows/dakar-review.js', import.meta.url)
-const CONTROL_FLOW_MARKER = 'if (cfg.dryRun === true) {'
-
-async function loadCandidateSurface(workflowArgs = {}) {
-  let source = await readFile(WORKFLOW_PATH, 'utf8')
-  source = source.replace(/^export const meta\s*=/mu, 'const meta =')
-  source = source.replace(/^async function workflowMain\(\) \{\n/mu, '')
-  const markerIndex = source.indexOf(CONTROL_FLOW_MARKER)
-  assert.notEqual(markerIndex, -1, 'control-flow marker should exist above the candidate helpers')
-  const helperSource = source.slice(0, markerIndex)
-  const factory = new Function(
-    'args',
-    'phase',
-    'log',
-    'agent',
-    'parallel',
-    'pipeline',
-    'budget',
-    'workflow',
-    'validate',
-    `${helperSource}\nreturn { normalizeCandidates, isSafeCandidatePath, acceptedFromVerdicts, candidatesForVerification }`,
-  )
-  return factory(
-    workflowArgs,
-    () => {},
-    () => {},
-    async () => ({}),
-    async () => [],
-    async () => [],
-    { total: null, spent: () => 0, remaining: () => Infinity },
-    async () => ({}),
-    () => ({ ok: true, errors: [], warnings: [] }),
-  )
-}
+import {
+  acceptedFromVerdicts,
+  candidatesForVerification,
+  isSafeCandidatePath,
+  normalizeCandidates,
+} from '../src/workflows/dakar-review/candidates.ts'
 
 function taskResult(candidatePaths) {
   return [
@@ -80,12 +49,11 @@ function bindResults(results, files) {
   return results.map((result) => ({ result, task }))
 }
 
-test('normalizeCandidates drops candidates whose path is not a reviewed changed file', async () => {
-  const { normalizeCandidates } = await loadCandidateSurface()
+test('normalizeCandidates drops candidates whose path is not a reviewed changed file', () => {
   const changedFiles = ['src/app.js', 'src/util.js']
   const results = taskResult(['src/app.js', 'src/not-changed.js', 'docs/guide.md'])
 
-  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles)
+  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles, 30)
 
   assert.deepEqual(
     candidates.map((candidate) => candidate.path),
@@ -93,14 +61,13 @@ test('normalizeCandidates drops candidates whose path is not a reviewed changed 
   )
 })
 
-test('normalizeCandidates drops traversal and absolute paths even if present in changedFiles', async () => {
-  const { normalizeCandidates } = await loadCandidateSurface()
+test('normalizeCandidates drops traversal and absolute paths even if present in changedFiles', () => {
   // Defence in depth: even a poisoned changed-file set cannot smuggle a path
   // that escapes REPO_ROOT past the traversal guard.
   const changedFiles = ['../evil.js', '/etc/passwd', 'src/ok.js', 'a/../../b.js']
   const results = taskResult(['../evil.js', '/etc/passwd', 'src/ok.js', 'a/../../b.js'])
 
-  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles)
+  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles, 30)
 
   assert.deepEqual(
     candidates.map((candidate) => candidate.path),
@@ -108,8 +75,7 @@ test('normalizeCandidates drops traversal and absolute paths even if present in 
   )
 })
 
-test('isSafeCandidatePath enforces the whitelist and rejects traversal', async () => {
-  const { isSafeCandidatePath } = await loadCandidateSurface()
+test('isSafeCandidatePath enforces the whitelist and rejects traversal', () => {
   const changed = new Set(['src/app.js'])
 
   assert.equal(isSafeCandidatePath('src/app.js', changed), true)
@@ -124,11 +90,7 @@ test('isSafeCandidatePath enforces the whitelist and rejects traversal', async (
   assert.equal(isSafeCandidatePath('\\\\server\\share', new Set(['\\\\server\\share'])), false)
 })
 
-test('candidate and finding caps retain higher severities with stable ties', async () => {
-  const { normalizeCandidates, acceptedFromVerdicts } = await loadCandidateSurface({
-    maxCandidates: 3,
-    maxFindings: 2,
-  })
+test('candidate and finding caps retain higher severities with stable ties', () => {
   const changedFiles = ['src/low.js', 'src/high-a.js', 'src/critical.js', 'src/high-b.js']
   const results = [
     {
@@ -141,7 +103,7 @@ test('candidate and finding caps retain higher severities with stable ties', asy
       ].map((candidate) => ({ ...candidate, detail: 'detail', evidence: 'evidence' })),
     },
   ]
-  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles)
+  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles, 3)
   assert.deepEqual(candidates.map(({ title }) => title), ['critical', 'high a', 'high b'])
 
   const verdicts = candidates.map((candidate) => ({
@@ -150,12 +112,11 @@ test('candidate and finding caps retain higher severities with stable ties', asy
     reason: 'confirmed',
     evidenceChecked: 'source',
   }))
-  const accepted = acceptedFromVerdicts([...candidates].reverse(), verdicts.reverse())
+  const accepted = acceptedFromVerdicts([...candidates].reverse(), verdicts.reverse(), 2)
   assert.deepEqual(accepted.map(({ title }) => title), ['critical', 'high b'])
 })
 
-test('verification policy samples one low candidate per non-high task', async () => {
-  const { candidatesForVerification } = await loadCandidateSurface()
+test('verification policy samples one low candidate per non-high task', () => {
   const candidates = [
     { candidateId: 'a', taskId: 'tests-1', severity: 'low', verificationPolicy: 'verify-non-low-and-sampled-low' },
     { candidateId: 'b', taskId: 'tests-1', severity: 'low', verificationPolicy: 'verify-non-low-and-sampled-low' },

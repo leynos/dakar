@@ -10,11 +10,19 @@ import ts from 'typescript'
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_SOURCE = path.join(ROOT, 'src', 'workflows', 'dakar-review')
 const DEFAULT_OUTPUT = path.join(ROOT, 'workflows', 'dakar-review.js')
-// Explicitly list every module expected in esbuild's runtime graph. At the
-// compiler-spine milestone `main.ts` is the only runtime module: `meta.js` is
-// framed verbatim and declarations are erased. Extraction milestones extend
-// this list in the same change that adds each runtime module.
-const RUNTIME_MODULES = ['main.ts']
+// Explicitly list every module expected in esbuild's runtime graph. `meta.js`
+// is framed verbatim, while declaration-only and type-only modules are erased.
+// The metafile comparison below enforces this manifest in both directions.
+const RUNTIME_MODULES = [
+  'candidates.ts',
+  'config.ts',
+  'main.ts',
+  'model-routing.ts',
+  'prompts.ts',
+  'schemas.ts',
+  'shell.ts',
+  'task-graph.ts',
+]
 
 export class WorkflowBuildError extends Error {
   constructor(code, message) {
