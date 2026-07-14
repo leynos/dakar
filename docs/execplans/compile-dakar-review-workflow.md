@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & discoveries`, `Decision log`, and
 `Outcomes & retrospective` must remain current as implementation proceeds.
 
-Status: DRAFT
+Status: IN PROGRESS
 
 ## Purpose / big picture
 
@@ -152,7 +152,8 @@ the `Decision log`, and request direction.
   companion Dakar design documents.
 - [x] (2026-07-14 00:49Z) Incorporated Logisphere community-of-experts review
   of architecture, interfaces, tests, operability, and documentation.
-- [ ] WI-0: Record explicit approval by accepting ADR 001.
+- [x] (2026-07-14 02:05Z) WI-0: Recorded the user's explicit implementation
+  approval by accepting ADR 001 and moving this plan to `IN PROGRESS`.
 - [ ] WI-1: Characterize the complete observable workflow contract.
 - [ ] WI-2: Establish TypeScript and compile-time contract tests.
 - [ ] WI-3: Build a mechanically equivalent generated workflow.
@@ -249,9 +250,10 @@ the `Decision log`, and request direction.
 Planning outcome: ADR 001, the living design, component design, developer
 conventions, roadmap, and this ExecPlan describe one consistent
 source-to-artefact boundary. The user guide is intentionally unchanged because
-the proposed refactor changes no current user behaviour. Implementation has not
-begun. Update this section after every accepted milestone with observable
-results, remaining gaps, and any lesson that changes later work.
+the proposed refactor changes no current user behaviour. Implementation began
+after the user explicitly requested execution on 2026-07-14. Update this
+section after every accepted milestone with observable results, remaining gaps,
+and any lesson that changes later work.
 
 ## Context and orientation
 
@@ -743,6 +745,11 @@ Implementation evidence belongs here as short command transcripts, generated
 hashes, focused failure diagnostics, test counts, live run identifier, isolated
 state path, and the second-run skip result. Do not paste full logs.
 
+- Baseline at 2026-07-14 02:04Z: `make check-fmt`, `make typecheck`,
+  `make lint`, and `make test` all passed; Node reported 57 passing tests, and
+  the ODW dry run returned `ok: true`, `dryRun: true`, and workflow version
+  `divide-and-conquer-v1`.
+
 ## Interfaces and dependencies
 
 Add development dependencies only:
@@ -814,3 +821,6 @@ a `Decision log` entry; a public behaviour change triggers escalation.
 2026-07-14: Initial draft. It adopts the df12-build compilation frame, records
 the Dakar-specific module and test boundaries, preserves every public and state
 contract, and leaves implementation behind the required approval gate.
+
+2026-07-14: The user explicitly requested implementation. ADR 001 is accepted,
+WI-0 is complete, and the plan is in progress.
