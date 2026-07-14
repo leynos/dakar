@@ -8,7 +8,7 @@ Companion documents:
 [`docs/developers-guide.md`](developers-guide.md),
 [`docs/design/initial-workflow.md`](design/initial-workflow.md), and
 [`docs/roadmap.md`](roadmap.md)
-Proposed decision record:
+Accepted decision record:
 [`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md)
 
 ## 1. Problem
@@ -102,7 +102,7 @@ orchestration. The CLI can repair review-history recording after a workflow
 record-phase failure.
 
 ODW still receives one workflow file, but that runtime constraint does not
-require one source file. ADR 001 proposes typed source modules under
+require one source file. ADR 001 establishes typed source modules under
 `src/workflows/dakar-review/` and a small compiler that produces the committed
 `workflows/dakar-review.js` artefact. The build concatenates a verbatim literal
 metadata banner, a flat esbuild bundle rooted at `main.ts`, and a generated

@@ -169,7 +169,10 @@ the `Decision log`, and request direction.
   processing modules and replaced generated-source slicing with direct imports.
 - [x] (2026-07-14 06:47Z) WI-6: Extracted pure prompt construction, reduced
   `main.ts` to orchestration, and added a fake-primitives artefact test.
-- [ ] WI-7: Synchronize contributor and user documentation.
+- [x] (2026-07-14 07:16Z) WI-7: Synchronized the living designs, developer
+  conventions, user installation contract, and roadmap with the implemented
+  source-to-artefact boundary; `make check-fmt`, `make markdownlint`,
+  `make nixie`, and `git diff --check` passed.
 - [ ] WI-8: Prove deterministic, runtime, CLI, and state parity.
 
 ## Surprises & discoveries
@@ -235,6 +238,14 @@ the `Decision log`, and request direction.
   expected slot failure from a broken test fixture.
   Impact: the harness proves that every expected orchestration call occurs once
   and propagates unexpected errors.
+
+- Observation: the user-facing runtime dependency contract was implicit in the
+  accepted ADR and design but absent from the user's guide.
+  Evidence: the generated artefact is committed and packaged, while
+  `docs/users-guide.md` previously described direct invocation without stating
+  whether TypeScript or esbuild was required.
+  Impact: the user's guide now states that CLI and direct ODW use require no
+  contributor build tooling; public commands and behaviour remain unchanged.
 
 ## Decision log
 
@@ -318,8 +329,10 @@ the `Decision log`, and request direction.
 
 Planning outcome: ADR 001, the living design, component design, developer
 conventions, roadmap, and this ExecPlan describe one consistent
-source-to-artefact boundary. The user guide is intentionally unchanged because
-the proposed refactor changes no current user behaviour. Implementation began
+source-to-artefact boundary. Planning initially left the user guide unchanged
+because the proposed refactor changes no current user behaviour. During
+implementation, WI-7 adds only the user-relevant dependency clarification that
+the shipped artefact needs no contributor build tooling. Implementation began
 after the user explicitly requested execution on 2026-07-14. Update this
 section after every accepted milestone with observable results, remaining gaps,
 and any lesson that changes later work.
@@ -329,7 +342,8 @@ into the committed artefact, `main.ts` is the only injected-primitive caller,
 and pure configuration, routing, graph, candidate, shell, and prompt contracts
 have direct TypeScript imports. The generated-workflow harness proves phase
 order, exact agent invocation, resolved-policy propagation, and failed-slot
-handling. Documentation synchronization and end-to-end live parity remain.
+handling. WI-7 synchronizes the developer, component, system, and user-facing
+documentation with that implementation. End-to-end live parity remains.
 
 ## Context and orientation
 

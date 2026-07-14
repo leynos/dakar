@@ -1,6 +1,6 @@
 # Dakar incremental review workflow design
 
-Status: First routed workflow pass implemented; compiled source boundary proposed
+Status: First routed workflow pass and compiled source boundary implemented
 Audience: Developers implementing and operating Dakar workflows
 Date: 2026-07-14
 Companion documents:
@@ -477,8 +477,8 @@ hide the graph inside a monolithic prompt.
 Current ODW realities shape the runtime artefact:
 
 - `workflows/dakar-review.js` must use one literal `meta` export, injected
-  primitives, a top-level return, and no runtime imports. ADR 001 proposes
-  compiling that artefact from ordinary TypeScript modules rather than making
+  primitives, a top-level return, and no runtime imports. ADR 001 requires the
+  artefact to be compiled from ordinary TypeScript modules rather than making
   the runtime file the maintainable source boundary.
 - Deterministic filesystem and git work stay in local helpers or host-invoked
   commands because ODW agent calls do not share a reliable mutable filesystem
@@ -521,10 +521,9 @@ ODW prompts should be built from stable prefix blocks first and dynamic
 per-task tails last. This matches prompt-cache guidance and also keeps smaller
 agents from receiving broad context they cannot use.
 
-
 ### Compiled component boundary
 
-The proposed source of truth is `src/workflows/dakar-review/`. The component
+The source of truth is `src/workflows/dakar-review/`. The component
 tree separates contracts that already exist in the monolith:
 
 - `meta.js` owns only the verbatim literal metadata export.
@@ -548,6 +547,17 @@ changes between phases. Prompt construction receives the resolved policy path
 after the Resolve Config phase, so it cannot retain the initial `auto`
 placeholder. Candidate
 containment remains before verifier command construction.
+
+The current internal interfaces make these boundaries executable.
+`resolveWorkflowConfig()` produces the immutable `WorkflowConfig` used by
+`modelForRole()`, `buildTaskGraph()`, and `defaultTaskGraph()`. The task-graph
+functions return `ReviewTask` values; candidate functions normalize finder
+results, select bounded verification input, and reduce verdicts into accepted
+and discarded collections. Prompt builders accept `PromptContext` explicitly,
+and `shellWord()` is the single quoting authority. `schemas.ts` exports the
+runtime handoff schemas, while `types.ts` exports erased shared shapes.
+`workflowMain()` composes these interfaces and is the only source function that
+calls ambient ODW primitives.
 
 The compiler concatenates `meta.js` verbatim, a flat esbuild ESM bundle rooted
 at `main.ts`, and `return await workflowMain()`. It rejects loader hazards

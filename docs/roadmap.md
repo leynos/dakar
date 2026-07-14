@@ -266,10 +266,10 @@ preserving the installed workflow, CLI, state, and result contracts.
 This step establishes the architectural and compiler contracts before moving
 behaviour. See `docs/dakar-review-design.md` §4 and ADR 001.
 
-- [ ] 5.1.1. Accept the TypeScript source and generated ODW artefact decision.
+- [x] 5.1.1. Accept the TypeScript source and generated ODW artefact decision.
   - Success: ADR 001 and the companion designs agree on source ownership,
     module boundaries, rejected alternatives, and compatibility invariants.
-- [ ] 5.1.2. Add the fail-closed compiler, TypeScript restriction, and freshness
+- [x] 5.1.2. Add the fail-closed compiler, TypeScript restriction, and freshness
   gates without behavioural decomposition.
   - Requires 5.1.1.
   - Success: a mechanically equivalent `workflows/dakar-review.js` is generated
@@ -281,12 +281,12 @@ This step moves existing contracts behind typed module boundaries without
 changing review behaviour. See `docs/design/initial-workflow.md` and the
 approved ExecPlan.
 
-- [ ] 5.2.1. Extract types, schemas, configuration, model routing, task
+- [x] 5.2.1. Extract types, schemas, configuration, model routing, task
   planning, and candidate processing with direct module tests.
   - Requires 5.1.2.
   - Success: helper tests import source modules instead of slicing generated
     workflow text, and dry-run schemas and routing remain unchanged.
-- [ ] 5.2.2. Extract prompt construction and reduce `main.ts` to orchestration.
+- [x] 5.2.2. Extract prompt construction and reduce `main.ts` to orchestration.
   - Requires 5.2.1.
   - Success: resolved policy, AGENTS context, shell quoting, candidate
     containment, phase order, metrics, and record recovery remain unchanged.

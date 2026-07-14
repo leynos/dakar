@@ -4,7 +4,7 @@ This guide is for maintainers working on Dakar's local ODW review workflow.
 The primary architecture reference is
 [`docs/dakar-review-design.md`](dakar-review-design.md). The initial design
 record remains at [`docs/design/initial-workflow.md`](design/initial-workflow.md),
-the proposed compilation boundary is recorded in
+the accepted compilation boundary is recorded in
 [`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md),
 and delivery plans live under [`docs/execplans/`](execplans/).
 
@@ -60,13 +60,14 @@ entries by hand.
 - filter null or failed slots after `parallel()` and `pipeline()`;
 - keep reductions deterministic and independent of completion order.
 
-ADR 001 proposes moving the maintainable source to
-`src/workflows/dakar-review/` while keeping that runtime contract unchanged.
-After the decision is accepted and implemented, never hand-edit the generated
-artefact. Edit the source tree, run `make workflow-build`, and commit source and
-artefact together.
+The maintainable workflow source lives in `src/workflows/dakar-review/`; the
+compiler preserves the runtime contract in the committed artefact. Never
+hand-edit `workflows/dakar-review.js`. Edit the source tree, run
+`make workflow-build`, and commit source and artefact together. Run
+`make workflow-freshness` to prove that the committed artefact matches its
+inputs without rewriting it.
 
-The proposed source tree has these responsibilities:
+The source tree has these responsibilities:
 
 - `meta.js`: one literal metadata export, concatenated verbatim;
 - `main.ts`: the composition root, phase transitions, agent dispatch, metrics,
@@ -81,6 +82,19 @@ The proposed source tree has these responsibilities:
 - `candidates.ts`: candidate containment, normalization, and verdict
   reduction; and
 - `prompts.ts`: stable prompt prefixes and dynamic prompt tails.
+
+The internally facing interfaces follow the same ownership boundaries.
+`resolveWorkflowConfig()` returns the frozen `WorkflowConfig` passed into
+routing and planning. `modelForRole()` and the other model-routing helpers map
+that configuration to model and adapter selections. `buildTaskGraph()` and
+`defaultTaskGraph()` consume `TaskGraphConfig`; they return `ReviewTask`
+objects without calling ODW. Candidate processing flows through
+`normalizeCandidates()`, `candidatesForVerification()`,
+`acceptedFromVerdicts()`, and `discardedFromVerdicts()`. Prompt functions take
+an explicit `PromptContext`, and `shellWord()` is the only shell-word quoting
+interface. Runtime JSON Schemas are exported from `schemas.ts`, while shared
+compile-time shapes are exported from `types.ts`. These modules are pure;
+`main.ts` alone calls the ambient ODW primitives and owns phase sequencing.
 
 Keep the graph acyclic ESM. Relative imports use explicit `.ts` extensions,
 type-only dependencies use `import type`, and TypeScript remains restricted to
@@ -185,9 +199,9 @@ reports include only accepted findings.
 
 When adding a new task kind, update these places together:
 
-- `TASK_KINDS`, `buildTaskGraph()`, and `taskSpec()` in
-  `workflows/dakar-review.js` before ADR 001 is implemented, or their
-  `src/workflows/dakar-review/task-graph.ts` definitions afterwards;
+- the `taskKinds` configuration in `src/workflows/dakar-review/config.ts` and
+  `buildTaskGraph()` and `taskSpec()` in
+  `src/workflows/dakar-review/task-graph.ts`;
 - the dry-run contract test in `tests/workflow-dry-run.test.mjs`;
 - the workflow contract section in `docs/design/initial-workflow.md`;
 - user-facing behaviour in `docs/users-guide.md` if the change affects

@@ -53,6 +53,10 @@ odw run workflows/dakar-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar"}'
 ```
 
+`workflows/dakar-review.js` is a pre-generated runtime artefact included with
+Dakar. Running the CLI or invoking that file directly does not require
+TypeScript, esbuild, or a contributor build step.
+
 The `config` argument points at the CodeRabbit YAML file whose review tone,
 path instructions, and pre-merge checks should guide the review. The `base`
 argument is the branch or ref used to compute the merge base when there is no
