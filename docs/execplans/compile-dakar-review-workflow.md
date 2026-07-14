@@ -670,7 +670,7 @@ make check
 
 Expected result: the worktree contains only the approved planning documents,
 and `make check` exits zero. Record the test count printed by `node --test` in
-`Artifacts and notes` when execution begins.
+`Artefacts and notes` when execution begins.
 
 During WI-2, run the type and compile-time gates with the exact targets added by
 that work item, expected to resemble:
@@ -793,7 +793,7 @@ notes` before diagnosing or deliberately abandoning it.
   erasable type-only fixture.
 
 Do not commit temporary mutations or invalid production source. Record concise
-failure excerpts in `Artifacts and notes`.
+failure excerpts in `Artefacts and notes`.
 
 ### Green evidence
 
