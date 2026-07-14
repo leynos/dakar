@@ -118,22 +118,26 @@ function extractRunId(text) {
 }
 
 /**
- * Read `AGENTS.md` from the repository root, returning null when absent.
+ * Read `AGENTS.md` from the trusted review base, returning null when absent.
  *
  * Content is truncated to 24,000 characters so large files do not overflow
  * the workflow argument budget.
  *
  * @param {string} repoRoot - absolute path to the repository root.
+ * @param {string} baseRef - trusted Git revision preceding the reviewed range.
  * @returns {{ source: string, content: string, truncated: boolean } | null} parsed instructions, or null.
  */
-function readAgentInstructions(repoRoot) {
-  const agentsPath = join(repoRoot, 'AGENTS.md')
-  if (!existsSync(agentsPath)) {
+function readAgentInstructions(repoRoot, baseRef) {
+  const result = spawnSync('git', ['-C', repoRoot, 'show', `${baseRef}:AGENTS.md`], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  if (result.status !== 0) {
     return null
   }
-  const content = readFileSync(agentsPath, 'utf8')
+  const content = result.stdout
   return {
-    source: agentsPath,
+    source: `${baseRef}:AGENTS.md`,
     content: content.slice(0, 24_000),
     truncated: content.length > 24_000,
   }
@@ -151,7 +155,7 @@ function buildWorkflowArgs(options, repoRoot) {
   if (resolvedConfig.ok === false) {
     throw new Error(resolvedConfig.error || `could not resolve review config: ${resolvedConfig.config}`)
   }
-  const agentInstructions = readAgentInstructions(repoRoot)
+  const agentInstructions = readAgentInstructions(repoRoot, options.base || 'origin/main')
   const workflowArgs = {
     config: resolvedConfig.config,
     repoRoot,
