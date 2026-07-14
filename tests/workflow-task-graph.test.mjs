@@ -19,6 +19,7 @@ const CONTROL_FLOW_MARKER = 'if (cfg.dryRun === true) {'
 async function loadPlanner(workflowArgs = {}) {
   let source = await readFile(WORKFLOW_PATH, 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
+  source = source.replace(/^async function workflowMain\(\) \{\n/mu, '')
   const markerIndex = source.indexOf(CONTROL_FLOW_MARKER)
   assert.notEqual(markerIndex, -1, 'control-flow marker should exist above the planner region')
   const helperSource = source.slice(0, markerIndex)

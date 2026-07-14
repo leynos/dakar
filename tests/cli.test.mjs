@@ -144,12 +144,19 @@ test('CLI includes repository AGENTS.md instructions in workflow args', () => {
   const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
   const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
   writeFileSync(join(targetRepo, 'AGENTS.md'), '# Agent Instructions\n\nRespect local review policy.\n')
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  execFileSync('git', ['-C', targetRepo, 'add', 'AGENTS.md'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'trusted instructions'])
 
   const output = runCli(
     [
       '--dry-run',
       '--repo-root',
       targetRepo,
+      '--base',
+      'HEAD',
       '--runs-root',
       runsRoot,
       '--timeout',

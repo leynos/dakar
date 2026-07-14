@@ -705,6 +705,9 @@ function appendReview(input) {
   ].join('\n')
   withStateLock(stateFile, () => {
     const current = readFile(stateFile)
+    if (parseReviewedHeads(current).some((entry) => entry.head === headCommit)) {
+      return
+    }
     writeFileSync(stateFile, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${entry}`, {
       encoding: 'utf8',
       mode: 0o600,

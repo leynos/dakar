@@ -1,6 +1,6 @@
 .PHONY: check check-fmt lint typecheck markdownlint nixie test spelling \
 	spelling-config spelling-config-write spelling-phrase-check \
-	spelling-helper-test
+	spelling-helper-test workflow-build workflow-freshness workflow-check
 
 MD_FILES := $(shell git ls-files '*.md')
 NODE_MODULES := bin/dakar-review.mjs scripts/review-config.mjs scripts/review-state.mjs tests/cli.test.mjs tests/review-config.test.mjs tests/review-state.test.mjs tests/review-state.property.test.mjs tests/review-state.robustness.test.mjs tests/workflow-candidate-paths.test.mjs tests/workflow-dry-run.test.mjs tests/workflow-task-graph.test.mjs
@@ -21,7 +21,7 @@ SPELLING_HELPER_PYTEST = PYTHONPATH=scripts $(UV_ENV) $(UV) run --no-project \
 	--python 3.14 --with pathspec==$(PATHSPEC_VERSION) --with pytest==9.0.2 \
 	--with pytest-cov==7.0.0 python -m pytest
 
-check: check-fmt lint typecheck test spelling
+check: check-fmt lint typecheck workflow-check test spelling
 
 check-fmt:
 	@printf '%s\n' "Checking whitespace and final newlines..."
@@ -64,3 +64,11 @@ nixie:
 
 test:
 	@npm test
+
+workflow-build:
+	@npm run workflow:build
+
+workflow-freshness:
+	@npm run workflow:freshness
+
+workflow-check: workflow-freshness

@@ -7,7 +7,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
@@ -100,6 +100,21 @@ test('record rejects completed entries with invalid counters', () => {
   assert.throws(() => appendReview({ stateFile, headCommit, findingsTotal: 0 }), /commitCount/u)
   assert.throws(() => appendReview({ stateFile, headCommit, commitCount: 'many', findingsTotal: 0 }), /commitCount/u)
   assert.throws(() => appendReview({ stateFile, headCommit, commitCount: 1, findingsTotal: 1.5 }), /findingsTotal/u)
+})
+
+test('recording the same head twice is idempotent', () => {
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))
+  const stateFile = join(stateRoot, 'reviews.toml')
+  const input = {
+    stateFile,
+    headCommit: 'a'.repeat(40),
+    commitCount: 1,
+    findingsTotal: 0,
+  }
+  appendReview(input)
+  appendReview({ ...input, reviewId: 'retry' })
+  const contents = readFileSync(stateFile, 'utf8')
+  assert.equal((contents.match(/\[\[reviews\]\]/gu) || []).length, 1)
 })
 
 test('prepare rejects raw missing option values', () => {

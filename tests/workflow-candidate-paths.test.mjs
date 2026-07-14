@@ -19,6 +19,7 @@ const CONTROL_FLOW_MARKER = 'if (cfg.dryRun === true) {'
 async function loadCandidateSurface(workflowArgs = {}) {
   let source = await readFile(WORKFLOW_PATH, 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
+  source = source.replace(/^async function workflowMain\(\) \{\n/mu, '')
   const markerIndex = source.indexOf(CONTROL_FLOW_MARKER)
   assert.notEqual(markerIndex, -1, 'control-flow marker should exist above the candidate helpers')
   const helperSource = source.slice(0, markerIndex)
@@ -32,7 +33,7 @@ async function loadCandidateSurface(workflowArgs = {}) {
     'budget',
     'workflow',
     'validate',
-    `${helperSource}\nreturn { normalizeCandidates, isSafeCandidatePath }`,
+    `${helperSource}\nreturn { normalizeCandidates, isSafeCandidatePath, acceptedFromVerdicts, candidatesForVerification }`,
   )
   return factory(
     workflowArgs,
@@ -57,20 +58,34 @@ function taskResult(candidatePaths) {
         path,
         line: index + 1,
         detail: 'detail',
+        evidence: 'evidence',
         confidence: 0.9,
       })),
     },
   ]
 }
 
-const TASK_GRAPH = [{ taskId: 'source-1', kind: 'source', assignedModel: 'gpt-5.5/high' }]
+const TASK_GRAPH = [
+  {
+    taskId: 'source-1',
+    kind: 'source',
+    assignedModel: 'gpt-5.5/high',
+    files: [],
+    verificationPolicy: 'verify-all',
+  },
+]
+
+function bindResults(results, files) {
+  const task = { ...TASK_GRAPH[0], files }
+  return results.map((result) => ({ result, task }))
+}
 
 test('normalizeCandidates drops candidates whose path is not a reviewed changed file', async () => {
   const { normalizeCandidates } = await loadCandidateSurface()
   const changedFiles = ['src/app.js', 'src/util.js']
   const results = taskResult(['src/app.js', 'src/not-changed.js', 'docs/guide.md'])
 
-  const candidates = normalizeCandidates(results, TASK_GRAPH, changedFiles)
+  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles)
 
   assert.deepEqual(
     candidates.map((candidate) => candidate.path),
@@ -85,7 +100,7 @@ test('normalizeCandidates drops traversal and absolute paths even if present in 
   const changedFiles = ['../evil.js', '/etc/passwd', 'src/ok.js', 'a/../../b.js']
   const results = taskResult(['../evil.js', '/etc/passwd', 'src/ok.js', 'a/../../b.js'])
 
-  const candidates = normalizeCandidates(results, TASK_GRAPH, changedFiles)
+  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles)
 
   assert.deepEqual(
     candidates.map((candidate) => candidate.path),
@@ -107,4 +122,45 @@ test('isSafeCandidatePath enforces the whitelist and rejects traversal', async (
   assert.equal(isSafeCandidatePath('/etc/passwd', new Set(['/etc/passwd'])), false)
   assert.equal(isSafeCandidatePath('C:\\Windows\\system32', new Set(['C:\\Windows\\system32'])), false)
   assert.equal(isSafeCandidatePath('\\\\server\\share', new Set(['\\\\server\\share'])), false)
+})
+
+test('candidate and finding caps retain higher severities with stable ties', async () => {
+  const { normalizeCandidates, acceptedFromVerdicts } = await loadCandidateSurface({
+    maxCandidates: 3,
+    maxFindings: 2,
+  })
+  const changedFiles = ['src/low.js', 'src/high-a.js', 'src/critical.js', 'src/high-b.js']
+  const results = [
+    {
+      taskId: 'source-1',
+      candidates: [
+        { title: 'low', severity: 'low', path: changedFiles[0] },
+        { title: 'high a', severity: 'high', path: changedFiles[1] },
+        { title: 'critical', severity: 'critical', path: changedFiles[2] },
+        { title: 'high b', severity: 'high', path: changedFiles[3] },
+      ].map((candidate) => ({ ...candidate, detail: 'detail', evidence: 'evidence' })),
+    },
+  ]
+  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles)
+  assert.deepEqual(candidates.map(({ title }) => title), ['critical', 'high a', 'high b'])
+
+  const verdicts = candidates.map((candidate) => ({
+    candidateId: candidate.candidateId,
+    status: 'accepted',
+    reason: 'confirmed',
+    evidenceChecked: 'source',
+  }))
+  const accepted = acceptedFromVerdicts([...candidates].reverse(), verdicts.reverse())
+  assert.deepEqual(accepted.map(({ title }) => title), ['critical', 'high b'])
+})
+
+test('verification policy samples one low candidate per non-high task', async () => {
+  const { candidatesForVerification } = await loadCandidateSurface()
+  const candidates = [
+    { candidateId: 'a', taskId: 'tests-1', severity: 'low', verificationPolicy: 'verify-non-low-and-sampled-low' },
+    { candidateId: 'b', taskId: 'tests-1', severity: 'low', verificationPolicy: 'verify-non-low-and-sampled-low' },
+    { candidateId: 'c', taskId: 'tests-1', severity: 'high', verificationPolicy: 'verify-non-low-and-sampled-low' },
+    { candidateId: 'd', taskId: 'source-1', severity: 'low', verificationPolicy: 'verify-all' },
+  ]
+  assert.deepEqual(candidatesForVerification(candidates).map(({ candidateId }) => candidateId), ['a', 'c', 'd'])
 })
