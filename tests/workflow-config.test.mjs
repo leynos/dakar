@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import fc from 'fast-check'
 
 import { resolveWorkflowConfig } from '../src/workflows/dakar-review/config.ts'
 import { DEFAULT_REVIEW_MODELS } from '../src/workflows/dakar-review/model-routing.ts'
@@ -68,4 +69,33 @@ test('synthesis model reasoning selects the adapter and rejects unknown levels',
   assert.equal(invalid.synthesisReasoning, 'high')
   assert.equal(invalid.synthesisModelName, 'gpt-5.5/high')
   assert.equal(invalid.synthesisAdapter, 'codex-high')
+})
+
+test('malformed external values fall back without escaping configuration resolution', () => {
+  for (const value of [true, 1, 'arguments', Symbol('arguments')]) {
+    assert.equal(resolveWorkflowConfig(value).synthesisModelName, 'gpt-5.5/high')
+  }
+  for (const synthesisModel of [true, 42, '', '   ', 'model name', '/high', 'model/unknown', 'model/high/extra']) {
+    assert.equal(resolveWorkflowConfig({ synthesisModel }).synthesisModelName, 'gpt-5.5/high')
+  }
+  const nestedSymbols = resolveWorkflowConfig({
+    agentInstructions: 'untrusted',
+    base: 42,
+    maxTasks: Symbol('maxTasks'),
+    repoRoot: false,
+  })
+  assert.equal(nestedSymbols.agentInstructions, null)
+  assert.equal(nestedSymbols.baseRef, 'origin/main')
+  assert.equal(nestedSymbols.maxTasks, 8)
+  assert.equal(nestedSymbols.repoRoot, '.')
+})
+
+test('configuration resolution is total for JSON-compatible external input', () => {
+  fc.assert(fc.property(fc.jsonValue(), (value) => {
+    const config = resolveWorkflowConfig(value)
+    assert.match(config.synthesisModelName, /\/(?:low|medium|high)$/u)
+    assert.ok(config.maxTasks >= 1 && config.maxTasks <= 64)
+    assert.ok(config.maxCandidates >= 1 && config.maxCandidates <= 1_000)
+    assert.ok(config.maxFindings >= 1 && config.maxFindings <= 200)
+  }))
 })

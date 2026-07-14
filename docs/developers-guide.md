@@ -160,7 +160,10 @@ If a workflow result contains a completed review but `recorded.ok` is false,
 the CLI should attempt exactly one deterministic record recovery through
 `scripts/review-state.mjs`. Preserve `recorded.recoveredBy` and
 `metrics.recordRecoveredByCli` so later evaluation can distinguish native ODW
-recording from CLI repair.
+recording from CLI repair. The workflow makes at most three recording attempts,
+logs before attempts two and three, and returns the attempts made as
+`recordAttempts`; keep that observability intact when changing Record-phase
+handling.
 
 `--telemetry` is the only supported live-progress mode. It starts ODW in the
 background, follows `odw logs <run-id> --follow`, writes that stream to
@@ -233,5 +236,5 @@ conventions. Update `docs/design/initial-workflow.md` for architecture and
 component contract changes. Update `docs/dakar-review-design.md` when system
 boundaries or verification invariants change. Use an Architecture Decision
 Record when a narrow architectural choice is important to preserve
-independently from the living design; proposed records must remain visibly
+independently of the living design; proposed records must remain visibly
 proposed until approved.

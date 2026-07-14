@@ -8,9 +8,10 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fc from 'fast-check'
 
 import { DEFAULT_REVIEW_MODELS } from '../src/workflows/dakar-review/model-routing.ts'
-import { buildTaskGraph, distributeTaskSlots } from '../src/workflows/dakar-review/task-graph.ts'
+import { buildTaskGraph, chunk, distributeTaskSlots } from '../src/workflows/dakar-review/task-graph.ts'
 
 function plannerConfig(overrides = {}) {
   return {
@@ -88,4 +89,22 @@ test('distributeTaskSlots gives every group at least one slot within budget', ()
   assert.ok(total <= 5)
   // The heavier group should receive the surplus slots.
   assert.ok(slots.get('source') > slots.get('tests'))
+})
+
+test('chunk rejects sizes that cannot advance its cursor', () => {
+  for (const size of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => chunk([1], size), /positive finite/u)
+  }
+})
+
+test('chunk preserves every value exactly once for every positive size', () => {
+  fc.assert(fc.property(
+    fc.array(fc.integer()),
+    fc.integer({ min: 1, max: 100 }),
+    (values, size) => {
+      const chunks = chunk(values, size)
+      assert.deepEqual(chunks.flat(), values)
+      assert.ok(chunks.every((part) => part.length > 0 && part.length <= size))
+    },
+  ))
 })

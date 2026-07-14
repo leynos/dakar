@@ -9,6 +9,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fc from 'fast-check'
 
 import {
   acceptedFromVerdicts,
@@ -40,12 +41,13 @@ const TASK_GRAPH = [
     kind: 'source',
     assignedModel: 'gpt-5.5/high',
     files: [],
+    maxFindings: 2,
     verificationPolicy: 'verify-all',
   },
 ]
 
-function bindResults(results, files) {
-  const task = { ...TASK_GRAPH[0], files }
+function bindResults(results, files, maxFindings = TASK_GRAPH[0].maxFindings) {
+  const task = { ...TASK_GRAPH[0], files, maxFindings }
   return results.map((result) => ({ result, task }))
 }
 
@@ -59,6 +61,26 @@ test('normalizeCandidates drops candidates whose path is not a reviewed changed 
     candidates.map((candidate) => candidate.path),
     ['src/app.js'],
   )
+})
+
+test('normalizeCandidates enforces the per-task finding cap before the global cap', () => {
+  const changedFiles = ['src/a.js', 'src/b.js', 'src/c.js']
+  const candidates = normalizeCandidates(bindResults(taskResult(changedFiles), changedFiles), changedFiles, 30)
+
+  assert.deepEqual(candidates.map(({ path }) => path), changedFiles.slice(0, TASK_GRAPH[0].maxFindings))
+})
+
+test('normalizeCandidates never exceeds a positive per-task cap', () => {
+  fc.assert(fc.property(
+    fc.integer({ min: 1, max: 20 }),
+    fc.integer({ min: 0, max: 50 }),
+    (maxFindings, candidateCount) => {
+      const changedFiles = Array.from({ length: candidateCount }, (_, index) => `src/${index}.js`)
+      const task = { ...TASK_GRAPH[0], files: changedFiles, maxFindings }
+      const bound = taskResult(changedFiles).map((result) => ({ result, task }))
+      assert.ok(normalizeCandidates(bound, changedFiles, 1_000).length <= maxFindings)
+    },
+  ))
 })
 
 test('normalizeCandidates drops traversal and absolute paths even if present in changedFiles', () => {
@@ -103,7 +125,7 @@ test('candidate and finding caps retain higher severities with stable ties', () 
       ].map((candidate) => ({ ...candidate, detail: 'detail', evidence: 'evidence' })),
     },
   ]
-  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles, 3)
+  const candidates = normalizeCandidates(bindResults(results, changedFiles, 10), changedFiles, 3)
   assert.deepEqual(candidates.map(({ title }) => title), ['critical', 'high a', 'high b'])
 
   const verdicts = candidates.map((candidate) => ({

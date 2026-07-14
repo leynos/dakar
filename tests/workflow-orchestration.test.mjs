@@ -6,7 +6,7 @@ import test from 'node:test'
 
 class FixtureFailure extends Error {}
 
-async function runWorkflow({ failedLabel } = {}) {
+async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -14,6 +14,7 @@ async function runWorkflow({ failedLabel } = {}) {
   const prompts = new Map()
   const agentLabels = []
   const phases = []
+  const logs = []
   const head = 'b'.repeat(40)
   const base = 'a'.repeat(40)
   const agent = async (prompt, options = {}) => {
@@ -27,8 +28,11 @@ async function runWorkflow({ failedLabel } = {}) {
         commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }
     }
     if (options.label === 'source-1') {
-      return { taskId: 'source-1', summary: 'candidate', candidates: [{ title: 'Bug', severity: 'high',
-        path: 'src/a.js', line: 2, detail: 'Broken branch', evidence: 'diff line', confidence: 'high' }],
+      const titles = collidingCandidates
+        ? [`${'same-prefix-'.repeat(5)}first`, `${'same-prefix-'.repeat(5)}second`]
+        : ['Bug']
+      return { taskId: 'source-1', summary: 'candidate', candidates: titles.map((title) => ({ title, severity: 'high',
+        path: 'src/a.js', line: 2, detail: 'Broken branch', evidence: 'diff line', confidence: 'high' })),
         metrics: { filesInspected: 1, findingsProposed: 1 } }
     }
     if (options.label === 'review-summary-1') {
@@ -42,7 +46,11 @@ async function runWorkflow({ failedLabel } = {}) {
     if (options.label === 'synthesis') {
       return { verdict: 'changes-requested', summary: 'one', reportMarkdown: '# Review', findings: [{}], metrics: {} }
     }
-    if (options.label === 'state-record-1') return { ok: true }
+    if (String(options.label).startsWith('state-record-')) {
+      const attempt = Number(options.label.split('-').at(-1))
+      if (attempt <= recordFailures) throw new FixtureFailure('record fixture failure')
+      return { ok: true }
+    }
     throw new Error(`unexpected agent label: ${options.label}`)
   }
   const swallowFixtureFailure = (error) => {
@@ -59,10 +67,10 @@ async function runWorkflow({ failedLabel } = {}) {
       return swallowFixtureFailure(error)
     }
   }))
-  const result = await body(agent, parallel, pipeline, (name) => phases.push(name), () => {}, {},
+  const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message), {},
     { total: null, spent: () => 0, remaining: () => 0 }, async () => null,
     () => ({ ok: true, meta: null, errors: [], warnings: [] }))
-  return { agentLabels, phases, prompts, result }
+  return { agentLabels, logs, phases, prompts, result }
 }
 
 test('generated workflow threads the resolved policy path through every downstream prompt', async () => {
@@ -70,15 +78,45 @@ test('generated workflow threads the resolved policy path through every downstre
   assert.equal(result.ok, true)
   assert.deepEqual(agentLabels, [
     'config-resolve', 'state-prepare', 'source-1', 'review-summary-1',
-    'verify-source-1:src/a.js:2:bug', 'synthesis', 'state-record-1',
+    'verify-source-1:src/a.js:2:bug-1', 'synthesis', 'state-record-1',
   ])
   assert.deepEqual(phases, ['Resolve Config', 'Prepare', 'Plan', 'Review', 'Verify', 'Synthesize', 'Record'])
+  assert.equal(result.recordAttempts, 1)
   for (const [label, prompt] of prompts) {
     if (label !== 'config-resolve') {
       assert.match(prompt, /\/distinct\/policy\.yaml/u, `${label} should receive the resolved policy path`)
       assert.doesNotMatch(prompt, /CodeRabbit YAML: auto/u)
     }
   }
+})
+
+test('generated workflow retries review-history recording and reports the attempt count', async () => {
+  const { agentLabels, logs, result } = await runWorkflow({ recordFailures: 1 })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.recordAttempts, 2)
+  assert.deepEqual(agentLabels.slice(-2), ['state-record-1', 'state-record-2'])
+  assert.deepEqual(logs, ['Review-history recording attempt 2 of 3 after an unsuccessful attempt.'])
+})
+
+test('generated workflow returns its fallback after exhausting record retries', async () => {
+  const { agentLabels, logs, result } = await runWorkflow({ recordFailures: 3 })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.stage, 'record')
+  assert.equal(result.recordAttempts, 3)
+  assert.deepEqual(agentLabels.slice(-3), ['state-record-1', 'state-record-2', 'state-record-3'])
+  assert.equal(logs.length, 2)
+})
+
+test('generated workflow gives colliding truncated candidate ids distinct verifier labels', async () => {
+  const { agentLabels, result } = await runWorkflow({ collidingCandidates: true })
+  const verifierLabels = agentLabels.filter((label) => label.startsWith('verify-'))
+
+  assert.equal(result.ok, true)
+  assert.equal(verifierLabels.length, 2)
+  assert.equal(new Set(verifierLabels).size, 2)
+  assert.ok(verifierLabels.every((label) => label.length <= 42))
 })
 
 test('generated workflow filters failed parallel slots and reports incomplete coverage', async () => {

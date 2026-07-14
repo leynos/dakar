@@ -128,12 +128,30 @@ function extractRunId(text) {
  * @returns {{ source: string, content: string, truncated: boolean } | null} parsed instructions, or null.
  */
 function readAgentInstructions(repoRoot, baseRef) {
+  const revision = spawnSync('git', ['-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (revision.error) throw revision.error
+  if (revision.status !== 0) {
+    throw new Error(`cannot resolve trusted review base ${baseRef}: ${revision.stderr.trim() || 'git rev-parse failed'}`)
+  }
+  const exists = spawnSync('git', ['-C', repoRoot, 'ls-tree', '-z', baseRef, '--', 'AGENTS.md'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (exists.error) throw exists.error
+  if (exists.status !== 0) {
+    throw new Error(`cannot inspect ${baseRef}:AGENTS.md: ${exists.stderr.trim() || 'git ls-tree failed'}`)
+  }
+  if (exists.stdout === '') return null
   const result = spawnSync('git', ['-C', repoRoot, 'show', `${baseRef}:AGENTS.md`], {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
+  if (result.error) throw result.error
   if (result.status !== 0) {
-    return null
+    throw new Error(`cannot read ${baseRef}:AGENTS.md: ${result.stderr.trim() || 'git show failed'}`)
   }
   const content = result.stdout
   return {

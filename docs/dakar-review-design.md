@@ -308,6 +308,7 @@ The workflow result contains:
 - `verdicts`: verifier decisions;
 - `metrics`: run metrics and model assignment data;
 - `recorded`: review-history write result;
+- `recordAttempts`: bounded workflow recording attempts made before returning;
 - `recordInput`: the deterministic payload needed to retry recording.
 
 `reportMarkdown` is presentation text. It has no deterministic schema.

@@ -1,3 +1,5 @@
+/** @file Define JSON Schemas for every structured ODW agent hand-off. */
+
 export const CONFIG_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -60,7 +62,7 @@ export const SYNTHESIS_SCHEMA = {
     metrics: { type: 'object', additionalProperties: true, properties: {
       taskCount: { type: 'integer' }, candidateFindings: { type: 'integer' }, confirmedFindings: { type: 'integer' },
       discardedFindings: { type: 'integer' },
-    }, required: ['taskCount', 'candidateFindings', 'confirmedFindings', 'discardedFindings'] },
+    } },
   },
   required: ['verdict', 'summary', 'reportMarkdown', 'findings', 'metrics'],
 }

@@ -1,3 +1,5 @@
+/** @file Classify changed files and construct the bounded review task graph. */
+
 import { adapterForReasoning, baseModel, modelForRole, modelName } from './model-routing.ts'
 import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'
 
@@ -17,6 +19,7 @@ export function classifyPath(path: string): string {
 }
 
 export function chunk<T>(values: T[], size: number): T[][] {
+  if (!Number.isFinite(size) || size <= 0) throw new RangeError('chunk size must be a positive finite number')
   const chunks = []
   for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size))
   return chunks

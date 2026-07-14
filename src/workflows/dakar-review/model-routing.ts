@@ -1,3 +1,5 @@
+/** @file Resolve review roles, reasoning levels, adapters, and model names. */
+
 import type { ModelSpec, Reasoning } from './types.ts'
 
 export const DEFAULT_REVIEW_MODELS: readonly Readonly<ModelSpec>[] = Object.freeze([
@@ -31,6 +33,6 @@ export function modelForRole(role: string, reviewModels: readonly Readonly<Model
   return reviewModels.find((spec) => spec.role === role) || reviewModels[0] || { model: 'gpt-5.5', reasoning: 'high' }
 }
 
-export function isReasoning(value: string): value is Reasoning {
+export function isReasoning(value: unknown): value is Reasoning {
   return value === 'low' || value === 'medium' || value === 'high'
 }

@@ -176,6 +176,9 @@ the `Decision log`, and request direction.
 - [x] (2026-07-14 07:02Z) WI-8: Produced byte-identical repeated builds and
   completed an isolated live review with native recording; the same-head rerun
   skipped and left exactly one history entry.
+- [x] (2026-07-14) Post-completion review: verified the reported findings
+  against the current branch, applied the still-valid corrections with focused
+  regressions, and synchronized contributor and result-contract documentation.
 
 ## Surprises & discoveries
 
@@ -248,6 +251,14 @@ the `Decision log`, and request direction.
   whether TypeScript or esbuild was required.
   Impact: the user's guide now states that CLI and direct ODW use require no
   contributor build tooling; public commands and behaviour remain unchanged.
+
+- Observation: post-completion review found that Record-phase retries were
+  bounded but not visible in the returned contract or logs.
+  Evidence: the result now reports `recordAttempts`, attempts two and three log
+  their retry, and the orchestration tests cover immediate success, recovery,
+  and exhausted retries.
+  Impact: operators can distinguish first-attempt recording from retry and
+  exhaustion without changing the existing CLI recovery boundary.
 
 ## Decision log
 
@@ -326,6 +337,15 @@ the `Decision log`, and request direction.
   `[object Object]` would make routing depend on later mutation or malformed
   input.
   Date/Author: 2026-07-14, Codex after CodeRabbit extraction review.
+
+- Decision: do not add the generated `workflows/dakar-review.js` to Biome or
+  standard-JS ignore configuration, and do not require blanket function
+  docstrings.
+  Rationale: this repository has no Biome or standard-JS configuration, so an
+  ignore would create an unused tool contract, while clear module-level
+  documentation satisfies the actionable documentation gap without adding
+  repetitive comments to self-explanatory functions.
+  Date/Author: 2026-07-14, Codex after post-completion review.
 
 ## Outcomes & retrospective
 
@@ -825,7 +845,7 @@ state, and run roots. A failed live run may be inspected before cleanup, but its
 paths and run identifier must be recorded here so another implementer can
 resume diagnosis.
 
-## Artifacts and notes
+## Artefacts and notes
 
 Planning evidence:
 
@@ -868,6 +888,11 @@ state path, and the second-run skip result. Do not paste full logs.
   `make typecheck`, `make lint`, and `make test` all passed independently; 97
   tests passed. CodeRabbit completed without rate limiting and returned zero
   findings.
+- Post-completion review at 2026-07-14: accepted findings received focused
+  regression coverage; the generated artefact was rebuilt, and documentation
+  checks passed. The Biome-ignore and blanket-function-docstring suggestions
+  were dispositioned in the Decision log because their assumed repository
+  contracts do not exist.
 
 ## Interfaces and dependencies
 

@@ -200,6 +200,8 @@ fields are:
   verification.
 - `metrics`: counts for tasks, candidates, accepted findings, discarded
   findings, model assignments, and warnings.
+- `recordAttempts`: the number of workflow attempts made to record review
+  history, from one through three.
 - `recorded`: the review-history write result.
 
 Only `findings` should be treated as actionable review output. The `discarded`
@@ -346,7 +348,8 @@ attempts one deterministic local recovery by calling Dakar's state helper
 directly. A recovered result has `recorded.recoveredBy: "dakar-review"` and
 `metrics.recordRecoveredByCli: true`. If recovery also fails, the result keeps
 `stage: "record"` and exits non-zero so the caller knows the same commit range
-may be reviewed again.
+may be reviewed again. The workflow result's `recordAttempts` field reports how
+many of its three bounded recording attempts ran before that CLI fallback.
 
 ## Routing and limits
 

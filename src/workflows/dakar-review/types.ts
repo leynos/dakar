@@ -1,3 +1,5 @@
+/** @file Declare the data contracts shared by the typed workflow modules. */
+
 export type UnknownObject = Record<string, unknown>
 export type Reasoning = 'low' | 'medium' | 'high'
 

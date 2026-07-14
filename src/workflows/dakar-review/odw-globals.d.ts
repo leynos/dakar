@@ -1,3 +1,5 @@
+/** @file Declare ODW's injected globals for compile-time checking only. */
+
 type JsonSchema = Readonly<Record<string, unknown>>
 
 interface AgentOptions {

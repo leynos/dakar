@@ -40,6 +40,10 @@ function countMatches(text, pattern) {
   return [...text.matchAll(pattern)].length
 }
 
+function normalizeLineEndings(text) {
+  return text.replace(/\r\n?/gu, '\n')
+}
+
 function assertLoaderContract(banner, bundle, artefact) {
   const metaCount = countMatches(banner, /^export const meta\s*=/gmu)
   if (metaCount !== 1) {
@@ -154,7 +158,7 @@ export async function buildWorkflow({
       }
       throw error
     }
-    if (current !== artefact) {
+    if (normalizeLineEndings(current) !== normalizeLineEndings(artefact)) {
       reject('BUILD_STALE_ARTEFACT', `${path.relative(ROOT, outFile)} is stale`)
     }
     return artefact

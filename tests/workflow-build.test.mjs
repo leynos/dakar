@@ -105,6 +105,14 @@ test('check-only reports a stale artefact without replacing it', async (t) => {
   assert.equal(await readFile(options.outFile, 'utf8'), 'stale content\n')
 })
 
+test('check-only accepts an artefact whose only difference is CRLF line endings', async (t) => {
+  const options = await fixture(t, { main: 'async function workflowMain() {}\n' })
+  const artefact = await buildWorkflow(options)
+  await writeFile(options.outFile, artefact.replace(/\n/gu, '\r\n'))
+
+  await buildWorkflow({ ...options, checkOnly: true })
+})
+
 test('check-only maps a missing artefact to the stale diagnostic', async (t) => {
   const options = await fixture(t, { main: 'async function workflowMain() {}\n' })
   await expectCode({ ...options, checkOnly: true }, 'BUILD_STALE_ARTEFACT')
@@ -198,6 +206,9 @@ function primitiveCalls(file, primitives) {
     ) {
       current = current.expression
     }
+    while (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      current = unwrapped(current.right)
+    }
     return current
   }
   const visitAliases = (node) => {
@@ -257,10 +268,10 @@ test('primitive analysis finds wrapped aliases but allows local bindings', async
   const safe = path.join(directory, 'safe.ts')
   await writeFile(
     unsafe,
-    'const first = phase\nconst invoke = first\n;(invoke as typeof phase) ("Review")\ninvoke.call(null, "Verify")\n',
+    'const first = phase\nconst invoke = first\n;(invoke as typeof phase) ("Review")\ninvoke.call(null, "Verify")\n;(0, phase)("Record")\n',
   )
   await writeFile(safe, 'const phase = (value: string) => value\nphase("local")\n')
   const primitives = new Set(['phase'])
-  assert.deepEqual(primitiveCalls(unsafe, primitives), ['invoke', 'invoke'])
+  assert.deepEqual(primitiveCalls(unsafe, primitives), ['invoke', 'invoke', 'phase'])
   assert.deepEqual(primitiveCalls(safe, primitives), [])
 })

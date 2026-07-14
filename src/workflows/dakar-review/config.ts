@@ -1,5 +1,7 @@
+/** @file Validate workflow arguments and resolve immutable runtime configuration. */
+
 import { adapterForReasoning, baseModel, DEFAULT_REVIEW_MODELS, isReasoning, modelName, reasoningFromModel } from './model-routing.ts'
-import type { AgentInstructions, ModelSpec, Reasoning, UnknownObject, WorkflowArgs } from './types.ts'
+import type { AgentInstructions, ModelSpec, Reasoning, UnknownObject } from './types.ts'
 
 export interface WorkflowConfig {
   readonly agentInstructions: AgentInstructions | null
@@ -26,9 +28,31 @@ function isObject(value: unknown): value is UnknownObject {
 }
 
 function positiveLimit(value: unknown, fallback: number, ceiling: number): number {
-  const parsed = Number(value)
+  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
   const floored = Math.floor(parsed)
   return Number.isFinite(parsed) && floored > 0 ? Math.min(floored, ceiling) : fallback
+}
+
+function nonBlankString(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() !== '' ? value : fallback
+}
+
+function configuredAgentInstructions(value: unknown): AgentInstructions | null {
+  if (!isObject(value)) return null
+  if (value.content !== undefined && typeof value.content !== 'string') return null
+  if (value.source !== undefined && typeof value.source !== 'string') return null
+  if (value.truncated !== undefined && typeof value.truncated !== 'boolean') return null
+  return Object.freeze({
+    content: value.content,
+    source: value.source,
+    truncated: value.truncated,
+  })
+}
+
+function validModelIdentifier(value: unknown): value is string {
+  if (typeof value !== 'string' || value.trim() !== value || value.length === 0 || /\s/u.test(value)) return false
+  const [model, reasoning, extra] = value.split('/')
+  return Boolean(model) && extra === undefined && (reasoning === undefined || isReasoning(reasoning))
 }
 
 function configuredModels(value: unknown): ModelSpec[] {
@@ -37,35 +61,37 @@ function configuredModels(value: unknown): ModelSpec[] {
     (candidate): candidate is ModelSpec =>
       isObject(candidate) &&
       (candidate.label === undefined || typeof candidate.label === 'string') &&
-      typeof candidate.model === 'string' &&
-      candidate.model.length > 0 &&
+      validModelIdentifier(candidate.model) &&
       (candidate.reasoning === 'low' || candidate.reasoning === 'medium' || candidate.reasoning === 'high') &&
       (candidate.role === undefined || typeof candidate.role === 'string'),
   )
 }
 
 export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
-  const args = (isObject(value) ? value : {}) as WorkflowArgs
+  const args = isObject(value) ? value : {}
   const customModels = configuredModels(args.models)
   const reviewModels: readonly Readonly<ModelSpec>[] = customModels.length > 0
     ? Object.freeze(customModels.map((model) => Object.freeze({ ...model })))
     : DEFAULT_REVIEW_MODELS
-  const synthesisModel = args.synthesisModel || 'gpt-5.5'
-  const requestedReasoning = reasoningFromModel(synthesisModel, args.synthesisReasoning || 'high')
+  const synthesisModel = validModelIdentifier(args.synthesisModel) ? args.synthesisModel : 'gpt-5.5'
+  const requestedReasoning = reasoningFromModel(
+    synthesisModel,
+    isReasoning(args.synthesisReasoning) ? args.synthesisReasoning : 'high',
+  )
   const synthesisReasoning = isReasoning(requestedReasoning) ? requestedReasoning : 'high'
   const synthesisModelBase = baseModel(synthesisModel)
   return Object.freeze({
-    agentInstructions: args.agentInstructions || null,
-    baseRef: args.base || 'origin/main',
-    configArg: args.config || '',
+    agentInstructions: configuredAgentInstructions(args.agentInstructions),
+    baseRef: nonBlankString(args.base, 'origin/main'),
+    configArg: nonBlankString(args.config, ''),
     dryRun: args.dryRun === true,
-    headRef: args.head || 'HEAD',
+    headRef: nonBlankString(args.head, 'HEAD'),
     maxCandidates: positiveLimit(args.maxCandidates, 30, 1_000),
     maxFindings: positiveLimit(args.maxFindings, 20, 200),
     maxTasks: positiveLimit(args.maxTasks, 8, 64),
-    repoRoot: args.repoRoot || '.',
+    repoRoot: nonBlankString(args.repoRoot, '.'),
     reviewModels,
-    stateRoot: args.stateRoot || '',
+    stateRoot: nonBlankString(args.stateRoot, ''),
     synthesisAdapter: adapterForReasoning(synthesisReasoning),
     synthesisModelBase,
     synthesisModelName: modelName({ model: synthesisModelBase, reasoning: synthesisReasoning }),

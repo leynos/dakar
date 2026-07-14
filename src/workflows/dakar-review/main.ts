@@ -1,3 +1,5 @@
+/** @file Orchestrate Dakar's ODW phases through the injected runtime primitives. */
+
 import {
   acceptedFromVerdicts,
   candidatesForVerification,
@@ -218,9 +220,9 @@ const verdicts =
     : (
         // ODW pipeline advances candidates independently with scheduler-bounded
         // concurrency; it is not an intentional serial rate limiter.
-        await pipeline(verificationCandidates, (candidate) =>
+        await pipeline(verificationCandidates.map((candidate, index) => ({ candidate, ordinal: index + 1 })), ({ candidate, ordinal }) =>
           agent<Verdict>(verificationPrompt(candidate, prepared, promptContext), {
-            label: `verify-${candidate.candidateId.slice(0, 40)}`,
+            label: `verify-${candidate.candidateId.slice(0, 30)}-${ordinal}`,
             phase: 'Verify',
             adapter: SYNTHESIS_ADAPTER,
             model: SYNTHESIS_MODEL_BASE,
@@ -380,8 +382,11 @@ const recordInput = {
 }
 const recordPrompt = makeRecordPrompt(recordInput, promptContext)
 let recorded: RecordResult | null = null
+let recordAttempts = 0
 for (let attempt = 1; attempt <= 3 && recorded?.ok !== true; attempt += 1) {
+  recordAttempts = attempt
   if (attempt > 1) {
+    log(`Review-history recording attempt ${attempt} of 3 after an unsuccessful attempt.`)
     await new Promise((resolve) => setTimeout(resolve, 100 * (attempt - 1)))
   }
   try {
@@ -421,6 +426,7 @@ return {
   reportMarkdown: authoritativeReport,
   metrics,
   recorded,
+  recordAttempts,
   recordInput,
 }
 

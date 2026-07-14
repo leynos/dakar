@@ -161,36 +161,58 @@ function isObject(value) {
   return typeof value === "object" && value !== null;
 }
 function positiveLimit(value, fallback, ceiling) {
-  const parsed = Number(value);
+  const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
   const floored = Math.floor(parsed);
   return Number.isFinite(parsed) && floored > 0 ? Math.min(floored, ceiling) : fallback;
+}
+function nonBlankString(value, fallback) {
+  return typeof value === "string" && value.trim() !== "" ? value : fallback;
+}
+function configuredAgentInstructions(value) {
+  if (!isObject(value)) return null;
+  if (value.content !== void 0 && typeof value.content !== "string") return null;
+  if (value.source !== void 0 && typeof value.source !== "string") return null;
+  if (value.truncated !== void 0 && typeof value.truncated !== "boolean") return null;
+  return Object.freeze({
+    content: value.content,
+    source: value.source,
+    truncated: value.truncated
+  });
+}
+function validModelIdentifier(value) {
+  if (typeof value !== "string" || value.trim() !== value || value.length === 0 || /\s/u.test(value)) return false;
+  const [model, reasoning, extra] = value.split("/");
+  return Boolean(model) && extra === void 0 && (reasoning === void 0 || isReasoning(reasoning));
 }
 function configuredModels(value) {
   if (!Array.isArray(value)) return [];
   return value.filter(
-    (candidate) => isObject(candidate) && (candidate.label === void 0 || typeof candidate.label === "string") && typeof candidate.model === "string" && candidate.model.length > 0 && (candidate.reasoning === "low" || candidate.reasoning === "medium" || candidate.reasoning === "high") && (candidate.role === void 0 || typeof candidate.role === "string")
+    (candidate) => isObject(candidate) && (candidate.label === void 0 || typeof candidate.label === "string") && validModelIdentifier(candidate.model) && (candidate.reasoning === "low" || candidate.reasoning === "medium" || candidate.reasoning === "high") && (candidate.role === void 0 || typeof candidate.role === "string")
   );
 }
 function resolveWorkflowConfig(value) {
   const args2 = isObject(value) ? value : {};
   const customModels = configuredModels(args2.models);
   const reviewModels = customModels.length > 0 ? Object.freeze(customModels.map((model) => Object.freeze({ ...model }))) : DEFAULT_REVIEW_MODELS;
-  const synthesisModel = args2.synthesisModel || "gpt-5.5";
-  const requestedReasoning = reasoningFromModel(synthesisModel, args2.synthesisReasoning || "high");
+  const synthesisModel = validModelIdentifier(args2.synthesisModel) ? args2.synthesisModel : "gpt-5.5";
+  const requestedReasoning = reasoningFromModel(
+    synthesisModel,
+    isReasoning(args2.synthesisReasoning) ? args2.synthesisReasoning : "high"
+  );
   const synthesisReasoning = isReasoning(requestedReasoning) ? requestedReasoning : "high";
   const synthesisModelBase = baseModel(synthesisModel);
   return Object.freeze({
-    agentInstructions: args2.agentInstructions || null,
-    baseRef: args2.base || "origin/main",
-    configArg: args2.config || "",
+    agentInstructions: configuredAgentInstructions(args2.agentInstructions),
+    baseRef: nonBlankString(args2.base, "origin/main"),
+    configArg: nonBlankString(args2.config, ""),
     dryRun: args2.dryRun === true,
-    headRef: args2.head || "HEAD",
+    headRef: nonBlankString(args2.head, "HEAD"),
     maxCandidates: positiveLimit(args2.maxCandidates, 30, 1e3),
     maxFindings: positiveLimit(args2.maxFindings, 20, 200),
     maxTasks: positiveLimit(args2.maxTasks, 8, 64),
-    repoRoot: args2.repoRoot || ".",
+    repoRoot: nonBlankString(args2.repoRoot, "."),
     reviewModels,
-    stateRoot: args2.stateRoot || "",
+    stateRoot: nonBlankString(args2.stateRoot, ""),
     synthesisAdapter: adapterForReasoning(synthesisReasoning),
     synthesisModelBase,
     synthesisModelName: modelName({ model: synthesisModelBase, reasoning: synthesisReasoning }),
@@ -434,7 +456,7 @@ var SYNTHESIS_SCHEMA = {
       candidateFindings: { type: "integer" },
       confirmedFindings: { type: "integer" },
       discardedFindings: { type: "integer" }
-    }, required: ["taskCount", "candidateFindings", "confirmedFindings", "discardedFindings"] }
+    } }
   },
   required: ["verdict", "summary", "reportMarkdown", "findings", "metrics"]
 };
@@ -462,6 +484,7 @@ function classifyPath(path) {
   return "unknown";
 }
 function chunk(values, size) {
+  if (!Number.isFinite(size) || size <= 0) throw new RangeError("chunk size must be a positive finite number");
   const chunks = [];
   for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
   return chunks;
@@ -695,9 +718,9 @@ async function workflowMain() {
     // ODW pipeline advances candidates independently with scheduler-bounded
     // concurrency; it is not an intentional serial rate limiter.
     (await pipeline(
-      verificationCandidates,
-      (candidate) => agent(verificationPrompt(candidate, prepared, promptContext), {
-        label: `verify-${candidate.candidateId.slice(0, 40)}`,
+      verificationCandidates.map((candidate, index) => ({ candidate, ordinal: index + 1 })),
+      ({ candidate, ordinal }) => agent(verificationPrompt(candidate, prepared, promptContext), {
+        label: `verify-${candidate.candidateId.slice(0, 30)}-${ordinal}`,
         phase: "Verify",
         adapter: SYNTHESIS_ADAPTER,
         model: SYNTHESIS_MODEL_BASE,
@@ -834,8 +857,11 @@ async function workflowMain() {
   };
   const recordPrompt2 = recordPrompt(recordInput, promptContext);
   let recorded = null;
+  let recordAttempts = 0;
   for (let attempt = 1; attempt <= 3 && recorded?.ok !== true; attempt += 1) {
+    recordAttempts = attempt;
     if (attempt > 1) {
+      log(`Review-history recording attempt ${attempt} of 3 after an unsuccessful attempt.`);
       await new Promise((resolve) => setTimeout(resolve, 100 * (attempt - 1)));
     }
     try {
@@ -874,6 +900,7 @@ async function workflowMain() {
     reportMarkdown: authoritativeReport,
     metrics,
     recorded,
+    recordAttempts,
     recordInput
   };
 }

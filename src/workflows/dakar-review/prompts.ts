@@ -1,3 +1,5 @@
+/** @file Build bounded, trust-aware prompts for each workflow phase. */
+
 import { shellWord } from './shell.ts'
 import type { Candidate, Discarded, PreparedReview, PromptContext, ReviewTask } from './types.ts'
 
