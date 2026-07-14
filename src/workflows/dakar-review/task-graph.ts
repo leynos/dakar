@@ -3,12 +3,19 @@
 import { adapterForReasoning, baseModel, modelForRole, modelName } from './model-routing.ts'
 import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'
 
+/** Defines the bounded limits and model set used to construct review tasks. */
 export interface TaskGraphConfig {
   maxFindings: number
   maxTasks: number
   reviewModels: readonly Readonly<ModelSpec>[]
 }
 
+/**
+ * Classifies a repository-relative path into a review task kind.
+ *
+ * @param path - Changed repository-relative path to classify.
+ * @returns A tests, docs, dependency, config, source, or unknown kind.
+ */
 export function classifyPath(path: string): string {
   if (/\b(test|tests|spec|__tests__)\b/u.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/u.test(path)) return 'tests'
   if (/\.(md|mdx|rst|adoc)$/u.test(path) || path.startsWith('docs/')) return 'docs'
@@ -18,6 +25,14 @@ export function classifyPath(path: string): string {
   return 'unknown'
 }
 
+/**
+ * Splits values into ordered chunks without dropping or duplicating entries.
+ *
+ * @param values - Values to partition while preserving their order.
+ * @param size - Positive finite maximum number of values in each chunk.
+ * @returns Ordered chunks whose flattened contents equal the input.
+ * @throws {RangeError} When size is non-finite or not positive.
+ */
 export function chunk<T>(values: T[], size: number): T[][] {
   if (!Number.isFinite(size) || size <= 0) throw new RangeError('chunk size must be a positive finite number')
   const chunks = []
@@ -25,6 +40,16 @@ export function chunk<T>(values: T[], size: number): T[][] {
   return chunks
 }
 
+/**
+ * Builds one routed review-task specification for a file group.
+ *
+ * @param kind - Review kind used to select role, limits, and verification policy.
+ * @param files - Changed files assigned exclusively to this task.
+ * @param index - Zero-based task index within the kind.
+ * @param config - Valid task limits and ordered model assignments.
+ * @returns A complete task specification ready for ODW dispatch.
+ * @throws {TypeError} When the selected model has no valid identifier.
+ */
 export function taskSpec(kind: string, files: string[], index: number, config: TaskGraphConfig): ReviewTask {
   const role = kind === 'source' ? 'high' : kind === 'tests' ? 'medium' : kind === 'docs' || kind === 'config' ? 'mini' : 'spark'
   const assigned = modelForRole(role, config.reviewModels)
@@ -37,6 +62,13 @@ export function taskSpec(kind: string, files: string[], index: number, config: T
   }
 }
 
+/**
+ * Distributes a finite task budget across populated file groups by load.
+ *
+ * @param groups - Distinct task kinds with at least one changed file each.
+ * @param budget - Maximum slots available across all groups.
+ * @returns A map assigning at least one slot per supplied group when budget permits.
+ */
 export function distributeTaskSlots(groups: Array<{ kind: string; files: string[] }>, budget: number): Map<string, number> {
   const slots = new Map(groups.map((group) => [group.kind, 1]))
   let remaining = budget - groups.length
@@ -56,6 +88,14 @@ export function distributeTaskSlots(groups: Array<{ kind: string; files: string[
   return slots
 }
 
+/**
+ * Constructs complete changed-file coverage plus the mandatory summary task.
+ *
+ * @param prepared - Trusted prepare result containing the reviewed changed files.
+ * @param config - Positive task and finding limits with routed model assignments.
+ * @returns A bounded task graph covering every changed file.
+ * @throws {Error} When the task budget cannot cover every group and the summary.
+ */
 export function buildTaskGraph(prepared: PreparedReview, config: TaskGraphConfig): ReviewTask[] {
   const groups = new Map<string, string[]>()
   for (const file of prepared.changedFiles || []) {
@@ -82,6 +122,12 @@ export function buildTaskGraph(prepared: PreparedReview, config: TaskGraphConfig
   return tasks
 }
 
+/**
+ * Builds the representative task graph exposed by dry-run output.
+ *
+ * @param config - Task limits and model assignments used for representative tasks.
+ * @returns A bounded example graph that always retains its summary task.
+ */
 export function defaultTaskGraph(config: TaskGraphConfig): ReviewTask[] {
   const tasks = [
     taskSpec('source', ['src/example.js'], 0, config), taskSpec('tests', ['tests/example.test.js'], 0, config),

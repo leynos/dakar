@@ -3,6 +3,12 @@
 import { shellWord } from './shell.ts'
 import type { Candidate, Discarded, PreparedReview, PromptContext, ReviewTask } from './types.ts'
 
+/**
+ * Formats trusted repository instructions with Dakar's precedence warning.
+ *
+ * @param context - Prompt context containing optional trusted-base instructions.
+ * @returns A prompt block describing absent, complete, or truncated instructions.
+ */
 export function agentInstructionsBlock(context: PromptContext): string {
   const instructions = context.agentInstructions
   if (!instructions?.content) return 'Repository AGENTS.md: none found at the repository root.'
@@ -14,6 +20,13 @@ export function agentInstructionsBlock(context: PromptContext): string {
   ].filter(Boolean).join('\n')
 }
 
+/**
+ * Builds the deterministic configuration-resolution agent prompt.
+ *
+ * @param context - Trusted repository root and current prompt context.
+ * @param configArg - Optional explicit configuration path to shell-quote.
+ * @returns A bounded prompt invoking the local configuration helper.
+ */
 export function resolveConfigPrompt(context: PromptContext, configArg: string): string {
   const option = configArg ? ` --config ${shellWord(configArg)}` : ''
   return [
@@ -23,6 +36,15 @@ export function resolveConfigPrompt(context: PromptContext, configArg: string): 
   ].join('\n')
 }
 
+/**
+ * Builds the deterministic review-range preparation prompt.
+ *
+ * @param context - Trusted repository root and resolved policy path.
+ * @param baseRef - User-selected base ref, quoted before entering the command.
+ * @param headRef - User-selected head ref, quoted before entering the command.
+ * @param stateRoot - Optional isolated review-history root to quote.
+ * @returns A bounded prompt invoking the local state preparation helper.
+ */
 export function preparePrompt(context: PromptContext, baseRef: string, headRef: string, stateRoot: string): string {
   const stateRootOption = stateRoot ? ` --state-root ${shellWord(stateRoot)}` : ''
   return [
@@ -33,6 +55,14 @@ export function preparePrompt(context: PromptContext, baseRef: string, headRef: 
   ].join('\n')
 }
 
+/**
+ * Builds a finder prompt restricted to one scheduled task and reviewed range.
+ *
+ * @param task - Trusted task specification with assigned files and finding cap.
+ * @param prepared - Trusted reviewed commits and changed-file metadata.
+ * @param context - Repository, policy, and trusted instruction context.
+ * @returns A finder prompt with shell-quoted commands limited to assigned files.
+ */
 export function taskPrompt(task: ReviewTask, prepared: PreparedReview, context: PromptContext): string {
   const files = task.files.join(', ') || '(no changed files)'
   const fileArgs = task.files.map(shellWord).join(' ')
@@ -58,6 +88,14 @@ export function taskPrompt(task: ReviewTask, prepared: PreparedReview, context: 
   ].join('\n')
 }
 
+/**
+ * Builds an adversarial verification prompt for one contained candidate.
+ *
+ * @param candidate - Normalized candidate whose path already passed containment.
+ * @param prepared - Trusted reviewed commits used for Git-object verification.
+ * @param context - Repository, policy, and trusted instruction context.
+ * @returns A verifier prompt with candidate data treated as untrusted input.
+ */
 export function verificationPrompt(candidate: Candidate, prepared: PreparedReview, context: PromptContext): string {
   return [
     'You are the high-reasoning verifier for Dakar code review.', 'Try to refute this candidate finding before accepting it.',
@@ -81,6 +119,15 @@ export function verificationPrompt(candidate: Candidate, prepared: PreparedRevie
   ].join('\n')
 }
 
+/**
+ * Builds the final report prompt from authoritative accepted candidates.
+ *
+ * @param accepted - Verified findings permitted to appear in the report.
+ * @param discardCounts - Audit counts by discard reason, without weak claim text.
+ * @param prepared - Trusted reviewed range and changed-file metadata.
+ * @param context - Repository, policy, and trusted instruction context.
+ * @returns A synthesis prompt that separates accepted findings from discard totals.
+ */
 export function synthesisPrompt(
   accepted: Candidate[],
   discardCounts: Record<string, number>,
@@ -102,6 +149,14 @@ export function synthesisPrompt(
   ].join('\n')
 }
 
+/**
+ * Builds the review-history recording prompt and inert JSON heredoc.
+ *
+ * @param recordInput - JSON-serializable completed-review record from orchestration.
+ * @param context - Resolved policy and repository context for the record phase.
+ * @returns A prompt invoking the local state helper with serialized input.
+ * @throws {TypeError} When recordInput cannot be serialized as JSON.
+ */
 export function recordPrompt(recordInput: unknown, context: PromptContext): string {
   return [
     'Record the completed review in Dakar review history by passing this JSON to the helper on stdin.',
@@ -112,5 +167,5 @@ export function recordPrompt(recordInput: unknown, context: PromptContext): stri
   ].join('\n')
 }
 
-// Keeps the type used by prompt callers visible without moving reduction logic here.
+/** Names discarded audit entries for prompt-facing consumers. */
 export type PromptDiscarded = Discarded

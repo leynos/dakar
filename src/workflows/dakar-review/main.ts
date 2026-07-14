@@ -34,6 +34,12 @@ import type {
   Verdict,
 } from './types.ts'
 
+/**
+ * Runs the complete Dakar review workflow through the ambient ODW primitives.
+ *
+ * @returns The dry-run contract, an early-stage failure, or the final review result.
+ * @throws When a direct ODW agent call or another injected primitive fails.
+ */
 async function workflowMain() {
 const config = resolveWorkflowConfig(args)
 const {

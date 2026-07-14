@@ -1,8 +1,12 @@
 /** @file Declare the data contracts shared by the typed workflow modules. */
 
+/** Represents an untrusted object whose fields require runtime narrowing. */
 export type UnknownObject = Record<string, unknown>
+
+/** Enumerates the reasoning levels supported by Dakar's Codex adapters. */
 export type Reasoning = 'low' | 'medium' | 'high'
 
+/** Describes one configured model, reasoning level, label, and review role. */
 export interface ModelSpec {
   label?: string
   model: string
@@ -10,12 +14,14 @@ export interface ModelSpec {
   role?: string
 }
 
+/** Carries trusted-base repository instructions and truncation provenance. */
 export interface AgentInstructions {
   content?: string
   source?: string
   truncated?: boolean
 }
 
+/** Describes untrusted external arguments accepted by the workflow entry. */
 export interface WorkflowArgs {
   agentInstructions?: AgentInstructions
   base?: string
@@ -32,6 +38,7 @@ export interface WorkflowArgs {
   synthesisReasoning?: string
 }
 
+/** Captures the deterministic review range returned by the state helper. */
 export interface PreparedReview {
   alreadyReviewed?: boolean
   changedFiles?: string[]
@@ -44,6 +51,7 @@ export interface PreparedReview {
   warnings?: string[]
 }
 
+/** Defines one bounded, model-routed unit of changed-file review work. */
 export interface ReviewTask {
   adapter: string
   assignedModel: string
@@ -57,6 +65,7 @@ export interface ReviewTask {
   verificationPolicy: string
 }
 
+/** Describes a schema-validated finding proposed by a review task. */
 export interface RawCandidate {
   confidence: 'high' | 'medium' | 'low'
   detail: string
@@ -68,6 +77,7 @@ export interface RawCandidate {
   title: string
 }
 
+/** Captures one review task's candidate output and coverage metrics. */
 export interface CandidateResult {
   candidates: RawCandidate[]
   metrics: {
@@ -80,11 +90,13 @@ export interface CandidateResult {
   taskId: string
 }
 
+/** Binds a candidate result to the trusted task that produced it. */
 export interface BoundCandidateResult {
   result: CandidateResult
   task: ReviewTask
 }
 
+/** Enriches a raw candidate with trusted task and verification metadata. */
 export interface Candidate extends RawCandidate {
   candidateId: string
   line: number
@@ -100,6 +112,7 @@ export interface Candidate extends RawCandidate {
   verificationStatus?: string
 }
 
+/** Describes one verifier decision for a scheduled candidate identifier. */
 export interface Verdict {
   acceptedSeverity?: 'critical' | 'high' | 'medium' | 'low'
   candidateId: string
@@ -117,6 +130,7 @@ export interface Verdict {
     | 'needs_human'
 }
 
+/** Records why a candidate or unknown verifier reference was not accepted. */
 export interface Discarded {
   candidate: Candidate | { candidateId?: string }
   evidenceChecked: string
@@ -124,6 +138,7 @@ export interface Discarded {
   status: string
 }
 
+/** Captures the schema-permitted presentation returned by synthesis. */
 export interface SynthesisResult {
   findings?: unknown[]
   metrics?: UnknownObject
@@ -132,6 +147,7 @@ export interface SynthesisResult {
   verdict?: string
 }
 
+/** Captures configuration resolution status, provenance, and checked paths. */
 export interface ConfigResult {
   config?: string
   checked?: string[]
@@ -140,6 +156,7 @@ export interface ConfigResult {
   source?: 'explicit' | 'repository' | 'user' | 'example'
 }
 
+/** Captures the review-history helper's success or diagnostic output. */
 export interface RecordResult {
   error?: string
   headCommit?: string
@@ -149,6 +166,7 @@ export interface RecordResult {
   stdout?: string
 }
 
+/** Bundles trusted repository, policy, and instruction data for prompt builders. */
 export interface PromptContext {
   agentInstructions: AgentInstructions | null
   policyPath: string

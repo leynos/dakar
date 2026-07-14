@@ -3,6 +3,7 @@
 import { adapterForReasoning, baseModel, DEFAULT_REVIEW_MODELS, isReasoning, modelName, reasoningFromModel } from './model-routing.ts'
 import type { AgentInstructions, ModelSpec, Reasoning, UnknownObject } from './types.ts'
 
+/** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
   readonly agentInstructions: AgentInstructions | null
   readonly baseRef: string
@@ -67,6 +68,12 @@ function configuredModels(value: unknown): ModelSpec[] {
   )
 }
 
+/**
+ * Resolves untrusted workflow arguments into bounded, immutable configuration.
+ *
+ * @param value - Raw ODW arguments; malformed fields fall back to safe defaults.
+ * @returns A frozen configuration whose limits and model identifiers are valid.
+ */
 export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
   const args = isObject(value) ? value : {}
   const customModels = configuredModels(args.models)
