@@ -32,6 +32,7 @@ lint: markdownlint nixie
 
 typecheck:
 	@for file in $(NODE_MODULES); do node --check "$$file"; done
+	@npm run typecheck
 	@npm run odw:dry-run
 
 markdownlint: spelling

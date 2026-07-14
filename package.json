@@ -9,13 +9,16 @@
   "scripts": {
     "markdownlint": "markdownlint-cli2 $(git ls-files '*.md')",
     "nixie": "nixie $(git ls-files '*.md')",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
     "test:state": "node --test tests/review-state.test.mjs",
     "test:cli": "node --test tests/cli.test.mjs",
     "odw:dry-run": "sh -eu -c 'runs_root=$(mktemp -d); trap '\\''rm -rf \"$runs_root\"'\\'' EXIT; odw run workflows/dakar-review.js --runs-root \"$runs_root\" --source . --wait --timeout 20 --args '\\''{\"dryRun\":true}'\\'''"
   },
   "devDependencies": {
+    "esbuild": "0.28.1",
     "fast-check": "^4.8.0",
-    "markdownlint-cli2": "^0.22.1"
+    "markdownlint-cli2": "^0.22.1",
+    "typescript": "6.0.3"
   }
 }

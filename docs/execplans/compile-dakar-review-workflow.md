@@ -154,8 +154,12 @@ the `Decision log`, and request direction.
   of architecture, interfaces, tests, operability, and documentation.
 - [x] (2026-07-14 02:05Z) WI-0: Recorded the user's explicit implementation
   approval by accepting ADR 001 and moving this plan to `IN PROGRESS`.
-- [ ] WI-1: Characterize the complete observable workflow contract.
-- [ ] WI-2: Establish TypeScript and compile-time contract tests.
+- [x] (2026-07-14 02:18Z) WI-1: Preserved the existing 57-test workflow
+  characterization baseline before source movement; the dry-run contract and
+  helper-level security and planning cases remain executable.
+- [x] (2026-07-14 02:18Z) WI-2: Added exact TypeScript and esbuild development
+  dependencies, the strict erasable TypeScript contract, ambient ODW globals,
+  and passing configured-project plus positive and negative compiler probes.
 - [ ] WI-3: Build a mechanically equivalent generated workflow.
 - [ ] WI-4: Extract schemas, types, configuration, and model routing.
 - [ ] WI-5: Extract the task graph and candidate processing.
@@ -191,6 +195,13 @@ the `Decision log`, and request direction.
   Evidence: `docs/roadmap.md` task 5.1.1 currently requires a design explaining
   why ordinary imports are not used.
   Impact: the roadmap must be revised with the accepted compile-time boundary.
+
+- Observation: TypeScript 6 rejects command-line source files when a nearby
+  `tsconfig.json` exists unless the invocation includes `--ignoreConfig`.
+  Evidence: the initial compile-time fixture failed with TS5112 before reading
+  the valid erasable source.
+  Impact: isolated positive and negative compiler probes use `--ignoreConfig`;
+  the repository gate continues using `tsc -p tsconfig.json`.
 
 ## Decision log
 
@@ -749,6 +760,10 @@ state path, and the second-run skip result. Do not paste full logs.
   `make lint`, and `make test` all passed; Node reported 57 passing tests, and
   the ODW dry run returned `ok: true`, `dryRun: true`, and workflow version
   `divide-and-conquer-v1`.
+- WI-1/WI-2 at 2026-07-14 02:18Z: the scrutineer independently passed all four
+  deterministic gates with 60 tests. CodeRabbit's initial URL-path and
+  contract-coverage concerns were corrected; its final review returned zero
+  findings.
 
 ## Interfaces and dependencies
 
