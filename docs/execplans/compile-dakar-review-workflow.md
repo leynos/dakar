@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & discoveries`, `Decision log`, and
 `Outcomes & retrospective` must remain current as implementation proceeds.
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ## Purpose / big picture
 
@@ -173,7 +173,9 @@ the `Decision log`, and request direction.
   conventions, user installation contract, and roadmap with the implemented
   source-to-artefact boundary; `make check-fmt`, `make markdownlint`,
   `make nixie`, and `git diff --check` passed.
-- [ ] WI-8: Prove deterministic, runtime, CLI, and state parity.
+- [x] (2026-07-14 07:02Z) WI-8: Produced byte-identical repeated builds and
+  completed an isolated live review with native recording; the same-head rerun
+  skipped and left exactly one history entry.
 
 ## Surprises & discoveries
 
@@ -343,7 +345,10 @@ and pure configuration, routing, graph, candidate, shell, and prompt contracts
 have direct TypeScript imports. The generated-workflow harness proves phase
 order, exact agent invocation, resolved-policy propagation, and failed-slot
 handling. WI-7 synchronizes the developer, component, system, and user-facing
-documentation with that implementation. End-to-end live parity remains.
+documentation with that implementation. WI-8 proves deterministic generation,
+native live recording, and idempotent same-head skip behaviour. The final
+independent deterministic gates passed with 97 tests, and CodeRabbit returned
+zero findings; the plan is complete.
 
 ## Context and orientation
 
@@ -853,6 +858,16 @@ state path, and the second-run skip result. Do not paste full logs.
   all four deterministic gates with 97 tests. CodeRabbit reported six schema,
   immutability, routing, precedence, and fixture-strength concerns; all received
   focused corrections and regression coverage before the milestone commit.
+- WI-8 at 2026-07-14 07:02Z: two builds produced SHA-256
+  `4f48e4a2b665a60a3d644e65630e41cdc794d18b4ec182ac32081a5916e9fe31`.
+  A bounded review of disposable head `15cbc98372ae9f067ddeeb84abf0006e63c493c7`
+  completed two planned tasks, synthesized one confirmed finding, and recorded
+  natively under isolated state with no CLI recovery. The second invocation
+  returned `skipped: true`; history contained one matching head before cleanup.
+- Final scrutiny at 2026-07-14 07:02Z: `git diff --check`, `make check-fmt`,
+  `make typecheck`, `make lint`, and `make test` all passed independently; 97
+  tests passed. CodeRabbit completed without rate limiting and returned zero
+  findings.
 
 ## Interfaces and dependencies
 

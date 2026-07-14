@@ -296,13 +296,13 @@ approved ExecPlan.
 This step proves that the source split preserves the workflow users run. See
 `docs/dakar-review-design.md` §12.
 
-- [ ] 5.3.1. Run compile-time, module, freshness, dry-run, and CLI contract
+- [x] 5.3.1. Run compile-time, module, freshness, dry-run, and CLI contract
   checks against the generated workflow.
   - Requires 5.2.2.
   - Success: type restrictions, compiler negative probes, deterministic builds,
     output schemas, telemetry mode, record recovery, and AGENTS-aware context
     all pass their documented gates.
-- [ ] 5.3.2. Run one isolated live review and repeat it at the recorded head.
+- [x] 5.3.2. Run one isolated live review and repeat it at the recorded head.
   - Requires 5.3.1.
   - Success: the workflow prepares, reviews, verifies, synthesizes, records the
     reviewed head under isolated XDG state, and the second run returns
