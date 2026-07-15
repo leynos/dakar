@@ -70,6 +70,15 @@ test('normalizeCandidates enforces the per-task finding cap before the global ca
   assert.deepEqual(candidates.map(({ path }) => path), changedFiles.slice(0, TASK_GRAPH[0].maxFindings))
 })
 
+test('per-task caps apply after deterministic ordering, not finder arrival order', () => {
+  const changedFiles = ['src/a.js', 'src/b.js', 'src/c.js']
+  const results = taskResult([...changedFiles].reverse())
+
+  const candidates = normalizeCandidates(bindResults(results, changedFiles), changedFiles, 30)
+
+  assert.deepEqual(candidates.map(({ path }) => path), ['src/a.js', 'src/b.js'])
+})
+
 test('normalizeCandidates never exceeds a positive per-task cap', () => {
   fc.assert(fc.property(
     fc.integer({ min: 1, max: 20 }),
@@ -135,7 +144,21 @@ test('candidate and finding caps retain higher severities with stable ties', () 
     evidenceChecked: 'source',
   }))
   const accepted = acceptedFromVerdicts([...candidates].reverse(), verdicts.reverse(), 2)
-  assert.deepEqual(accepted.map(({ title }) => title), ['critical', 'high b'])
+  assert.deepEqual(accepted.map(({ title }) => title), ['critical', 'high a'])
+})
+
+test('candidate caps use deterministic path, line, and id tie-breaks', () => {
+  const changedFiles = ['z.js', 'a.js']
+  const results = [{ taskId: 'source-1', candidates: [
+    { title: 'later', severity: 'medium', path: 'z.js', line: 1 },
+    { title: 'line two', severity: 'medium', path: 'a.js', line: 2 },
+    { title: 'line one z', severity: 'medium', path: 'a.js', line: 1 },
+    { title: 'line one a', severity: 'medium', path: 'a.js', line: 1 },
+  ].map((candidate) => ({ ...candidate, detail: 'detail', evidence: 'evidence' })) }]
+
+  const candidates = normalizeCandidates(bindResults(results, changedFiles, 10), changedFiles, 3)
+
+  assert.deepEqual(candidates.map(({ title }) => title), ['line one a', 'line one z', 'line two'])
 })
 
 test('verification policy samples one low candidate per non-high task', () => {

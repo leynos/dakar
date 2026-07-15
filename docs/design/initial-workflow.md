@@ -804,6 +804,9 @@ Live output includes:
 - `reportMarkdown`
 - `metrics`
 - `recorded`
+- `recordAttempts`
+- `recordInput`
+- `stateFile`
 
 The next implementation revision should add these args:
 
@@ -859,6 +862,11 @@ Exit status is transport-oriented:
   `ok: false`.
 - On CLI or ODW process failures before a workflow object exists, print a JSON
   error object to standard error with `ok: false`, `stage`, and `error`.
+
+When Record-phase recovery is needed, `recordInput` supplies review data, not
+the authority to choose a destination. The CLI passes its trusted repository
+and state root to `scripts/review-state.mjs`, which derives the state file; it
+does not honour a state-file path from workflow output.
 
 ## Metrics
 

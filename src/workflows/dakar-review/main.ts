@@ -375,7 +375,6 @@ const metrics = {
 
 phase('Record')
 const recordInput = {
-  stateFile: prepared.stateFile,
   reviewId: `head-${prepared.headCommit}`,
   baseCommit: prepared.reviewBase,
   headCommit: prepared.headCommit,
@@ -386,7 +385,7 @@ const recordInput = {
   summary: authoritativeSummary,
   metrics,
 }
-const recordPrompt = makeRecordPrompt(recordInput, promptContext)
+const recordPrompt = makeRecordPrompt(recordInput, promptContext, STATE_ROOT)
 let recorded: RecordResult | null = null
 let recordAttempts = 0
 for (let attempt = 1; attempt <= 3 && recorded?.ok !== true; attempt += 1) {
@@ -417,7 +416,7 @@ return {
   verdict: finalVerdict,
   config: CODE_RABBIT_CONFIG,
   resolvedConfig,
-  stateFile: prepared.stateFile,
+  stateFile: recorded?.stateFile,
   reviewBase: prepared.reviewBase,
   headCommit: prepared.headCommit,
   commitCount: prepared.commitCount,

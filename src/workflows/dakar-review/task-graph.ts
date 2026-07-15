@@ -29,12 +29,12 @@ export function classifyPath(path: string): string {
  * Splits values into ordered chunks without dropping or duplicating entries.
  *
  * @param values - Values to partition while preserving their order.
- * @param size - Positive finite maximum number of values in each chunk.
+ * @param size - Positive integer maximum number of values in each chunk.
  * @returns Ordered chunks whose flattened contents equal the input.
- * @throws {RangeError} When size is non-finite or not positive.
+ * @throws {RangeError} When size is not a positive integer.
  */
 export function chunk<T>(values: T[], size: number): T[][] {
-  if (!Number.isFinite(size) || size <= 0) throw new RangeError('chunk size must be a positive finite number')
+  if (!Number.isInteger(size) || size <= 0) throw new RangeError('chunk size must be a positive integer')
   const chunks = []
   for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size))
   return chunks

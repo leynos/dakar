@@ -91,9 +91,9 @@ test('distributeTaskSlots gives every group at least one slot within budget', ()
   assert.ok(slots.get('source') > slots.get('tests'))
 })
 
-test('chunk rejects sizes that cannot advance its cursor', () => {
-  for (const size of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-    assert.throws(() => chunk([1], size), /positive finite/u)
+test('chunk rejects sizes that cannot partition by a positive integer', () => {
+  for (const size of [0, -1, 0.5, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => chunk([1], size), /positive integer/u)
   }
 })
 

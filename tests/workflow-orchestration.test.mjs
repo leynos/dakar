@@ -6,7 +6,7 @@ import test from 'node:test'
 
 class FixtureFailure extends Error {}
 
-async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false } = {}) {
+async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '' } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -24,7 +24,7 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
     if (options.label === failedLabel) throw new FixtureFailure('fixture failure')
     if (options.label === 'config-resolve') return { ok: true, config: '/distinct/policy.yaml' }
     if (options.label === 'state-prepare') {
-      return { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
+      return { ok: true, stateFile: prepareStateFile, reviewBase: base, headCommit: head,
         commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }
     }
     if (options.label === 'source-1') {
@@ -49,7 +49,7 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
     if (String(options.label).startsWith('state-record-')) {
       const attempt = Number(options.label.split('-').at(-1))
       if (attempt <= recordFailures) throw new FixtureFailure('record fixture failure')
-      return { ok: true }
+      return { ok: true, stateFile: '/trusted/state/dakar/reviews.toml' }
     }
     throw new Error(`unexpected agent label: ${options.label}`)
   }
@@ -67,7 +67,7 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
       return swallowFixtureFailure(error)
     }
   }))
-  const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message), {},
+  const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message), { stateRoot },
     { total: null, spent: () => 0, remaining: () => 0 }, async () => null,
     () => ({ ok: true, meta: null, errors: [], warnings: [] }))
   return { agentLabels, logs, phases, prompts, result }
@@ -88,6 +88,17 @@ test('generated workflow threads the resolved policy path through every downstre
       assert.doesNotMatch(prompt, /CodeRabbit YAML: auto/u)
     }
   }
+})
+
+test('generated workflow never passes a manipulated prepare state file to the record helper', async () => {
+  const manipulated = '/tmp/outside/reviews.toml'
+  const { prompts, result } = await runWorkflow({ prepareStateFile: manipulated, stateRoot: '/trusted/state' })
+  const prompt = prompts.get('state-record-1')
+
+  assert.doesNotMatch(prompt, new RegExp(manipulated, 'u'))
+  assert.match(prompt, /record --repo-root '\.' --state-root '\/trusted\/state'/u)
+  assert.equal(result.recordInput.stateFile, undefined)
+  assert.equal(result.stateFile, '/trusted/state/dakar/reviews.toml')
 })
 
 test('generated workflow retries review-history recording and reports the attempt count', async () => {

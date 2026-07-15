@@ -31,7 +31,16 @@ function candidateKey(candidate) {
   return [candidate.path || "", candidate.line || 0, String(candidate.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")].join(":");
 }
 function bySeverity(left, right) {
-  return (SEVERITY_RANK[left.severity || ""] ?? 4) - (SEVERITY_RANK[right.severity || ""] ?? 4);
+  const severity = (SEVERITY_RANK[left.severity || ""] ?? 4) - (SEVERITY_RANK[right.severity || ""] ?? 4);
+  if (severity !== 0) return severity;
+  const leftPath = String(left.path || "");
+  const rightPath = String(right.path || "");
+  if (leftPath !== rightPath) return leftPath < rightPath ? -1 : 1;
+  const line = Number(left.line || 0) - Number(right.line || 0);
+  if (line !== 0) return line;
+  const leftId = String(left.candidateId || "");
+  const rightId = String(right.candidateId || "");
+  return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
 }
 function isSafeCandidatePath(path, changedFiles) {
   if (typeof path !== "string" || path === "") return false;
@@ -44,9 +53,8 @@ function normalizeCandidates(taskResults, changedFiles, maxCandidates) {
   const changed = new Set(changedFiles || []);
   const candidates = [];
   for (const { result, task } of taskResults) {
-    let acceptedForTask = 0;
+    const validForTask = [];
     for (const raw of result.candidates || []) {
-      if (acceptedForTask >= task.maxFindings) break;
       if (typeof raw.title !== "string" || raw.title.trim() === "" || typeof raw.path !== "string" || typeof raw.detail !== "string" || raw.detail.trim() === "" || typeof raw.evidence !== "string" || raw.evidence.trim() === "") continue;
       const candidate = {
         candidateId: `${task.taskId}:${candidateKey(raw)}`,
@@ -63,9 +71,15 @@ function normalizeCandidates(taskResults, changedFiles, maxCandidates) {
         confidence: raw.confidence,
         policyRefs: raw.policyRefs || []
       };
-      const key = candidateKey(candidate);
-      if (!candidate.title || !candidate.path || seen.has(key)) continue;
+      if (!candidate.title || !candidate.path) continue;
       if (!task.files.includes(candidate.path) || !isSafeCandidatePath(candidate.path, changed)) continue;
+      validForTask.push(candidate);
+    }
+    let acceptedForTask = 0;
+    for (const candidate of validForTask.sort(bySeverity)) {
+      if (acceptedForTask >= task.maxFindings) break;
+      const key = candidateKey(candidate);
+      if (seen.has(key)) continue;
       seen.add(key);
       candidates.push(candidate);
       acceptedForTask += 1;
@@ -264,6 +278,7 @@ function preparePrompt(context, baseRef, headRef, stateRoot) {
 function taskPrompt(task, prepared, context) {
   const files = task.files.join(", ") || "(no changed files)";
   const fileArgs = task.files.map(shellWord).join(" ");
+  const scopedDiff = task.files.length > 0 ? [`git -C ${shellWord(context.repoRoot)} diff ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)} -- ${fileArgs}`] : [];
   return [
     "You are a Codex code-review finder inside the Dakar routed review workflow.",
     "Return only JSON matching the provided schema. Do not edit files.",
@@ -291,7 +306,7 @@ function taskPrompt(task, prepared, context) {
     "",
     "Suggested commands:",
     `git -C ${shellWord(context.repoRoot)} diff --stat ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)}`,
-    `git -C ${shellWord(context.repoRoot)} diff ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)} -- ${fileArgs}`
+    ...scopedDiff
   ].join("\n");
 }
 function verificationPrompt(candidate, prepared, context) {
@@ -349,7 +364,8 @@ ${JSON.stringify(accepted, null, 2)}`,
 ${JSON.stringify(discardCounts, null, 2)}`
   ].join("\n");
 }
-function recordPrompt(recordInput, context) {
+function recordPrompt(recordInput, context, stateRoot) {
+  const stateRootOption = stateRoot ? ` --state-root ${shellWord(stateRoot)}` : "";
   return [
     "Record the completed review in Dakar review history by passing this JSON to the helper on stdin.",
     "Return the helper JSON output exactly.",
@@ -357,7 +373,7 @@ function recordPrompt(recordInput, context) {
     `Resolved CodeRabbit YAML: ${context.policyPath}`,
     "",
     "Command:",
-    "node scripts/review-state.mjs record <<'__DAKAR_REVIEW_RECORD_JSON__'",
+    `node scripts/review-state.mjs record --repo-root ${shellWord(context.repoRoot)}${stateRootOption} <<'__DAKAR_REVIEW_RECORD_JSON__'`,
     JSON.stringify(recordInput, null, 2),
     "__DAKAR_REVIEW_RECORD_JSON__"
   ].join("\n");
@@ -484,7 +500,7 @@ function classifyPath(path) {
   return "unknown";
 }
 function chunk(values, size) {
-  if (!Number.isFinite(size) || size <= 0) throw new RangeError("chunk size must be a positive finite number");
+  if (!Number.isInteger(size) || size <= 0) throw new RangeError("chunk size must be a positive integer");
   const chunks = [];
   for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
   return chunks;
@@ -844,7 +860,6 @@ async function workflowMain() {
   };
   phase("Record");
   const recordInput = {
-    stateFile: prepared.stateFile,
     reviewId: `head-${prepared.headCommit}`,
     baseCommit: prepared.reviewBase,
     headCommit: prepared.headCommit,
@@ -855,7 +870,7 @@ async function workflowMain() {
     summary: authoritativeSummary,
     metrics
   };
-  const recordPrompt2 = recordPrompt(recordInput, promptContext);
+  const recordPrompt2 = recordPrompt(recordInput, promptContext, STATE_ROOT);
   let recorded = null;
   let recordAttempts = 0;
   for (let attempt = 1; attempt <= 3 && recorded?.ok !== true; attempt += 1) {
@@ -885,7 +900,7 @@ async function workflowMain() {
     verdict: finalVerdict,
     config: CODE_RABBIT_CONFIG,
     resolvedConfig,
-    stateFile: prepared.stateFile,
+    stateFile: recorded?.stateFile,
     reviewBase: prepared.reviewBase,
     headCommit: prepared.headCommit,
     commitCount: prepared.commitCount,

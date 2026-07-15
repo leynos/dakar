@@ -136,26 +136,27 @@ function readAgentInstructions(repoRoot, baseRef) {
   if (revision.status !== 0) {
     throw new Error(`cannot resolve trusted review base ${baseRef}: ${revision.stderr.trim() || 'git rev-parse failed'}`)
   }
-  const exists = spawnSync('git', ['-C', repoRoot, 'ls-tree', '-z', baseRef, '--', 'AGENTS.md'], {
+  const resolvedCommit = revision.stdout.trim()
+  const exists = spawnSync('git', ['-C', repoRoot, 'ls-tree', '-z', resolvedCommit, '--', 'AGENTS.md'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   if (exists.error) throw exists.error
   if (exists.status !== 0) {
-    throw new Error(`cannot inspect ${baseRef}:AGENTS.md: ${exists.stderr.trim() || 'git ls-tree failed'}`)
+    throw new Error(`cannot inspect ${resolvedCommit}:AGENTS.md: ${exists.stderr.trim() || 'git ls-tree failed'}`)
   }
   if (exists.stdout === '') return null
-  const result = spawnSync('git', ['-C', repoRoot, 'show', `${baseRef}:AGENTS.md`], {
+  const result = spawnSync('git', ['-C', repoRoot, 'show', `${resolvedCommit}:AGENTS.md`], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   if (result.error) throw result.error
   if (result.status !== 0) {
-    throw new Error(`cannot read ${baseRef}:AGENTS.md: ${result.stderr.trim() || 'git show failed'}`)
+    throw new Error(`cannot read ${resolvedCommit}:AGENTS.md: ${result.stderr.trim() || 'git show failed'}`)
   }
   const content = result.stdout
   return {
-    source: `${baseRef}:AGENTS.md`,
+    source: `${resolvedCommit}:AGENTS.md`,
     content: content.slice(0, 24_000),
     truncated: content.length > 24_000,
   }
@@ -329,22 +330,22 @@ function recordInputFromOutput(output) {
  * @param {object} output - the ODW workflow result to repair in place.
  * @returns {object} the (possibly repaired) workflow result.
  */
-function recoverRecordFailure(output) {
+function recoverRecordFailure(output, trustedLocation) {
   if (
     !output ||
     output.dryRun ||
     output.skipped ||
     output.recorded?.ok === true ||
     (output.stage !== 'record' && output.recorded?.ok !== false) ||
-    !output.stateFile ||
     !output.headCommit ||
     (output.stage && output.stage !== 'record')
   ) {
     return output
   }
   try {
-    const recorded = appendReview(recordInputFromOutput(output))
+    const recorded = appendReview(recordInputFromOutput(output), trustedLocation)
     output.recorded = { ...recorded, recoveredBy: 'dakar-review' }
+    output.stateFile = recorded.stateFile
     output.metrics = {
       ...(output.metrics || {}),
       recordRecoveredByCli: true,
@@ -390,7 +391,10 @@ function runOdwQuiet(options, workflowArgs) {
     return { status: result.status || 1 }
   }
 
-  return { output: recoverRecordFailure(extractJson(result.stdout)) }
+  return { output: recoverRecordFailure(extractJson(result.stdout), {
+    'repo-root': workflowArgs.repoRoot,
+    'state-root': workflowArgs.stateRoot,
+  }) }
 }
 
 /**
@@ -434,7 +438,7 @@ function followOdwLogs(odwBin, args, timeoutMs) {
  * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
  * @returns {Promise<object>} the parsed and (if needed) record-recovered workflow result.
  */
-async function waitForOdwResult(options, runId, timeoutMs = (options.timeout || 900) * 1000) {
+async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 900) * 1000) {
   const odwBin = options.odwBin || 'odw'
   const deadline = Date.now() + timeoutMs
   let lastError = ''
@@ -445,7 +449,10 @@ async function waitForOdwResult(options, runId, timeoutMs = (options.timeout || 
       maxBuffer: 64 * 1024 * 1024,
     })
     if (result.status === 0) {
-      return recoverRecordFailure(extractJson(result.stdout))
+      return recoverRecordFailure(extractJson(result.stdout), {
+        'repo-root': workflowArgs.repoRoot,
+        'state-root': workflowArgs.stateRoot,
+      })
     }
     lastError = result.stderr.trim() || result.stdout.trim()
     if (Date.now() >= deadline) {
@@ -513,7 +520,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   }
 
   try {
-    return { output: await waitForOdwResult(options, runId, Math.max(0, resultDeadline - Date.now())) }
+    return { output: await waitForOdwResult(options, workflowArgs, runId, Math.max(0, resultDeadline - Date.now())) }
   } catch (error) {
     process.stderr.write(
       `${JSON.stringify({ ok: false, stage: 'odw-result', runId, error: error.message }, null, 2)}\n`,

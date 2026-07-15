@@ -7,7 +7,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
@@ -81,6 +81,40 @@ test('prepare uses the merge base when no review history exists', () => {
 
 test('record rejects input without a state file', () => {
   assert.throws(() => appendReview({ headCommit: 'abc123' }), /stateFile/u)
+})
+
+test('record derives its state file from trusted repository and state-root arguments', () => {
+  const repo = createRepo()
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-derived-'))
+  const manipulated = join(mkdtempSync(join(tmpdir(), 'dakar-state-manipulated-')), 'reviews.toml')
+  const recorded = appendReview({
+    stateFile: manipulated,
+    headCommit: 'a'.repeat(40),
+    commitCount: 1,
+    findingsTotal: 0,
+  }, { 'repo-root': repo, 'state-root': stateRoot })
+
+  assert.match(recorded.stateFile, /dakar\/acme\/widget\/feature-review-history\/reviews\.toml$/u)
+  assert.ok(recorded.stateFile.startsWith(`${stateRoot}/`))
+  assert.equal(existsSync(manipulated), false)
+})
+
+test('record derives its default state file through XDG helper semantics', () => {
+  const repo = createRepo()
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-xdg-'))
+  const prior = process.env.XDG_STATE_HOME
+  process.env.XDG_STATE_HOME = stateRoot
+  try {
+    const recorded = appendReview({
+      headCommit: 'b'.repeat(40),
+      commitCount: 1,
+      findingsTotal: 0,
+    }, { 'repo-root': repo })
+    assert.ok(recorded.stateFile.startsWith(`${stateRoot}/dakar/`))
+  } finally {
+    if (prior === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = prior
+  }
 })
 
 test('record rejects completed entries without a valid head commit', () => {

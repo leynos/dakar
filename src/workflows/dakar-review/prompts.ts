@@ -66,6 +66,9 @@ export function preparePrompt(context: PromptContext, baseRef: string, headRef: 
 export function taskPrompt(task: ReviewTask, prepared: PreparedReview, context: PromptContext): string {
   const files = task.files.join(', ') || '(no changed files)'
   const fileArgs = task.files.map(shellWord).join(' ')
+  const scopedDiff = task.files.length > 0
+    ? [`git -C ${shellWord(context.repoRoot)} diff ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)} -- ${fileArgs}`]
+    : []
   return [
     'You are a Codex code-review finder inside the Dakar routed review workflow.',
     'Return only JSON matching the provided schema. Do not edit files.',
@@ -84,7 +87,7 @@ export function taskPrompt(task: ReviewTask, prepared: PreparedReview, context: 
     agentInstructionsBlock(context), '',
     'Suggested commands:',
     `git -C ${shellWord(context.repoRoot)} diff --stat ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)}`,
-    `git -C ${shellWord(context.repoRoot)} diff ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)} -- ${fileArgs}`,
+    ...scopedDiff,
   ].join('\n')
 }
 
@@ -157,12 +160,13 @@ export function synthesisPrompt(
  * @returns A prompt invoking the local state helper with serialized input.
  * @throws {TypeError} When recordInput cannot be serialized as JSON.
  */
-export function recordPrompt(recordInput: unknown, context: PromptContext): string {
+export function recordPrompt(recordInput: unknown, context: PromptContext, stateRoot: string): string {
+  const stateRootOption = stateRoot ? ` --state-root ${shellWord(stateRoot)}` : ''
   return [
     'Record the completed review in Dakar review history by passing this JSON to the helper on stdin.',
     'Return the helper JSON output exactly.', 'If the command fails, return ok=false with an error, stdout, and stderr.',
     `Resolved CodeRabbit YAML: ${context.policyPath}`, '', 'Command:',
-    "node scripts/review-state.mjs record <<'__DAKAR_REVIEW_RECORD_JSON__'",
+    `node scripts/review-state.mjs record --repo-root ${shellWord(context.repoRoot)}${stateRootOption} <<'__DAKAR_REVIEW_RECORD_JSON__'`,
     JSON.stringify(recordInput, null, 2), '__DAKAR_REVIEW_RECORD_JSON__',
   ].join('\n')
 }

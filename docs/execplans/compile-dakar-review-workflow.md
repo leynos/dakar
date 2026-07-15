@@ -179,6 +179,9 @@ the `Decision log`, and request direction.
 - [x] (2026-07-14) Post-completion review: verified the reported findings
   against the current branch, applied the still-valid corrections with focused
   regressions, and synchronized contributor and result-contract documentation.
+- [x] (2026-07-15) Follow-up review: removed workflow control over the CLI
+  recovery destination, documented trusted state-file derivation, and passed
+  the updated 115-test suite.
 
 ## Surprises & discoveries
 
@@ -259,6 +262,15 @@ the `Decision log`, and request direction.
   and exhausted retries.
   Impact: operators can distinguish first-attempt recording from retry and
   exhaustion without changing the existing CLI recovery boundary.
+
+- Observation: `recordInput` previously carried the prepare result's
+  `stateFile` into CLI recovery, allowing workflow output to select a local
+  write destination.
+  Evidence: the workflow no longer emits that path in `recordInput`; the CLI
+  passes its trusted repository and state root to `appendReview`, whose focused
+  tests prove trusted derivation and XDG-default behaviour.
+  Impact: review data remains recoverable, but the local CLI retains authority
+  over where review history is written.
 
 ## Decision log
 
@@ -889,10 +901,13 @@ state path, and the second-run skip result. Do not paste full logs.
   tests passed. CodeRabbit completed without rate limiting and returned zero
   findings.
 - Post-completion review at 2026-07-14: accepted findings received focused
-  regression coverage; the generated artefact was rebuilt, and documentation
-  checks passed. The Biome-ignore and blanket-function-docstring suggestions
-  were dispositioned in the Decision log because their assumed repository
-  contracts do not exist.
+  regression coverage; the generated artefact was rebuilt, and the updated
+  suite passed all 109 tests. The Biome-ignore and
+  blanket-function-docstring suggestions were dispositioned in the Decision
+  log because their assumed repository contracts do not exist.
+- Trusted-state follow-up at 2026-07-15: `npm test` passed all 115 tests,
+  including state derivation, manipulated workflow output, and CLI recovery
+  coverage.
 
 ## Interfaces and dependencies
 

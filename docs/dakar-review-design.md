@@ -309,7 +309,9 @@ The workflow result contains:
 - `metrics`: run metrics and model assignment data;
 - `recorded`: review-history write result;
 - `recordAttempts`: bounded workflow recording attempts made before returning;
-- `recordInput`: the deterministic payload needed to retry recording.
+- `recordInput`: the deterministic review data needed to retry recording; the
+  CLI derives the destination from its trusted repository and state root rather
+  than accepting a state-file path from workflow output.
 
 `reportMarkdown` is presentation text. It has no deterministic schema.
 
@@ -323,7 +325,8 @@ The workflow result contains:
 - Verifier references an unknown id: the workflow records an
   `unknown_candidate` discard instead of crashing.
 - Record agent fails: the workflow returns `stage: "record"` with
-  `recordInput`; the CLI attempts one deterministic recovery.
+  `recordInput`; the CLI attempts one deterministic recovery to a state file
+  derived from its trusted repository and state root.
 - Telemetry follow times out: the CLI exits non-zero and leaves the ODW run
   inspectable by run id.
 

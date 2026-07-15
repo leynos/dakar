@@ -165,6 +165,14 @@ function stateFilePath({ stateRoot, owner, name, branchSlug }) {
   return join(stateRoot, APP_NAME, owner, name, branchSlug, 'reviews.toml')
 }
 
+function derivedStateFile(rawArgs) {
+  const repoRoot = resolve(optionString(rawArgs, 'repo-root', process.cwd()))
+  const remoteUrl = git(repoRoot, ['remote', 'get-url', 'origin'], true)
+  const { owner, name } = remoteOwnerName(remoteUrl)
+  const branch = git(repoRoot, ['branch', '--show-current'], true) || 'detached'
+  const branchSlug = slug(optionString(rawArgs, 'branch', branch))
+  return stateFilePath({ stateRoot: xdgStateRoot(optionString(rawArgs, 'state-root')), owner, name, branchSlug })
+}
 /**
  * Parse completed review head commits from `reviews.toml` content.
  *
@@ -673,18 +681,20 @@ function integerField(input, camelKey, snakeKey) {
  * `[[reviews]]` TOML block under an exclusive file lock. Accepts both camelCase
  * and snake_case field names for interoperability with the ODW workflow.
  *
- * @param {object} input - record input; must include `stateFile`, `headCommit`, `commitCount`, and `findingsTotal`.
+ * @param {object} input - record input; must include `headCommit`, `commitCount`, and `findingsTotal`. It must include
+ * `stateFile` only when `trustedLocation` is absent.
+ * @param {object | null} [trustedLocation] - trusted repository and state-root arguments used to derive the state file.
  * @returns {{ ok: boolean, stateFile: string, headCommit: string }} confirmation of the recorded entry.
  */
-function appendReview(input) {
+function appendReview(input, trustedLocation = null) {
   const rawStateFile = input.stateFile || input.state_file
-  if (!rawStateFile) {
+  if (!trustedLocation && !rawStateFile) {
     throw new Error('record input must include stateFile')
   }
   const headCommit = reviewHeadCommit(input)
   const commitCount = integerField(input, 'commitCount', 'commit_count')
   const findingsTotal = integerField(input, 'findingsTotal', 'findings_total')
-  const stateFile = resolve(String(rawStateFile))
+  const stateFile = trustedLocation ? derivedStateFile(trustedLocation) : resolve(String(rawStateFile))
   mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 })
   const now = new Date().toISOString()
   const entry = [
@@ -746,7 +756,8 @@ async function main() {
     return
   }
   if (command === 'record') {
-    console.log(JSON.stringify(appendReview(await readStdinJson()), null, 2))
+    const trustedLocation = Object.hasOwn(rawArgs, 'repo-root') || Object.hasOwn(rawArgs, 'state-root') ? rawArgs : null
+    console.log(JSON.stringify(appendReview(await readStdinJson(), trustedLocation), null, 2))
     return
   }
   throw new Error('usage: review-state.mjs prepare|record [--repo-root DIR] [--state-root DIR]')

@@ -349,7 +349,9 @@ directly. A recovered result has `recorded.recoveredBy: "dakar-review"` and
 `metrics.recordRecoveredByCli: true`. If recovery also fails, the result keeps
 `stage: "record"` and exits non-zero so the caller knows the same commit range
 may be reviewed again. The workflow result's `recordAttempts` field reports how
-many of its three bounded recording attempts ran before that CLI fallback.
+many of its three bounded recording attempts ran before that CLI fallback. The
+fallback derives the destination from the CLI's trusted repository and state
+root; it does not accept a workflow-supplied state-file path.
 
 ## Routing and limits
 

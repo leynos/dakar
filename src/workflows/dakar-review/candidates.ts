@@ -22,8 +22,17 @@ export function candidateKey(candidate: RawCandidate): string {
  * @param right - Second severity-bearing value.
  * @returns A negative, zero, or positive comparator result.
  */
-export function bySeverity<T extends { severity?: string }>(left: T, right: T): number {
-  return (SEVERITY_RANK[left.severity || ''] ?? 4) - (SEVERITY_RANK[right.severity || ''] ?? 4)
+export function bySeverity<T extends { candidateId?: string; line?: number; path?: string; severity?: string }>(left: T, right: T): number {
+  const severity = (SEVERITY_RANK[left.severity || ''] ?? 4) - (SEVERITY_RANK[right.severity || ''] ?? 4)
+  if (severity !== 0) return severity
+  const leftPath = String(left.path || '')
+  const rightPath = String(right.path || '')
+  if (leftPath !== rightPath) return leftPath < rightPath ? -1 : 1
+  const line = Number(left.line || 0) - Number(right.line || 0)
+  if (line !== 0) return line
+  const leftId = String(left.candidateId || '')
+  const rightId = String(right.candidateId || '')
+  return leftId === rightId ? 0 : leftId < rightId ? -1 : 1
 }
 
 /**
@@ -57,9 +66,8 @@ export function normalizeCandidates(
   const changed = new Set(changedFiles || [])
   const candidates: Candidate[] = []
   for (const { result, task } of taskResults) {
-    let acceptedForTask = 0
+    const validForTask: Candidate[] = []
     for (const raw of result.candidates || []) {
-      if (acceptedForTask >= task.maxFindings) break
       if (
         typeof raw.title !== 'string' || raw.title.trim() === '' ||
         typeof raw.path !== 'string' || typeof raw.detail !== 'string' || raw.detail.trim() === '' ||
@@ -71,9 +79,15 @@ export function normalizeCandidates(
         severity: raw.severity, path: raw.path, line: raw.line || 0, detail: raw.detail,
         evidence: raw.evidence, confidence: raw.confidence, policyRefs: raw.policyRefs || [],
       }
-      const key = candidateKey(candidate)
-      if (!candidate.title || !candidate.path || seen.has(key)) continue
+      if (!candidate.title || !candidate.path) continue
       if (!task.files.includes(candidate.path) || !isSafeCandidatePath(candidate.path, changed)) continue
+      validForTask.push(candidate)
+    }
+    let acceptedForTask = 0
+    for (const candidate of validForTask.sort(bySeverity)) {
+      if (acceptedForTask >= task.maxFindings) break
+      const key = candidateKey(candidate)
+      if (seen.has(key)) continue
       seen.add(key)
       candidates.push(candidate)
       acceptedForTask += 1

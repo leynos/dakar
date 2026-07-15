@@ -163,7 +163,9 @@ the CLI should attempt exactly one deterministic record recovery through
 recording from CLI repair. The workflow makes at most three recording attempts,
 logs before attempts two and three, and returns the attempts made as
 `recordAttempts`; keep that observability intact when changing Record-phase
-handling.
+handling. CLI recovery passes trusted `repo-root` and `state-root` arguments to
+the state helper, which derives the destination and ignores any state-file path
+in untrusted workflow output.
 
 `--telemetry` is the only supported live-progress mode. It starts ODW in the
 background, follows `odw logs <run-id> --follow`, writes that stream to

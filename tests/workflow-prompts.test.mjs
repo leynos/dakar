@@ -62,6 +62,16 @@ test('taskPrompt limits review commands to the assigned files', () => {
   assert.ok(prompt.indexOf('Instructions:') < prompt.indexOf('Task id: source-1'))
 })
 
+test('taskPrompt omits the unscoped diff command for an empty task', () => {
+  const prompt = taskPrompt({
+    taskId: 'review-summary-1', kind: 'review-summary', files: [], assignedModel: 'gpt-5.5/high',
+    modelLabel: 'codex-high', maxFindings: 3,
+  }, { reviewBase: 'base-sha', headCommit: 'head-sha' }, CONTEXT)
+
+  assert.match(prompt, /diff --stat/u)
+  assert.doesNotMatch(prompt, /diff 'base-sha\.\.head-sha' --/u)
+})
+
 test('dynamic verifier, synthesis, and record data follow stable instructions and use resolved policy', () => {
   const prepared = { reviewBase: 'base-sha', headCommit: 'head-sha', changedFiles: ['src/a.ts'] }
   const candidate = {
@@ -76,7 +86,8 @@ test('dynamic verifier, synthesis, and record data follow stable instructions an
   assert.ok(synthesis.indexOf('Report rules:') < synthesis.indexOf('Accepted candidates:'))
   assert.match(synthesis, /Resolved CodeRabbit YAML: \.coderabbit\.yaml/u)
 
-  const record = recordPrompt({ headCommit: 'head-sha' }, CONTEXT)
+  const record = recordPrompt({ headCommit: 'head-sha' }, CONTEXT, '/tmp/state root')
   assert.ok(record.indexOf('Record the completed review') < record.indexOf('"headCommit"'))
   assert.match(record, /Resolved CodeRabbit YAML: \.coderabbit\.yaml/u)
+  assert.match(record, /record --repo-root '\/tmp\/repo with spaces' --state-root '\/tmp\/state root'/u)
 })
