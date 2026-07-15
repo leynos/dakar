@@ -25,8 +25,10 @@ check: check-fmt lint typecheck workflow-check test spelling
 
 check-fmt:
 	@printf '%s\n' "Checking whitespace and final newlines..."
-	@! { find bin docs scripts tests workflows -type f; printf '%s\n' AGENTS.md install.sh; } | xargs grep -n '[[:blank:]]$$'
-	@{ find bin docs scripts tests workflows -type f; printf '%s\n' AGENTS.md install.sh; } | xargs sh -c 'for file do test "$$(tail -c 1 "$$file")" = "" || { printf "%s: missing final newline\n" "$$file"; exit 1; }; done' sh
+	@! git ls-files -z -- bin docs scripts tests workflows AGENTS.md install.sh | \
+		xargs -0 -r grep -n '[[:blank:]]$$'
+	@git ls-files -z -- bin docs scripts tests workflows AGENTS.md install.sh | \
+		xargs -0 -r sh -c 'for file do test "$$(tail -c 1 "$$file")" = "" || { printf "%s: missing final newline\n" "$$file"; exit 1; }; done' sh
 
 lint: markdownlint nixie
 
