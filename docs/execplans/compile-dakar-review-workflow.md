@@ -788,7 +788,7 @@ rm -rf "$smoke_root"
 ```
 
 An interrupted or failing smoke leaves `smoke_root` intact. Record that path,
-the run identifier from stderr, and the failed assertion in `Artifacts and
+the run identifier from stderr, and the failed assertion in `Artefacts and
 notes` before diagnosing or deliberately abandoning it.
 
 ## Validation and acceptance
