@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spelling-and-diagrams:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MERMAN_CLI_VERSION: '0.7.0'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install uv
+        # v6.4.3
+        uses: astral-sh/setup-uv@b75a909f75acd358c2196fb9a5f1299a9a8868a4
+        with:
+          python-version: '3.14'
+      - name: Enforce en-GB-oxendict spelling
+        run: make spelling
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.2.21'
+      - name: Install Mermaid CLI
+        run: |
+          set -euxo pipefail
+          bun install --global @mermaid-js/mermaid-cli@11.9.0
+          bun x puppeteer browsers install chrome-headless-shell
+      - name: Install diagram validation tools
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.95.0 --profile minimal
+          uv tool install --python 3.14 nixie-cli==1.1.0
+          cargo +1.95.0 install merman-cli --version "=${MERMAN_CLI_VERSION}" --locked
+      - name: Validate diagrams
+        run: make nixie

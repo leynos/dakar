@@ -15,7 +15,8 @@ make check
 ```
 
 This gate checks whitespace, Node syntax for ordinary Node modules, ODW
-dry-run, Node tests, Markdown lint, and Mermaid diagrams.
+dry-run, Node tests, Markdown lint, en-GB-oxendict spelling, and Mermaid
+diagrams.
 
 Use focused commands while iterating:
 
@@ -29,6 +30,21 @@ npm run odw:dry-run
 Do not use `node --check workflows/dakar-review.js` as a workflow
 syntax gate. ODW files permit top-level `return`, which ordinary Node syntax
 checking rejects. Use `odw run ... --args '{"dryRun":true}'` instead.
+
+### Spelling policy
+
+Run `make spelling` to enforce en-GB-oxendict spelling. The dictionary-based
+Typos scan checks tracked Markdown, while the phrase-correction check covers the
+whole tracked repository, including JavaScript, tests and workflow files. The
+generated and tracked `typos.toml` starts from the shared Oxford dictionary.
+Its builder refreshes the untracked `.typos-oxendict-base.toml` cache and
+metadata only when the shared dictionary is newer, so the last fetched base
+remains usable in a network-restricted checkout.
+
+Keep repository-specific formal names and machine interfaces in
+`typos.local.toml`. Run `make spelling-config-write` to regenerate the tracked
+configuration and `make spelling-config` to verify it. Never edit generated
+entries by hand.
 
 ## 2. Workflow implementation conventions
 

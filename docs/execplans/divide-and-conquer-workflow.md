@@ -495,7 +495,7 @@ If a live run records an unwanted test review, remove only that temporary
 `stateRoot`. Do not delete real `$XDG_STATE_HOME/dakar` entries unless the user
 explicitly asks.
 
-## Artifacts and notes
+## Artefacts and notes
 
 Current dry-run output before this implementation is:
 

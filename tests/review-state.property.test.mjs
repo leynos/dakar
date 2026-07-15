@@ -4,8 +4,8 @@
  * `prepare` must always advance the review base to the most recent recorded
  * head that still lies on the current merge-base-to-HEAD ancestry path, for any
  * subset of previously recorded commits. These properties drive that invariant
- * across randomised recorded subsets over a fixed linear history, and pin the
- * sanitising helpers that derive owner/name and slugs from untrusted input.
+ * across randomized recorded subsets over a fixed linear history, and pin the
+ * sanitizing helpers that derive owner/name and slugs from untrusted input.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -135,7 +135,7 @@ test('remoteOwnerName never throws and always yields slug-shaped fields', () => 
   fc.assert(
     fc.property(fc.string(), (input) => {
       const parsed = remoteOwnerName(input)
-      // Every branch (including the unparseable fallback) must return non-empty,
+      // Every branch (including the unparsable fallback) must return non-empty,
       // filesystem-safe owner and name segments.
       assert.match(parsed.owner, /^[a-z0-9]+(?:-[a-z0-9]+)*$/u)
       assert.match(parsed.name, /^[a-z0-9]+(?:-[a-z0-9]+)*$/u)

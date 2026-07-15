@@ -244,7 +244,7 @@ function reasoningFromModel(model, fallback) {
 /**
  * Map a reasoning level to the corresponding ODW adapter name.
  *
- * Returns `'codex-medium'` for any unrecognised reasoning value.
+ * Returns `'codex-medium'` for any unrecognized reasoning value.
  *
  * @param {string} reasoning - reasoning level: `'low'`, `'medium'`, or `'high'`.
  * @returns {string} ODW adapter name.
@@ -557,7 +557,7 @@ function isSafeCandidatePath(path, changedFiles) {
  * @param {object[]} taskResults - raw agent outputs from the Review phase.
  * @param {object[]} taskGraph - task spec objects used to enrich each candidate.
  * @param {string[]} changedFiles - git-reported changed file paths for path whitelisting.
- * @returns {object[]} normalised, deduplicated candidate list.
+ * @returns {object[]} normalized, deduplicated candidate list.
  */
 function normalizeCandidates(taskResults, taskGraph, changedFiles) {
   const seen = new Set()
@@ -603,7 +603,7 @@ function normalizeCandidates(taskResults, taskGraph, changedFiles) {
 /**
  * Build the natural-language prompt sent to a verification-phase Codex agent.
  *
- * @param {object} candidate - normalised candidate finding.
+ * @param {object} candidate - normalized candidate finding.
  * @param {object} prepared - result from `review-state.mjs prepare`.
  * @returns {string} multi-line prompt string.
  */
@@ -657,7 +657,7 @@ function discardReasonCounts(discarded) {
  * Merges verdict metadata onto each accepted candidate and caps the result at
  * `MAX_FINDINGS`.
  *
- * @param {object[]} candidates - normalised candidates from the Review phase.
+ * @param {object[]} candidates - normalized candidates from the Review phase.
  * @param {object[]} verdicts - verifier verdict objects from the Verify phase.
  * @returns {object[]} accepted findings enriched with verification metadata.
  */
@@ -686,7 +686,7 @@ function acceptedFromVerdicts(candidates, verdicts) {
 /**
  * Collect verdicts that rejected a candidate, including those referencing unknown candidate ids.
  *
- * @param {object[]} candidates - normalised candidates from the Review phase.
+ * @param {object[]} candidates - normalized candidates from the Review phase.
  * @param {object[]} verdicts - verifier verdict objects from the Verify phase.
  * @returns {object[]} discarded finding records with rejection reason and evidence.
  */
