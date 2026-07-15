@@ -144,7 +144,7 @@ function readAgentInstructions(repoRoot) {
  *
  * @param {object} options - parsed CLI options from `parseArgs`.
  * @param {string} repoRoot - absolute path to the repository root.
- * @returns {object} workflow arguments ready to be JSON-serialised.
+ * @returns {object} workflow arguments ready to be JSON-serialized.
  */
 function buildWorkflowArgs(options, repoRoot) {
   const resolvedConfig = resolveReviewConfig({ repoRoot, config: options.config, packageRoot })
@@ -183,7 +183,7 @@ function buildWorkflowArgs(options, repoRoot) {
  * Build the `odw run` argument array for launching the workflow.
  *
  * @param {object} options - parsed CLI options.
- * @param {object} workflowArgs - serialisable workflow arguments.
+ * @param {object} workflowArgs - serializable workflow arguments.
  * @param {boolean} wait - when true, appends `--wait` and `--timeout` flags.
  * @returns {string[]} argument array suitable for passing to `spawnSync`.
  */

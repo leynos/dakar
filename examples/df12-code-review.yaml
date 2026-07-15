@@ -64,7 +64,7 @@ reviews:
 
         - Use `rstest` fixtures for shared setup and to avoid repetition between tests.
 
-        - Replace duplicated tests with `#[rstest(...)]` parameterised cases.
+        - Replace duplicated tests with `#[rstest(...)]` parameterized cases.
 
         - Prefer `mockall` for mocks/stubs.
 
@@ -146,7 +146,7 @@ reviews:
 
         - Prefer factories and builders over repeated ad hoc fixture object literals.
 
-        - Replace duplicated tests with parameterised cases, compact table-driven loops, or property tests where the
+        - Replace duplicated tests with parameterized cases, compact table-driven loops, or property tests where the
         behaviour spans a range of inputs, states, orderings, or transitions.
 
         - Snapshot tests must be limited to meaningful output contracts, paired with semantic assertions, and normalized
@@ -288,7 +288,7 @@ reviews:
 
 
           Documentation must reflect the intended audience: API consumers for libraries, end users for tools or
-          applications. Where a product has multiple interface surfaces (e.g., a programatic API, a web UI and a CLI),
+          applications. Where a product has multiple interface surfaces (e.g., a programmatic API, a web UI and a CLI),
           consider multiple `users-guide.md` documents.
 
 

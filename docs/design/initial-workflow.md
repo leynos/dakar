@@ -92,7 +92,7 @@ the workflow as follows:
   review output as untrusted until verified against source, diff, policy, and
   available runtime or static evidence.
 - LLM4FPM, ZeroFalse, and SemTaint all support static-analysis hybrids:
-  extract precise code context, treat analyzer output as structured contracts
+  extract precise code context, treat analyser output as structured contracts
   or taint specs, and ask LLMs to adjudicate gaps that static analysis cannot
   resolve. Dakar should ingest SARIF, CodeQL, Semgrep, `sem`, `leta`, and
   codegraph outputs as evidence and routing inputs, not as final findings.

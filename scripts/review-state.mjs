@@ -126,8 +126,8 @@ function slug(input) {
  * @returns {{ owner: string, name: string }} slugified owner and repository name.
  */
 function remoteOwnerName(remoteUrl) {
-  const normalised = remoteUrl.trim()
-  const scpLike = normalised.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/)
+  const normalized = remoteUrl.trim()
+  const scpLike = normalized.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/)
   if (!scpLike) {
     return { owner: 'unknown', name: 'unknown' }
   }
@@ -517,7 +517,7 @@ function releaseOwnedLock(lockPath, marker, ownedStats, markerWritten) {
 /**
  * Run `mutate` while holding an exclusive lock on the state file.
  *
- * Serialises the read-modify-write in {@link appendReview} so a workflow record
+ * Serializes the read-modify-write in {@link appendReview} so a workflow record
  * step and a CLI recovery cannot interleave and clobber each other's entry. The
  * lock is an `O_EXCL` sentinel file next to the state file recording the owner
  * pid, a unique acquisition token, and timestamp; contending writers reap a
@@ -630,7 +630,7 @@ function fieldValue(input, ...keys) {
  * Throws when the value is absent or not a 7–40 character hexadecimal string.
  *
  * @param {object} input - record input object.
- * @returns {string} normalised lowercase commit id.
+ * @returns {string} normalized lowercase commit id.
  */
 function reviewHeadCommit(input) {
   const value = fieldValue(input, 'headCommit', 'head_commit')

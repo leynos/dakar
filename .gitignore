@@ -1,5 +1,11 @@
 # Node dependencies
 node_modules/
 
+# Isolated spelling-policy tools and shared dictionary cache
+.uv-cache/
+.uv-tools/
+.typos-oxendict-base.json
+.typos-oxendict-base.toml
+
 # Memtrace local index
 .memdb/

@@ -50,7 +50,7 @@ model set without launching reviewer agents.
 - Risk: Model identifiers may not exist in the local Codex adapter.
   Severity: medium.
   Likelihood: unknown.
-  Mitigation: make the model list overrideable via workflow args.
+  Mitigation: make the model list overridable via workflow args.
 
 ## Progress
 
@@ -149,7 +149,7 @@ Tests create temporary repositories and temporary state roots under the OS temp
 directory. They do not write to real user review history. The workflow dry-run
 does not call agents and does not write files.
 
-## Artifacts and notes
+## Artefacts and notes
 
 The state file path format is:
 

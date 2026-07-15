@@ -1,0 +1,25 @@
+# Repository-specific formal names and machine interfaces.
+
+schema = 1
+
+[oxford]
+stems = []
+
+[words]
+accepted = []
+
+[words.corrections]
+
+[patterns]
+ignore = [
+  # Published platform and documentation titles retain their formal spelling.
+  'Azure Architecture\s+Center',
+  'GitHub Flavored\s+Markdown',
+  # CodeRabbit configuration keys are external schema contracts.
+  '(?m)^  labeling_instructions:$',
+  '(?m)^  labeling:$',
+  '(?m)^    labeling_instructions:$',
+]
+
+[files]
+exclude = []

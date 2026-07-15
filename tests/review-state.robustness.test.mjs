@@ -1,6 +1,6 @@
 /**
  * @file Prove the review-state helper surfaces environmental faults and
- * serialises concurrent recorders.
+ * serializes concurrent recorders.
  *
  * These tests cover the failure-handling contract that separates an expected
  * "missing history" state from a real I/O or git error, and the single-writer

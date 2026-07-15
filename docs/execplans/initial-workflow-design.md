@@ -152,7 +152,7 @@ Acceptance for the design phase is:
 The design phase only writes Markdown. Re-running it should update the same
 documents without mutating state files.
 
-## Artifacts and notes
+## Artefacts and notes
 
 Research sources:
 
