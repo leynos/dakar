@@ -10,11 +10,12 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
-  const body = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'args', 'budget', 'workflow', 'validate', source)
+  const body = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'args', 'budget', 'workflow', 'validate', 'sleep', source)
   const prompts = new Map()
   const agentLabels = []
   const phases = []
   const logs = []
+  const sleepDelays = []
   const head = 'b'.repeat(40)
   const base = 'a'.repeat(40)
   const agent = async (prompt, options = {}) => {
@@ -69,8 +70,8 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
   }))
   const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message), { stateRoot },
     { total: null, spent: () => 0, remaining: () => 0 }, async () => null,
-    () => ({ ok: true, meta: null, errors: [], warnings: [] }))
-  return { agentLabels, logs, phases, prompts, result }
+    () => ({ ok: true, meta: null, errors: [], warnings: [] }), async (milliseconds) => { sleepDelays.push(milliseconds) })
+  return { agentLabels, logs, phases, prompts, result, sleepDelays }
 }
 
 test('generated workflow threads the resolved policy path through every downstream prompt', async () => {
@@ -102,22 +103,24 @@ test('generated workflow never passes a manipulated prepare state file to the re
 })
 
 test('generated workflow retries review-history recording and reports the attempt count', async () => {
-  const { agentLabels, logs, result } = await runWorkflow({ recordFailures: 1 })
+  const { agentLabels, logs, result, sleepDelays } = await runWorkflow({ recordFailures: 1 })
 
   assert.equal(result.ok, true)
   assert.equal(result.recordAttempts, 2)
   assert.deepEqual(agentLabels.slice(-2), ['state-record-1', 'state-record-2'])
   assert.deepEqual(logs, ['Review-history recording attempt 2 of 3 after an unsuccessful attempt.'])
+  assert.deepEqual(sleepDelays, [100])
 })
 
 test('generated workflow returns its fallback after exhausting record retries', async () => {
-  const { agentLabels, logs, result } = await runWorkflow({ recordFailures: 3 })
+  const { agentLabels, logs, result, sleepDelays } = await runWorkflow({ recordFailures: 3 })
 
   assert.equal(result.ok, false)
   assert.equal(result.stage, 'record')
   assert.equal(result.recordAttempts, 3)
   assert.deepEqual(agentLabels.slice(-3), ['state-record-1', 'state-record-2', 'state-record-3'])
   assert.equal(logs.length, 2)
+  assert.deepEqual(sleepDelays, [100, 200])
 })
 
 test('generated workflow gives colliding truncated candidate ids distinct verifier labels', async () => {

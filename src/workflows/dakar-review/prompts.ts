@@ -157,6 +157,7 @@ export function synthesisPrompt(
  *
  * @param recordInput - JSON-serializable completed-review record from orchestration.
  * @param context - Resolved policy and repository context for the record phase.
+ * @param stateRoot - Optional trusted review-history root to shell-quote.
  * @returns A prompt invoking the local state helper with serialized input.
  * @throws {TypeError} When recordInput cannot be serialized as JSON.
  */

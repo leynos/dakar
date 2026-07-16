@@ -379,7 +379,7 @@ order, exact agent invocation, resolved-policy propagation, and failed-slot
 handling. WI-7 synchronizes the developer, component, system, and user-facing
 documentation with that implementation. WI-8 proves deterministic generation,
 native live recording, and idempotent same-head skip behaviour. The final
-independent deterministic gates passed with 97 tests, and CodeRabbit returned
+independent deterministic gates passed with 115 tests, and CodeRabbit returned
 zero findings; the plan is complete.
 
 ## Context and orientation
@@ -981,5 +981,5 @@ a `Decision log` entry; a public behaviour change triggers escalation.
 the Dakar-specific module and test boundaries, preserves every public and state
 contract, and leaves implementation behind the required approval gate.
 
-2026-07-14: The user explicitly requested implementation. ADR 001 is accepted,
-WI-0 is complete, and the plan is in progress.
+2026-07-15: Implementation is complete. ADR 001 is accepted, all work items
+are complete, and the final deterministic validation passed all 115 tests.

@@ -877,7 +877,7 @@ async function workflowMain() {
     recordAttempts = attempt;
     if (attempt > 1) {
       log(`Review-history recording attempt ${attempt} of 3 after an unsuccessful attempt.`);
-      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt - 1)));
+      await sleep(100 * (attempt - 1));
     }
     try {
       recorded = await agent(recordPrompt2, {

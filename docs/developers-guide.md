@@ -54,8 +54,8 @@ entries by hand.
 
 - keep a literal `meta` export;
 - do not add Node imports;
-- use injected ODW primitives such as `agent`, `parallel`, `pipeline`, and
-  `phase`;
+- use injected ODW primitives such as `agent`, `parallel`, `pipeline`,
+  `sleep`, and `phase`;
 - use JSON Schemas for every agent output consumed by workflow JavaScript;
 - filter null or failed slots after `parallel()` and `pipeline()`;
 - keep reductions deterministic and independent of completion order.

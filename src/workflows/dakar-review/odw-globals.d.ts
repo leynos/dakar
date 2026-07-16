@@ -35,5 +35,6 @@ declare function pipeline<Input, Output>(
   items: readonly Input[],
   stage: (item: Input) => Promise<Output>,
 ): Promise<Array<Output | null>>
+declare function sleep(milliseconds: number): Promise<void>
 declare function validate(source: string): ValidationResult
 declare function workflow<T = unknown>(reference: string, workflowArgs?: unknown): Promise<T>

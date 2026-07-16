@@ -180,7 +180,7 @@ async function runtimeSourceFiles(directory) {
 
 test('only main.ts calls injected ODW primitives', async () => {
   const sourceDirectory = new URL('../src/workflows/dakar-review/', import.meta.url)
-  const primitives = new Set(['agent', 'parallel', 'pipeline', 'phase', 'log', 'workflow', 'validate'])
+  const primitives = new Set(['agent', 'parallel', 'pipeline', 'phase', 'log', 'sleep', 'workflow', 'validate'])
   const files = await runtimeSourceFiles(sourceDirectory)
   for (const file of files) {
     const calls = primitiveCalls(fileURLToPath(file), primitives)
