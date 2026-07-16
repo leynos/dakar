@@ -1,9 +1,9 @@
-.PHONY: check check-fmt lint typecheck markdownlint nixie test spelling \
+.PHONY: check check-fmt docstrings lint typecheck markdownlint nixie test spelling \
 	spelling-config spelling-config-write spelling-phrase-check \
 	spelling-helper-test workflow-build workflow-freshness workflow-check
 
 MD_FILES := $(shell git ls-files '*.md')
-NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/review-config.mjs scripts/review-state.mjs tests/cli.test.mjs tests/compile-time-contract.test.mjs tests/review-config.test.mjs tests/review-state.test.mjs tests/review-state.property.test.mjs tests/review-state.robustness.test.mjs tests/workflow-build.test.mjs tests/workflow-candidate-paths.test.mjs tests/workflow-dry-run.test.mjs tests/workflow-task-graph.test.mjs
+NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/check-docstrings.mjs scripts/review-config.mjs scripts/review-state.mjs tests/cli.test.mjs tests/compile-time-contract.test.mjs tests/review-config.test.mjs tests/review-state.test.mjs tests/review-state.property.test.mjs tests/review-state.robustness.test.mjs tests/workflow-build.test.mjs tests/workflow-candidate-paths.test.mjs tests/workflow-dry-run.test.mjs tests/workflow-task-graph.test.mjs
 UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
 UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
 RUFF_VERSION ?= 0.15.12
@@ -30,7 +30,10 @@ check-fmt:
 	@git ls-files -z -- bin docs scripts tests workflows AGENTS.md install.sh | \
 		xargs -0 -r sh -c 'for file do test "$$(tail -c 1 "$$file")" = "" || { printf "%s: missing final newline\n" "$$file"; exit 1; }; done' sh
 
-lint: markdownlint nixie
+lint: markdownlint nixie docstrings
+
+docstrings:
+	@npm run docstrings
 
 typecheck:
 	@for file in $(NODE_MODULES); do node --check "$$file"; done

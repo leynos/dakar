@@ -7,6 +7,7 @@
     "dakar-review": "./bin/dakar-review.mjs"
   },
   "scripts": {
+    "docstrings": "node scripts/check-docstrings.mjs",
     "markdownlint": "markdownlint-cli2 $(git ls-files '*.md')",
     "nixie": "nixie $(git ls-files '*.md')",
     "typecheck": "tsc -p tsconfig.json --noEmit",

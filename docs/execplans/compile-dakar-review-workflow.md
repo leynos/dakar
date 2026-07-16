@@ -2,17 +2,18 @@
 
 This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & discoveries`, `Decision log`, and
-`Outcomes & retrospective` must remain current as implementation proceeds.
+`Outcomes & retrospective` were maintained through implementation and remain
+the audit trail for the completed work.
 
 Status: COMPLETE
 
 ## Purpose / big picture
 
-Dakar currently ships a valid but 966-line Open Dynamic Workflows (ODW) script
-at `workflows/dakar-review.js`. After this plan is complete, contributors will
+Dakar previously shipped a valid but 966-line Open Dynamic Workflows (ODW)
+script at `workflows/dakar-review.js`. With this plan complete, contributors
 edit small, strict TypeScript modules under `src/workflows/dakar-review/`, run
 one deterministic build, and commit the regenerated workflow artefact. Users
-will continue running `dakar-review` or
+continue running `dakar-review` or
 `odw run workflows/dakar-review.js`; commands, output, routing, state, and
 record recovery will not change.
 
@@ -363,8 +364,8 @@ the `Decision log`, and request direction.
   Date/Author: 2026-07-14, Codex after CodeRabbit extraction review.
 
 - Decision: do not add the generated `workflows/dakar-review.js` to Biome or
-  standard-JS ignore configuration, and do not require blanket function
-  docstrings.
+  standard-JS ignore configuration, and initially do not require blanket
+  function docstrings.
   Rationale: this repository has no Biome or standard-JS configuration, so an
   ignore would create an unused tool contract, while clear module-level
   documentation plus targeted API and boundary JSDoc satisfies the actionable
@@ -372,17 +373,26 @@ the `Decision log`, and request direction.
   functions, ambient declarations, or generated output.
   Date/Author: 2026-07-14, Codex after post-completion review.
 
+- Decision: supersede the earlier targeted-docstring convention with a
+  deterministic authored-source audit over `bin/dakar-review.mjs` and
+  `src/workflows/dakar-review/`.
+  Rationale: CodeRabbit's AI-driven review reported 48.45% without exposing a
+  reproducible numerator or denominator. `npm run docstrings` now counts module
+  headers, named functions, exported interfaces and types, and exported
+  constants; the completed source records 103 of 103 symbols documented
+  (100.00%, exceeding the 80.00% threshold) without changing runtime code.
+  Date/Author: 2026-07-16, Codex after documentation validation.
+
 ## Outcomes & retrospective
 
 Planning outcome: ADR 001, the living design, component design, developer
 conventions, roadmap, and this ExecPlan describe one consistent
 source-to-artefact boundary. Planning initially left the user guide unchanged
 because the proposed refactor changes no current user behaviour. During
-implementation, WI-7 adds only the user-relevant dependency clarification that
+implementation, WI-7 added only the user-relevant dependency clarification that
 the shipped artefact needs no contributor build tooling. Implementation began
-after the user explicitly requested execution on 2026-07-14. Update this
-section after every accepted milestone with observable results, remaining gaps,
-and any lesson that changes later work.
+after the user explicitly requested execution on 2026-07-14 and proceeded
+through WI-8. The plan is complete.
 
 Implementation outcome through WI-6: eight declared runtime modules now bundle
 into the committed artefact, `main.ts` is the only injected-primitive caller,
@@ -415,7 +425,7 @@ The normative sources for implementation are:
 
 - `AGENTS.md` for repository invariants and validation.
 - `docs/adr-001-compile-odw-workflow-from-typescript.md` for the architectural
-  decision; it becomes normative when WI-0 records approval.
+  decision accepted in WI-0.
 - `docs/dakar-review-design.md` §§4 and 12 for architecture and verification.
 - `docs/design/initial-workflow.md` for component and workflow contracts.
 - `docs/developers-guide.md` for contributor conventions.
@@ -463,11 +473,11 @@ into calls as data. `main.ts` remains the only caller of ODW primitives.
 
 ### WI-0: Record the approval transition
 
-After the user explicitly approves this ExecPlan, change ADR 001 from
-`Proposed` to `Accepted`, record the approval date, and change this plan's
-status to `APPROVED`. Make those documentation changes before WI-1. Later work
-may synchronize the decision with implementation evidence, but must not defer
-architectural acceptance until after implementation.
+The user explicitly approved this ExecPlan on 2026-07-14. WI-0 changed ADR 001
+from `Proposed` to `Accepted`, recorded the approval date, and moved this plan
+through `APPROVED` to implementation. With that gate satisfied, implementation
+proceeded through WI-8. All work items are now complete and the plan status is
+`COMPLETE`.
 
 ### WI-1: Characterize the complete observable workflow contract
 
@@ -994,5 +1004,13 @@ a `Decision log` entry; a public behaviour change triggers escalation.
 the Dakar-specific module and test boundaries, preserves every public and state
 contract, and leaves implementation behind the required approval gate.
 
+The user subsequently approved the plan, and ADR 001 was accepted before WI-1
+began.
+
 2026-07-15: Implementation is complete. ADR 001 is accepted, all work items
 are complete, and the final deterministic validation passed all 115 tests.
+
+2026-07-16: Documentation validation made the external docstring review
+reproducible as `npm run docstrings`; 103 of 103 counted symbols are documented.
+The approval history, completed WI-0--WI-8 status, and final 115-test outcome
+are aligned throughout this plan.

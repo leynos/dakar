@@ -24,20 +24,47 @@ export interface WorkflowConfig {
   readonly workflowVersion: string
 }
 
+/**
+ * Tests whether an untrusted value is a non-null object.
+ *
+ * @param value - Value crossing the workflow argument boundary.
+ * @returns Whether the value can be inspected as an object.
+ */
 function isObject(value: unknown): value is UnknownObject {
   return typeof value === 'object' && value !== null
 }
 
+/**
+ * Normalizes an untrusted numeric limit to a positive bounded integer.
+ *
+ * @param value - Candidate number or numeric string from workflow arguments.
+ * @param fallback - Positive value used when the candidate is invalid.
+ * @param ceiling - Inclusive upper bound for a valid result.
+ * @returns A positive integer no greater than the ceiling.
+ */
 function positiveLimit(value: unknown, fallback: number, ceiling: number): number {
   const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
   const floored = Math.floor(parsed)
   return Number.isFinite(parsed) && floored > 0 ? Math.min(floored, ceiling) : fallback
 }
 
+/**
+ * Selects a non-blank string or a trusted fallback.
+ *
+ * @param value - Untrusted candidate value.
+ * @param fallback - Value used when the candidate is not a non-blank string.
+ * @returns The candidate string or fallback.
+ */
 function nonBlankString(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() !== '' ? value : fallback
 }
 
+/**
+ * Validates optional trusted-base agent instructions supplied by the CLI.
+ *
+ * @param value - Untrusted workflow argument to validate field by field.
+ * @returns A frozen instruction object, or null when the value is malformed.
+ */
 function configuredAgentInstructions(value: unknown): AgentInstructions | null {
   if (!isObject(value)) return null
   if (value.content !== undefined && typeof value.content !== 'string') return null
@@ -50,12 +77,24 @@ function configuredAgentInstructions(value: unknown): AgentInstructions | null {
   })
 }
 
+/**
+ * Checks a model identifier and its optional reasoning suffix.
+ *
+ * @param value - Untrusted model identifier candidate.
+ * @returns Whether the value is a non-blank model with at most one valid suffix.
+ */
 function validModelIdentifier(value: unknown): value is string {
   if (typeof value !== 'string' || value.trim() !== value || value.length === 0 || /\s/u.test(value)) return false
   const [model, reasoning, extra] = value.split('/')
   return Boolean(model) && extra === undefined && (reasoning === undefined || isReasoning(reasoning))
 }
 
+/**
+ * Filters untrusted model entries to internally consistent specifications.
+ *
+ * @param value - Candidate model list from workflow arguments.
+ * @returns Valid model specifications in their supplied order.
+ */
 function configuredModels(value: unknown): ModelSpec[] {
   if (!Array.isArray(value)) return []
   return value.filter(
