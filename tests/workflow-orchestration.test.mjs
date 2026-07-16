@@ -6,7 +6,7 @@ import test from 'node:test'
 
 class FixtureFailure extends Error {}
 
-async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '', commitLength = 40, recordResult } = {}) {
+async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '', commitLength = 40, recordResult, recordResults, candidateTitles, summaryCandidateTitles = [], maxFindings, verdictTransform, synthesisMetrics = {} } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -29,28 +29,31 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
         commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }
     }
     if (options.label === 'source-1') {
-      const titles = collidingCandidates
+      const titles = candidateTitles ?? (collidingCandidates
         ? [`${'same-prefix-'.repeat(5)}first`, `${'same-prefix-'.repeat(5)}second`]
-        : ['Bug']
+        : ['Bug'])
       return { taskId: 'source-1', summary: 'candidate', candidates: titles.map((title) => ({ title, severity: 'high',
         path: 'src/a.js', line: 2, detail: 'Broken branch', evidence: 'diff line', confidence: 'high' })),
         metrics: { filesInspected: 1, findingsProposed: 1 } }
     }
     if (options.label === 'review-summary-1') {
-      return { taskId: 'review-summary-1', summary: 'covered', candidates: [],
-        metrics: { filesInspected: 1, findingsProposed: 0 } }
+      return { taskId: 'review-summary-1', summary: 'covered', candidates: summaryCandidateTitles.map((title) => ({
+        title, severity: 'high', path: 'src/a.js', line: 3, detail: 'Summary branch', evidence: 'diff line', confidence: 'high',
+      })), metrics: { filesInspected: 1, findingsProposed: summaryCandidateTitles.length } }
     }
     if (String(options.label).startsWith('verify-')) {
       const candidateId = JSON.parse(prompt.split('Candidate JSON:\n')[1].split('\n\nRepository root:')[0]).candidateId
-      return { candidateId, status: 'accepted', reason: 'confirmed', evidenceChecked: 'git object' }
+      return { candidateId: verdictTransform ? verdictTransform(candidateId) : candidateId,
+        status: 'accepted', reason: 'confirmed', evidenceChecked: 'git object' }
     }
     if (options.label === 'synthesis') {
-      return { verdict: 'changes-requested', summary: 'one', reportMarkdown: '# Review', findings: [{}], metrics: {} }
+      return { verdict: 'changes-requested', summary: 'one', reportMarkdown: '# Review', findings: [{}], metrics: synthesisMetrics }
     }
     if (String(options.label).startsWith('state-record-')) {
       const attempt = Number(options.label.split('-').at(-1))
       if (attempt <= recordFailures) throw new FixtureFailure('record fixture failure')
-      return recordResult ?? { ok: true, stateFile: '/trusted/state/dakar/reviews.toml', headCommit: head }
+      return recordResults?.[attempt - 1] ?? recordResult ??
+        { ok: true, stateFile: '/trusted/state/dakar/reviews.toml', headCommit: head }
     }
     throw new Error(`unexpected agent label: ${options.label}`)
   }
@@ -68,7 +71,8 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
       return swallowFixtureFailure(error)
     }
   }))
-  const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message), { stateRoot },
+  const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message),
+    { stateRoot, ...(maxFindings === undefined ? {} : { maxFindings }) },
     { total: null, spent: () => 0, remaining: () => 0 }, async () => null,
     () => ({ ok: true, meta: null, errors: [], warnings: [] }), async (milliseconds) => { sleepDelays.push(milliseconds) })
   return { agentLabels, logs, phases, prompts, result, sleepDelays }
@@ -89,6 +93,70 @@ test('generated workflow threads the resolved policy path through every downstre
       assert.doesNotMatch(prompt, /CodeRabbit YAML: auto/u)
     }
   }
+})
+
+test('generated workflow rejects verifier verdicts returned for a different scheduled candidate', async () => {
+  const ids = []
+  const { result } = await runWorkflow({
+    candidateTitles: ['First', 'Second'],
+    verdictTransform: (candidateId) => {
+      ids.push(candidateId)
+      return ids.length === 1 ? candidateId.replace(/first$/u, 'second') : candidateId.replace(/second$/u, 'first')
+    },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.stage, 'verify')
+})
+
+test('generated workflow rejects duplicate returned verifier candidate ids', async () => {
+  let firstId
+  const { result } = await runWorkflow({
+    candidateTitles: ['First', 'Second'],
+    verdictTransform: (candidateId) => {
+      firstId ??= candidateId
+      return firstId
+    },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.stage, 'verify')
+})
+
+test('generated workflow records accepted overflow as discarded after reconciliation', async () => {
+  const { result } = await runWorkflow({ candidateTitles: ['Alpha'], summaryCandidateTitles: ['Beta'], maxFindings: 1 })
+
+  assert.equal(result.findings.length, 1)
+  assert.equal(result.discarded.filter(({ status }) => status === 'max_findings_exceeded').length, 1)
+  assert.equal(result.metrics.confirmedFindings, 1)
+  assert.equal(result.metrics.discardedFindings, 1)
+})
+
+test('generated workflow does not trust synthesis-provided metrics', async () => {
+  const { result } = await runWorkflow({ synthesisMetrics: { attackerControlled: true, taskCount: 999 } })
+
+  assert.equal(result.metrics.attackerControlled, undefined)
+  assert.equal(result.metrics.taskCount, result.taskGraph.length)
+})
+
+test('generated workflow retries an incomplete successful record acknowledgement', async () => {
+  const { agentLabels, result } = await runWorkflow({ recordResults: [
+    { ok: true, stateFile: '/trusted/state/dakar/reviews.toml' },
+    { ok: true, stateFile: '/trusted/state/dakar/reviews.toml', headCommit: 'b'.repeat(40) },
+  ] })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.recordAttempts, 2)
+  assert.deepEqual(agentLabels.slice(-2), ['state-record-1', 'state-record-2'])
+})
+
+test('generated workflow exhausts retries for repeated malformed successful acknowledgements', async () => {
+  const malformed = { ok: true, stateFile: '/trusted/state/dakar/reviews.toml' }
+  const { agentLabels, result } = await runWorkflow({ recordResult: malformed })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.recordAttempts, 3)
+  assert.deepEqual(agentLabels.slice(-3), ['state-record-1', 'state-record-2', 'state-record-3'])
 })
 
 test('generated workflow never passes a manipulated prepare state file to the record helper', async () => {

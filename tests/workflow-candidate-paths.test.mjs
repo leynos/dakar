@@ -13,6 +13,7 @@ import fc from 'fast-check'
 
 import {
   acceptedFromVerdicts,
+  candidateKey,
   candidatesForVerification,
   isSafeCandidatePath,
   normalizeCandidates,
@@ -143,8 +144,31 @@ test('candidate and finding caps retain higher severities with stable ties', () 
     reason: 'confirmed',
     evidenceChecked: 'source',
   }))
-  const accepted = acceptedFromVerdicts([...candidates].reverse(), verdicts.reverse(), 2)
-  assert.deepEqual(accepted.map(({ title }) => title), ['critical', 'high a'])
+  const accepted = acceptedFromVerdicts([...candidates].reverse().map((scheduledCandidate) => ({
+    scheduledCandidate,
+    verdict: verdicts.find(({ candidateId }) => candidateId === scheduledCandidate.candidateId),
+  })))
+  assert.deepEqual(accepted.map(({ title }) => title), ['critical', 'high a', 'high b'])
+})
+
+test('candidate keys preserve and normalize Unicode letters and numbers', () => {
+  const base = { path: 'src/a.js', line: 1 }
+
+  assert.equal(candidateKey({ ...base, title: 'Résumé ２' }), 'src/a.js:1:résumé-2')
+  assert.equal(candidateKey({ ...base, title: ' Bug ' }), 'src/a.js:1:-bug-')
+  assert.notEqual(candidateKey({ ...base, title: '修正' }), candidateKey({ ...base, title: 'Ошибка' }))
+})
+
+test('accepted verdict reduction binds decisions to unique scheduled candidates', () => {
+  const first = { candidateId: 'first', severity: 'high', path: 'a.js', line: 1 }
+  const second = { candidateId: 'second', severity: 'high', path: 'b.js', line: 1 }
+  const accepted = (candidateId) => ({ candidateId, status: 'accepted', reason: 'yes', evidenceChecked: 'source' })
+
+  assert.deepEqual(acceptedFromVerdicts([
+    { scheduledCandidate: first, verdict: accepted('second') },
+    { scheduledCandidate: second, verdict: accepted('second') },
+    { scheduledCandidate: second, verdict: accepted('second') },
+  ]).map(({ candidateId }) => candidateId), ['second'])
 })
 
 test('candidate caps use deterministic path, line, and id tie-breaks', () => {

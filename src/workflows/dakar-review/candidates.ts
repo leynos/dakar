@@ -12,7 +12,11 @@ export const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, med
  * @returns A normalized path/line/title key.
  */
 export function candidateKey(candidate: RawCandidate): string {
-  return [candidate.path || '', candidate.line || 0, String(candidate.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')].join(':')
+  const title = String(candidate.title || '')
+    .normalize('NFKC')
+    .toLocaleLowerCase('und')
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+  return [candidate.path || '', candidate.line || 0, title].join(':')
 }
 
 /**
@@ -127,19 +131,19 @@ export function discardReasonCounts(discarded: Discarded[]): Record<string, numb
 /**
  * Reduces accepted verifier verdicts into the authoritative finding set.
  *
- * @param candidates - Normalized candidates keyed by candidate identifier.
- * @param verdicts - Complete verifier decisions for scheduled candidates.
- * @param maxFindings - Non-negative cap applied after severity ordering.
+ * @param boundVerdicts - Verifier decisions paired with their scheduled candidates.
  * @returns Accepted candidates with verification evidence and valid downgrades.
  */
-export function acceptedFromVerdicts(candidates: Candidate[], verdicts: Verdict[], maxFindings: number): Candidate[] {
-  const byId = new Map(candidates.map((candidate): [string, Candidate] => [candidate.candidateId, candidate]))
+export function acceptedFromVerdicts(
+  boundVerdicts: Array<{ scheduledCandidate: Candidate; verdict: Verdict }>,
+): Candidate[] {
+  const seen = new Set<string>()
   const accepted: Candidate[] = []
-  for (const verdict of verdicts.filter(Boolean)) {
+  for (const { scheduledCandidate: candidate, verdict } of boundVerdicts) {
+    if (seen.has(candidate.candidateId)) continue
+    seen.add(candidate.candidateId)
+    if (verdict.candidateId !== candidate.candidateId) continue
     if (verdict.status !== 'accepted' && verdict.status !== 'severity_downgraded') continue
-    if (typeof verdict.candidateId !== 'string') continue
-    const candidate = byId.get(verdict.candidateId)
-    if (!candidate) continue
     accepted.push({
       ...candidate,
       severity: verdict.status === 'severity_downgraded' && typeof verdict.acceptedSeverity === 'string' &&
@@ -150,7 +154,7 @@ export function acceptedFromVerdicts(candidates: Candidate[], verdicts: Verdict[
       evidenceChecked: verdict.evidenceChecked,
     })
   }
-  return accepted.sort(bySeverity).slice(0, maxFindings)
+  return accepted.sort(bySeverity)
 }
 
 /**

@@ -185,8 +185,12 @@ export async function buildWorkflow({
   }
   const bundle = result.outputFiles[0].text
   const artefact = [
-    '// GENERATED FILE — built by `make workflow-build` from src/workflows/dakar-review/.',
-    '// Do not edit directly; edit the source tree and rebuild.',
+    '/**',
+    ' * @file Generated Dakar ODW workflow runtime artefact.',
+    ' *',
+    ' * Built by `make workflow-build` from `src/workflows/dakar-review/`.',
+    ' * Do not edit directly; edit the source tree and rebuild.',
+    ' */',
     bannerText.trimEnd(),
     '',
     bundle.trimEnd(),

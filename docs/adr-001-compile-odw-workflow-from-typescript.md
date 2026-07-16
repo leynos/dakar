@@ -124,7 +124,7 @@ discipline and build dependencies, but those costs are bounded and testable.
 
 _Table 1: Comparison of decomposition approaches._
 
-## Decision outcome / proposed direction
+## Decision outcome
 
 Adopt an ODW-specific compiler modelled on df12-build.
 

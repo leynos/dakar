@@ -36,6 +36,11 @@ async function expectCode(options, code) {
 
 test('builds the real workflow and verifies freshness without writing', async () => {
   const built = await buildWorkflow({ checkOnly: true })
+  assert.match(
+    built,
+    /^\/\*\*\n \* @file Generated Dakar ODW workflow runtime artefact\.\n \*\n \* Built by `make workflow-build` from `src\/workflows\/dakar-review\/`\.\n \* Do not edit directly; edit the source tree and rebuild\.\n \*\//u,
+  )
+  assert.doesNotMatch(built, /^\/\/ (?:GENERATED FILE|Do not edit)/mu)
   assert.match(built, /^export const meta =/mu)
   assert.match(built, /return await workflowMain\(\)$/mu)
 })

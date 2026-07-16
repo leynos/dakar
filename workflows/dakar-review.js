@@ -1,5 +1,9 @@
-// GENERATED FILE — built by `make workflow-build` from src/workflows/dakar-review/.
-// Do not edit directly; edit the source tree and rebuild.
+/**
+ * @file Generated Dakar ODW workflow runtime artefact.
+ *
+ * Built by `make workflow-build` from `src/workflows/dakar-review/`.
+ * Do not edit directly; edit the source tree and rebuild.
+ */
 /**
  * @file Route Dakar incremental review work through ODW agents.
  *
@@ -28,7 +32,8 @@ export const meta = {
 // src/workflows/dakar-review/candidates.ts
 var SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 function candidateKey(candidate) {
-  return [candidate.path || "", candidate.line || 0, String(candidate.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")].join(":");
+  const title = String(candidate.title || "").normalize("NFKC").toLocaleLowerCase("und").replace(/[^\p{L}\p{N}]+/gu, "-");
+  return [candidate.path || "", candidate.line || 0, title].join(":");
 }
 function bySeverity(left, right) {
   const severity = (SEVERITY_RANK[left.severity || ""] ?? 4) - (SEVERITY_RANK[right.severity || ""] ?? 4);
@@ -101,14 +106,14 @@ function discardReasonCounts(discarded) {
   for (const item of discarded) counts[item.status] = (counts[item.status] || 0) + 1;
   return counts;
 }
-function acceptedFromVerdicts(candidates, verdicts, maxFindings) {
-  const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
+function acceptedFromVerdicts(boundVerdicts) {
+  const seen = /* @__PURE__ */ new Set();
   const accepted = [];
-  for (const verdict of verdicts.filter(Boolean)) {
+  for (const { scheduledCandidate: candidate, verdict } of boundVerdicts) {
+    if (seen.has(candidate.candidateId)) continue;
+    seen.add(candidate.candidateId);
+    if (verdict.candidateId !== candidate.candidateId) continue;
     if (verdict.status !== "accepted" && verdict.status !== "severity_downgraded") continue;
-    if (typeof verdict.candidateId !== "string") continue;
-    const candidate = byId.get(verdict.candidateId);
-    if (!candidate) continue;
     accepted.push({
       ...candidate,
       severity: verdict.status === "severity_downgraded" && typeof verdict.acceptedSeverity === "string" && (SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) > (SEVERITY_RANK[candidate.severity || ""] ?? 4) ? verdict.acceptedSeverity : candidate.severity,
@@ -117,7 +122,7 @@ function acceptedFromVerdicts(candidates, verdicts, maxFindings) {
       evidenceChecked: verdict.evidenceChecked
     });
   }
-  return accepted.sort(bySeverity).slice(0, maxFindings);
+  return accepted.sort(bySeverity);
 }
 function discardedFromVerdicts(candidates, verdicts) {
   const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
@@ -728,9 +733,11 @@ async function workflowMain() {
     };
   }
   const candidates = normalizeCandidates(taskResults, prepared.changedFiles, MAX_CANDIDATES);
-  const verificationCandidates = candidatesForVerification(candidates);
+  const verificationCandidates = [
+    ...new Map(candidatesForVerification(candidates).map((candidate) => [candidate.candidateId, candidate])).values()
+  ];
   phase("Verify");
-  const verdicts = verificationCandidates.length === 0 ? [] : (
+  const boundVerdicts = verificationCandidates.length === 0 ? [] : (
     // ODW pipeline advances candidates independently with scheduler-bounded
     // concurrency; it is not an intentional serial rate limiter.
     (await pipeline(
@@ -741,14 +748,15 @@ async function workflowMain() {
         adapter: SYNTHESIS_ADAPTER,
         model: SYNTHESIS_MODEL_BASE,
         schema: VERDICT_SCHEMA
-      })
+      }).then((verdict) => ({ scheduledCandidate: candidate, verdict }))
     )).filter((value) => value !== null)
   );
+  const verdicts = boundVerdicts.map(({ verdict }) => verdict);
   const expectedVerdictIds = new Set(verificationCandidates.map((candidate) => candidate.candidateId));
   const verificationById = new Map(verificationCandidates.map((candidate) => [candidate.candidateId, candidate]));
   const seenVerdictIds = /* @__PURE__ */ new Set();
-  const verdictsComplete = verdicts.length === verificationCandidates.length && verdicts.every((verdict) => {
-    if (typeof verdict.candidateId !== "string" || typeof verdict.reason !== "string" || verdict.reason.trim() === "" || typeof verdict.evidenceChecked !== "string" || verdict.evidenceChecked.trim() === "" || verdict.status === "severity_downgraded" && (typeof verdict.acceptedSeverity !== "string" || (SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) <= (SEVERITY_RANK[verificationById.get(verdict.candidateId)?.severity || ""] ?? 4)) || !expectedVerdictIds.has(verdict.candidateId) || seenVerdictIds.has(verdict.candidateId)) {
+  const verdictsComplete = boundVerdicts.length === verificationCandidates.length && boundVerdicts.every(({ scheduledCandidate, verdict }) => {
+    if (typeof verdict.candidateId !== "string" || typeof verdict.reason !== "string" || verdict.reason.trim() === "" || typeof verdict.evidenceChecked !== "string" || verdict.evidenceChecked.trim() === "" || verdict.status === "severity_downgraded" && (typeof verdict.acceptedSeverity !== "string" || (SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) <= (SEVERITY_RANK[verificationById.get(verdict.candidateId)?.severity || ""] ?? 4)) || !expectedVerdictIds.has(verdict.candidateId) || verdict.candidateId !== scheduledCandidate.candidateId || seenVerdictIds.has(verdict.candidateId)) {
       return false;
     }
     seenVerdictIds.add(verdict.candidateId);
@@ -767,7 +775,14 @@ async function workflowMain() {
       verdicts
     };
   }
-  const accepted = acceptedFromVerdicts(candidates, verdicts, MAX_FINDINGS);
+  const reconciledAccepted = acceptedFromVerdicts(boundVerdicts);
+  const accepted = reconciledAccepted.slice(0, MAX_FINDINGS);
+  const overflow = reconciledAccepted.slice(MAX_FINDINGS).map((candidate) => ({
+    candidate,
+    status: "max_findings_exceeded",
+    reason: `Accepted candidate exceeded the configured maximum of ${MAX_FINDINGS} findings.`,
+    evidenceChecked: candidate.evidenceChecked || ""
+  }));
   const verificationIds = new Set(verificationCandidates.map((candidate) => candidate.candidateId));
   const sampledOut = candidates.filter((candidate) => !verificationIds.has(candidate.candidateId)).map((candidate) => ({
     candidate,
@@ -775,7 +790,7 @@ async function workflowMain() {
     reason: "Low-severity candidate was not selected by the task verification policy.",
     evidenceChecked: ""
   }));
-  const discarded = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut];
+  const discarded = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut, ...overflow];
   const authoritativeFindings = accepted.map((candidate) => ({
     severity: candidate.severity,
     path: candidate.path,
@@ -837,7 +852,6 @@ async function workflowMain() {
   }
   const finalVerdict = authoritativeFindings.length > 0 ? "changes-requested" : "pass";
   const metrics = {
-    ...synthesis.metrics,
     workflowVersion: WORKFLOW_VERSION,
     verdict: finalVerdict,
     taskCount: taskGraph.length,
@@ -873,7 +887,8 @@ async function workflowMain() {
   const recordPrompt2 = recordPrompt(recordInput, promptContext, STATE_ROOT);
   let recorded = null;
   let recordAttempts = 0;
-  for (let attempt = 1; attempt <= 3 && recorded?.ok !== true; attempt += 1) {
+  const isCompleteRecord = (value) => value?.ok === true && typeof value.stateFile === "string" && value.stateFile.trim().length > 0 && value.headCommit === prepared.headCommit;
+  for (let attempt = 1; attempt <= 3 && !isCompleteRecord(recorded); attempt += 1) {
     recordAttempts = attempt;
     if (attempt > 1) {
       log(`Review-history recording attempt ${attempt} of 3 after an unsuccessful attempt.`);
@@ -891,7 +906,7 @@ async function workflowMain() {
       recorded = { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
-  const recordSucceeded = recorded?.ok === true && typeof recorded.stateFile === "string" && recorded.stateFile.trim().length > 0 && recorded.headCommit === prepared.headCommit;
+  const recordSucceeded = isCompleteRecord(recorded);
   return {
     ok: recordSucceeded,
     stage: recordSucceeded ? void 0 : "record",

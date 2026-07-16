@@ -217,10 +217,12 @@ if (failedTaskIds.length > 0) {
   }
 }
 const candidates = normalizeCandidates(taskResults, prepared.changedFiles, MAX_CANDIDATES)
-const verificationCandidates = candidatesForVerification(candidates)
+const verificationCandidates = [
+  ...new Map(candidatesForVerification(candidates).map((candidate) => [candidate.candidateId, candidate])).values(),
+]
 
 phase('Verify')
-const verdicts =
+const boundVerdicts =
   verificationCandidates.length === 0
     ? []
     : (
@@ -228,20 +230,21 @@ const verdicts =
         // concurrency; it is not an intentional serial rate limiter.
         await pipeline(verificationCandidates.map((candidate, index) => ({ candidate, ordinal: index + 1 })), ({ candidate, ordinal }) =>
           agent<Verdict>(verificationPrompt(candidate, prepared, promptContext), {
-            label: `verify-${candidate.candidateId.slice(0, 30)}-${ordinal}`,
-            phase: 'Verify',
-            adapter: SYNTHESIS_ADAPTER,
-            model: SYNTHESIS_MODEL_BASE,
-            schema: VERDICT_SCHEMA,
-          }),
+              label: `verify-${candidate.candidateId.slice(0, 30)}-${ordinal}`,
+              phase: 'Verify',
+              adapter: SYNTHESIS_ADAPTER,
+              model: SYNTHESIS_MODEL_BASE,
+              schema: VERDICT_SCHEMA,
+            }).then((verdict) => ({ scheduledCandidate: candidate, verdict })),
         )
-      ).filter((value): value is Verdict => value !== null)
+      ).filter((value): value is { scheduledCandidate: Candidate; verdict: Verdict } => value !== null)
+const verdicts = boundVerdicts.map(({ verdict }) => verdict)
 const expectedVerdictIds = new Set(verificationCandidates.map((candidate) => candidate.candidateId))
 const verificationById = new Map(verificationCandidates.map((candidate): [string, Candidate] => [candidate.candidateId, candidate]))
 const seenVerdictIds = new Set<string>()
 const verdictsComplete =
-  verdicts.length === verificationCandidates.length &&
-  verdicts.every((verdict) => {
+  boundVerdicts.length === verificationCandidates.length &&
+  boundVerdicts.every(({ scheduledCandidate, verdict }) => {
     if (
       typeof verdict.candidateId !== 'string' ||
       typeof verdict.reason !== 'string' ||
@@ -253,6 +256,7 @@ const verdictsComplete =
           (SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) <=
             (SEVERITY_RANK[verificationById.get(verdict.candidateId)?.severity || ''] ?? 4))) ||
       !expectedVerdictIds.has(verdict.candidateId) ||
+      verdict.candidateId !== scheduledCandidate.candidateId ||
       seenVerdictIds.has(verdict.candidateId)
     ) {
       return false
@@ -273,7 +277,14 @@ if (!verdictsComplete) {
     verdicts,
   }
 }
-const accepted = acceptedFromVerdicts(candidates, verdicts, MAX_FINDINGS)
+const reconciledAccepted = acceptedFromVerdicts(boundVerdicts)
+const accepted = reconciledAccepted.slice(0, MAX_FINDINGS)
+const overflow = reconciledAccepted.slice(MAX_FINDINGS).map((candidate): Discarded => ({
+  candidate,
+  status: 'max_findings_exceeded',
+  reason: `Accepted candidate exceeded the configured maximum of ${MAX_FINDINGS} findings.`,
+  evidenceChecked: candidate.evidenceChecked || '',
+}))
 const verificationIds = new Set(verificationCandidates.map((candidate) => candidate.candidateId))
 const sampledOut = candidates
   .filter((candidate) => !verificationIds.has(candidate.candidateId))
@@ -283,7 +294,7 @@ const sampledOut = candidates
     reason: 'Low-severity candidate was not selected by the task verification policy.',
     evidenceChecked: '',
   }))
-const discarded = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut]
+const discarded = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut, ...overflow]
 const authoritativeFindings = accepted.map((candidate) => ({
   severity: candidate.severity,
   path: candidate.path,
@@ -351,7 +362,6 @@ if (!synthesis || !Array.isArray(synthesis.findings) || !synthesis.metrics) {
 const finalVerdict = authoritativeFindings.length > 0 ? 'changes-requested' : 'pass'
 
 const metrics = {
-  ...synthesis.metrics,
   workflowVersion: WORKFLOW_VERSION,
   verdict: finalVerdict,
   taskCount: taskGraph.length,
@@ -388,7 +398,12 @@ const recordInput = {
 const recordPrompt = makeRecordPrompt(recordInput, promptContext, STATE_ROOT)
 let recorded: RecordResult | null = null
 let recordAttempts = 0
-for (let attempt = 1; attempt <= 3 && recorded?.ok !== true; attempt += 1) {
+const isCompleteRecord = (value: RecordResult | null): value is RecordResult & { stateFile: string; headCommit: string } =>
+  value?.ok === true &&
+  typeof value.stateFile === 'string' &&
+  value.stateFile.trim().length > 0 &&
+  value.headCommit === prepared.headCommit
+for (let attempt = 1; attempt <= 3 && !isCompleteRecord(recorded); attempt += 1) {
   recordAttempts = attempt
   if (attempt > 1) {
     log(`Review-history recording attempt ${attempt} of 3 after an unsuccessful attempt.`)
@@ -406,11 +421,7 @@ for (let attempt = 1; attempt <= 3 && recorded?.ok !== true; attempt += 1) {
     recorded = { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
-const recordSucceeded =
-  recorded?.ok === true &&
-  typeof recorded.stateFile === 'string' &&
-  recorded.stateFile.trim().length > 0 &&
-  recorded.headCommit === prepared.headCommit
+const recordSucceeded = isCompleteRecord(recorded)
 
 return {
   ok: recordSucceeded,

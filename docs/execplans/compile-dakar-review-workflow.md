@@ -23,11 +23,10 @@ ODW dry run, CLI suites, and one isolated live review prove that the installed
 entrypoint still prepares, reviews, verifies, synthesizes, records, and skips a
 head already present in review history.
 
-This plan implements the proposed decision in
-`docs/adr-001-compile-odw-workflow-from-typescript.md`. Obtain explicit approval
-of this ExecPlan before beginning implementation. Record that approval by
-changing ADR 001 to `Accepted` before WI-1; implementation must not be used as
-the acceptance event for the decision it implements.
+This plan implements the accepted decision in
+`docs/adr-001-compile-odw-workflow-from-typescript.md`. The user explicitly
+approved implementation before WI-1, and WI-0 records the corresponding ADR
+acceptance transition.
 
 ## Constraints
 
@@ -272,13 +271,15 @@ the `Decision log`, and request direction.
   Impact: review data remains recoverable, but the local CLI retains authority
   over where review history is written.
 
-- Observation: external docstring coverage remained at 43.62% after the
-  authored TypeScript modules and CLI helpers had JSDoc.
+- Observation: external docstring coverage reported 43.62%, then 48.45%, after
+  the authored TypeScript modules and CLI helpers had JSDoc.
   Evidence: a TypeScript-AST audit found every named CLI function and every
   exported workflow function documented; the apparent deficit includes the
   generated artefact, ambient declarations, and private helpers in its
-  denominator. Targeted JSDoc was added to the exported compiler API and the
-  non-obvious loader and trusted-state boundaries.
+  denominator. The current audit still reports 18/18 named CLI functions and
+  29/29 exported workflow functions documented; targeted JSDoc covers the
+  exported compiler API and the non-obvious loader and trusted-state
+  boundaries.
   Impact: contributor guidance now measures documentation on authored surfaces
   and does not require comments to be duplicated into generated output or
   self-explanatory private helpers.
