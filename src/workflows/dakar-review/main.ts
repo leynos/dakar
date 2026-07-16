@@ -406,7 +406,11 @@ for (let attempt = 1; attempt <= 3 && recorded?.ok !== true; attempt += 1) {
     recorded = { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
-const recordSucceeded = recorded?.ok === true
+const recordSucceeded =
+  recorded?.ok === true &&
+  typeof recorded.stateFile === 'string' &&
+  recorded.stateFile.trim().length > 0 &&
+  recorded.headCommit === prepared.headCommit
 
 return {
   ok: recordSucceeded,

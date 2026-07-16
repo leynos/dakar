@@ -6,7 +6,7 @@ import test from 'node:test'
 
 class FixtureFailure extends Error {}
 
-async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '' } = {}) {
+async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '', commitLength = 40, recordResult } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -16,8 +16,8 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
   const phases = []
   const logs = []
   const sleepDelays = []
-  const head = 'b'.repeat(40)
-  const base = 'a'.repeat(40)
+  const head = 'b'.repeat(commitLength)
+  const base = 'a'.repeat(commitLength)
   const agent = async (prompt, options = {}) => {
     agentLabels.push(options.label)
     assert.equal(prompts.has(options.label), false, `duplicate agent label: ${options.label}`)
@@ -50,7 +50,7 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
     if (String(options.label).startsWith('state-record-')) {
       const attempt = Number(options.label.split('-').at(-1))
       if (attempt <= recordFailures) throw new FixtureFailure('record fixture failure')
-      return { ok: true, stateFile: '/trusted/state/dakar/reviews.toml' }
+      return recordResult ?? { ok: true, stateFile: '/trusted/state/dakar/reviews.toml', headCommit: head }
     }
     throw new Error(`unexpected agent label: ${options.label}`)
   }
@@ -122,6 +122,27 @@ test('generated workflow returns its fallback after exhausting record retries', 
   assert.equal(logs.length, 2)
   assert.deepEqual(sleepDelays, [100, 200])
 })
+
+test('generated workflow accepts a complete matching 64-character record acknowledgement', async () => {
+  const { result } = await runWorkflow({ commitLength: 64 })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.recorded.headCommit, 'b'.repeat(64))
+})
+
+for (const [name, recordResult] of [
+  ['missing state file', { ok: true, headCommit: 'b'.repeat(40) }],
+  ['blank state file', { ok: true, stateFile: '   ', headCommit: 'b'.repeat(40) }],
+  ['missing head commit', { ok: true, stateFile: '/trusted/state/dakar/reviews.toml' }],
+  ['mismatched head commit', { ok: true, stateFile: '/trusted/state/dakar/reviews.toml', headCommit: 'c'.repeat(40) }],
+]) {
+  test(`generated workflow fails closed on a record acknowledgement with ${name}`, async () => {
+    const { result } = await runWorkflow({ recordResult })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.stage, 'record')
+  })
+}
 
 test('generated workflow gives colliding truncated candidate ids distinct verifier labels', async () => {
   const { agentLabels, result } = await runWorkflow({ collidingCandidates: true })

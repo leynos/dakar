@@ -201,7 +201,7 @@ function validModelIdentifier(value) {
 function configuredModels(value) {
   if (!Array.isArray(value)) return [];
   return value.filter(
-    (candidate) => isObject(candidate) && (candidate.label === void 0 || typeof candidate.label === "string") && validModelIdentifier(candidate.model) && (candidate.reasoning === "low" || candidate.reasoning === "medium" || candidate.reasoning === "high") && (candidate.role === void 0 || typeof candidate.role === "string")
+    (candidate) => isObject(candidate) && (candidate.label === void 0 || typeof candidate.label === "string") && validModelIdentifier(candidate.model) && (candidate.reasoning === "low" || candidate.reasoning === "medium" || candidate.reasoning === "high") && reasoningFromModel(candidate.model, candidate.reasoning) === candidate.reasoning && (candidate.role === void 0 || typeof candidate.role === "string")
   );
 }
 function resolveWorkflowConfig(value) {
@@ -487,7 +487,7 @@ var RECORD_SCHEMA = {
     stdout: { type: "string" },
     stderr: { type: "string" }
   },
-  required: ["ok"]
+  required: ["ok", "stateFile", "headCommit"]
 };
 
 // src/workflows/dakar-review/task-graph.ts
@@ -891,7 +891,7 @@ async function workflowMain() {
       recorded = { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
-  const recordSucceeded = recorded?.ok === true;
+  const recordSucceeded = recorded?.ok === true && typeof recorded.stateFile === "string" && recorded.stateFile.trim().length > 0 && recorded.headCommit === prepared.headCommit;
   return {
     ok: recordSucceeded,
     stage: recordSucceeded ? void 0 : "record",

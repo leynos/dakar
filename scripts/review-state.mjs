@@ -165,6 +165,7 @@ function stateFilePath({ stateRoot, owner, name, branchSlug }) {
   return join(stateRoot, APP_NAME, owner, name, branchSlug, 'reviews.toml')
 }
 
+/** Derives the state destination exclusively from trusted CLI location data. */
 function derivedStateFile(rawArgs) {
   const repoRoot = resolve(optionString(rawArgs, 'repo-root', process.cwd()))
   const remoteUrl = git(repoRoot, ['remote', 'get-url', 'origin'], true)
@@ -185,7 +186,7 @@ function parseReviewedHeads(tomlText) {
   const entries = []
   const chunks = tomlText.split(/\n(?=\[\[reviews\]\]\n)/u)
   for (const chunk of chunks) {
-    const head = chunk.match(/^head_commit = "([0-9a-f]{7,40})"$/mu)
+    const head = chunk.match(/^head_commit = "([0-9a-f]{7,64})"$/mu)
     const status = chunk.match(/^status = "([^"]+)"$/mu)
     const completedAt = chunk.match(/^completed_at = "([^"]+)"$/mu)
     if (head && (!status || status[1] === 'completed')) {
@@ -206,7 +207,7 @@ function parseReviewedHeads(tomlText) {
  * @returns {{ head: string, rank: number } | null} unique canonical match.
  */
 function resolveReachableHead(reachableBases, recordedHead) {
-  if (!/^[0-9a-f]{7,40}$/u.test(recordedHead)) {
+  if (!/^[0-9a-f]{7,64}$/u.test(recordedHead)) {
     return null
   }
   if (reachableBases.has(recordedHead)) {
@@ -635,7 +636,7 @@ function fieldValue(input, ...keys) {
  * Extract and validate the `headCommit` field from a record-input object.
  *
  * Accepts both `headCommit` (camelCase) and `head_commit` (snake_case) keys.
- * Throws when the value is absent or not a 7–40 character hexadecimal string.
+ * Throws when the value is absent or not a complete 40- or 64-character hexadecimal string.
  *
  * @param {object} input - record input object.
  * @returns {string} normalized lowercase commit id.
@@ -646,8 +647,8 @@ function reviewHeadCommit(input) {
   if (!text) {
     throw new Error('record input must include a non-empty headCommit')
   }
-  if (!/^[0-9a-f]{7,40}$/iu.test(text)) {
-    throw new Error('record input headCommit must be a 7-40 character hexadecimal commit id')
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(text)) {
+    throw new Error('record input headCommit must be a complete 40- or 64-character hexadecimal commit id')
   }
   return text.toLowerCase()
 }

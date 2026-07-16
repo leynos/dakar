@@ -127,6 +127,19 @@ test('record rejects completed entries without a valid head commit', () => {
   )
 })
 
+test('record accepts complete SHA-1 and SHA-256 object ids but rejects abbreviations', () => {
+  for (const length of [40, 64]) {
+    const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
+    const headCommit = 'a'.repeat(length)
+    assert.equal(appendReview({ stateFile, headCommit, commitCount: 1, findingsTotal: 0 }).headCommit, headCommit)
+  }
+  const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
+  assert.throws(
+    () => appendReview({ stateFile, headCommit: 'a'.repeat(12), commitCount: 1, findingsTotal: 0 }),
+    /complete 40- or 64-character/u,
+  )
+})
+
 test('record rejects completed entries with invalid counters', () => {
   const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
   const headCommit = 'a'.repeat(40)

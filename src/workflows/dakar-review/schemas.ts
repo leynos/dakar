@@ -77,5 +77,5 @@ export const RECORD_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: { ok: { type: 'boolean' }, stateFile: { type: 'string' }, headCommit: { type: 'string' },
     error: { type: 'string' }, stdout: { type: 'string' }, stderr: { type: 'string' } },
-  required: ['ok'],
+  required: ['ok', 'stateFile', 'headCommit'],
 }

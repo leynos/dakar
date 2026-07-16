@@ -48,6 +48,28 @@ test('rejects an invalid metadata count', async (t) => {
   await expectCode(options, 'BUILD_META_COUNT')
 })
 
+test('banner validation ignores commented metadata lookalikes', async (t) => {
+  const options = await fixture(t, {
+    meta: '/*\nexport const meta = { commented: true }\n*/\nexport const meta = {}\n',
+    main: 'async function workflowMain() {}\n',
+  })
+  await buildWorkflow(options)
+})
+
+test('banner validation rejects dynamic imports as module syntax', async (t) => {
+  const options = await fixture(t, {
+    meta: 'export const meta = {}\nimport("external-package")\n',
+    main: 'async function workflowMain() {}\n',
+  })
+  await expectCode(options, 'BUILD_MODULE_SYNTAX')
+
+  const embedded = await fixture(t, {
+    meta: 'export const meta = { value: import("external-package") }\n',
+    main: 'async function workflowMain() {}\n',
+  })
+  await expectCode(embedded, 'BUILD_MODULE_SYNTAX')
+})
+
 test('rejects module wrappers', async (t) => {
   const options = await fixture(t, {
     main: 'function __esm() {}\nasync function workflowMain() { return __esm() }\n',
@@ -90,12 +112,12 @@ test('rejects a missing workflow entry', async (t) => {
   await expectCode(options, 'BUILD_ENTRY_COUNT')
 })
 
-test('rejects artefacts that fail the ODW loader parse', async (t) => {
+test('rejects metadata with parser errors', async (t) => {
   const options = await fixture(t, {
     meta: 'export const meta = {\n',
     main: 'async function workflowMain() {}\n',
   })
-  await expectCode(options, 'BUILD_LOADER_PARSE')
+  await expectCode(options, 'BUILD_META_COUNT')
 })
 
 test('check-only reports a stale artefact without replacing it', async (t) => {
@@ -223,6 +245,21 @@ function primitiveCalls(file, primitives) {
         }
       }
     }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left)
+    ) {
+      const initializer = unwrapped(node.right)
+      if (ts.isIdentifier(initializer)) {
+        const alias = checker.getSymbolAtLocation(node.left)
+        const source = checker.getSymbolAtLocation(initializer)
+        if (alias) {
+          if (primitives.has(initializer.text) && source === undefined) aliases.add(alias)
+          else if (source) aliasEdges.push([alias, source])
+        }
+      }
+    }
     ts.forEachChild(node, visitAliases)
   }
   visitAliases(sourceFile)
@@ -268,10 +305,10 @@ test('primitive analysis finds wrapped aliases but allows local bindings', async
   const safe = path.join(directory, 'safe.ts')
   await writeFile(
     unsafe,
-    'const first = phase\nconst invoke = first\n;(invoke as typeof phase) ("Review")\ninvoke.call(null, "Verify")\n;(0, phase)("Record")\n',
+    'const first = phase\nconst invoke = first\nlet assigned\nassigned = phase\n;(invoke as typeof phase) ("Review")\ninvoke.call(null, "Verify")\n;(0, phase)("Record")\nassigned("Plan")\n',
   )
   await writeFile(safe, 'const phase = (value: string) => value\nphase("local")\n')
   const primitives = new Set(['phase'])
-  assert.deepEqual(primitiveCalls(unsafe, primitives), ['invoke', 'invoke', 'phase'])
+  assert.deepEqual(primitiveCalls(unsafe, primitives), ['invoke', 'invoke', 'phase', 'assigned'])
   assert.deepEqual(primitiveCalls(safe, primitives), [])
 })

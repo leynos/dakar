@@ -272,6 +272,17 @@ the `Decision log`, and request direction.
   Impact: review data remains recoverable, but the local CLI retains authority
   over where review history is written.
 
+- Observation: external docstring coverage remained at 43.62% after the
+  authored TypeScript modules and CLI helpers had JSDoc.
+  Evidence: a TypeScript-AST audit found every named CLI function and every
+  exported workflow function documented; the apparent deficit includes the
+  generated artefact, ambient declarations, and private helpers in its
+  denominator. Targeted JSDoc was added to the exported compiler API and the
+  non-obvious loader and trusted-state boundaries.
+  Impact: contributor guidance now measures documentation on authored surfaces
+  and does not require comments to be duplicated into generated output or
+  self-explanatory private helpers.
+
 ## Decision log
 
 - Decision: use the df12-build three-piece frame: verbatim `meta.js`, flat
@@ -355,8 +366,9 @@ the `Decision log`, and request direction.
   docstrings.
   Rationale: this repository has no Biome or standard-JS configuration, so an
   ignore would create an unused tool contract, while clear module-level
-  documentation satisfies the actionable documentation gap without adding
-  repetitive comments to self-explanatory functions.
+  documentation plus targeted API and boundary JSDoc satisfies the actionable
+  documentation gap without adding repetitive comments to self-explanatory
+  functions, ambient declarations, or generated output.
   Date/Author: 2026-07-14, Codex after post-completion review.
 
 ## Outcomes & retrospective

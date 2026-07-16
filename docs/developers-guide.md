@@ -96,6 +96,13 @@ interface. Runtime JSON Schemas are exported from `schemas.ts`, while shared
 compile-time shapes are exported from `types.ts`. These modules are pure;
 `main.ts` alone calls the ambient ODW primitives and owns phase sequencing.
 
+Document each module with a top-of-file `/** @file … */` block, and document
+exported functions plus non-obvious trust, loader, and state boundaries with
+JSDoc. The generated `workflows/dakar-review.js` artefact and ambient
+declarations are outputs or contracts rather than authoring surfaces; assess
+docstring coverage against their source modules instead of duplicating comments
+in generated output or declaration signatures.
+
 Keep the graph acyclic ESM. Relative imports use explicit `.ts` extensions,
 type-only dependencies use `import type`, and TypeScript remains restricted to
 erasable syntax. ODW primitives are ambient and must never be imported.

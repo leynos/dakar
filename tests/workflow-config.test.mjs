@@ -52,6 +52,15 @@ test('valid custom models replace defaults while malformed entries are discarded
   assert.equal(config.reviewModels[0].model, 'custom-model')
 })
 
+test('custom model suffixes must agree with their explicit reasoning', () => {
+  const valid = { model: 'matched/low', reasoning: 'low', role: 'high' }
+  const config = resolveWorkflowConfig({
+    models: [valid, { model: 'mismatched/low', reasoning: 'high', role: 'medium' }],
+  })
+
+  assert.deepEqual(config.reviewModels, [valid])
+})
+
 test('synthesis model reasoning selects the adapter and rejects unknown levels', () => {
   const explicit = resolveWorkflowConfig({ synthesisModel: 'gpt-5.5/low' })
   assert.equal(explicit.synthesisModelBase, 'gpt-5.5')

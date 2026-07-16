@@ -64,6 +64,7 @@ function configuredModels(value: unknown): ModelSpec[] {
       (candidate.label === undefined || typeof candidate.label === 'string') &&
       validModelIdentifier(candidate.model) &&
       (candidate.reasoning === 'low' || candidate.reasoning === 'medium' || candidate.reasoning === 'high') &&
+      reasoningFromModel(candidate.model, candidate.reasoning) === candidate.reasoning &&
       (candidate.role === undefined || typeof candidate.role === 'string'),
   )
 }

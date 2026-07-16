@@ -36,18 +36,64 @@ function reject(code, message) {
   throw new WorkflowBuildError(code, message)
 }
 
-function countMatches(text, pattern) {
-  return [...text.matchAll(pattern)].length
-}
-
 function normalizeLineEndings(text) {
   return text.replace(/\r\n?/gu, '\n')
 }
 
+function isLiteralValue(node) {
+  if (
+    ts.isStringLiteral(node) ||
+    ts.isNumericLiteral(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword
+  ) return true
+  if (ts.isArrayLiteralExpression(node)) return node.elements.every(isLiteralValue)
+  if (ts.isObjectLiteralExpression(node)) {
+    return node.properties.every(
+      (property) => ts.isPropertyAssignment(property) && !ts.isComputedPropertyName(property.name) && isLiteralValue(property.initializer),
+    )
+  }
+  return false
+}
+
+/** Rejects bundles that cannot execute under the restricted ODW loader. */
 function assertLoaderContract(banner, bundle, artefact) {
-  const metaCount = countMatches(banner, /^export const meta\s*=/gmu)
-  if (metaCount !== 1) {
-    reject('BUILD_META_COUNT', `expected one literal metadata export, found ${metaCount}`)
+  const bannerFile = ts.createSourceFile('meta.js', banner, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+  let bannerModuleSyntax = false
+  const visitBanner = (node) => {
+    if (
+      ts.isImportDeclaration(node) ||
+      ts.isExportDeclaration(node) ||
+      ts.isExportAssignment(node) ||
+      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+      (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword)
+    ) bannerModuleSyntax = true
+    ts.forEachChild(node, visitBanner)
+  }
+  visitBanner(bannerFile)
+  if (bannerModuleSyntax) reject('BUILD_MODULE_SYNTAX', 'metadata banner contains rejected module syntax')
+  const metaStatements = bannerFile.statements.filter((statement) => {
+    if (!ts.isVariableStatement(statement)) return false
+    const declarations = statement.declarationList.declarations
+    return declarations.length === 1 && ts.isIdentifier(declarations[0].name) && declarations[0].name.text === 'meta'
+  })
+  const metaStatement = metaStatements[0]
+  const metaDeclaration = metaStatement?.declarationList.declarations[0]
+  const isLiteralMeta =
+    bannerFile.parseDiagnostics.length === 0 &&
+    bannerFile.statements.length === 1 &&
+    metaStatements.length === 1 &&
+    metaStatement !== undefined &&
+    (metaStatement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+    ts.canHaveModifiers(metaStatement) &&
+    ts.getModifiers(metaStatement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true &&
+    metaDeclaration !== undefined &&
+    metaDeclaration.initializer !== undefined &&
+    ts.isObjectLiteralExpression(metaDeclaration.initializer) &&
+    isLiteralValue(metaDeclaration.initializer)
+  if (!isLiteralMeta) {
+    reject('BUILD_META_COUNT', 'expected exactly one literal `export const meta = { ... }` statement')
   }
   const sourceFile = ts.createSourceFile('workflow-bundle.js', bundle, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
   const wrappers = new Set(['__esm', '__commonJS', '__toESM', '__require'])
@@ -88,7 +134,9 @@ function assertLoaderContract(banner, bundle, artefact) {
   if (entryCount !== 1) {
     reject('BUILD_ENTRY_COUNT', `expected one workflowMain declaration, found ${entryCount}`)
   }
-  const wrapped = artefact.replace(/^export const meta\s*=/mu, 'const meta =')
+  const metaStart = metaStatement.getStart(bannerFile)
+  const wrappedBanner = `${banner.slice(0, metaStart)}${banner.slice(metaStart).replace(/^export const meta\s*=/u, 'const meta =')}`
+  const wrapped = `${wrappedBanner.trimEnd()}\n${bundle.trimEnd()}\nreturn await workflowMain()\n`
   try {
     new Function(`return (async function __workflow_wrapped__() {\n${wrapped}\n})`)
   } catch (error) {
@@ -96,6 +144,7 @@ function assertLoaderContract(banner, bundle, artefact) {
   }
 }
 
+/** Builds or freshness-checks the canonical workflow artefact. */
 export async function buildWorkflow({
   srcDir = DEFAULT_SOURCE,
   entry = path.join(srcDir, 'main.ts'),
