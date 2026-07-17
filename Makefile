@@ -3,7 +3,7 @@
 	spelling-helper-test workflow-build workflow-freshness workflow-check
 
 MD_FILES := $(shell git ls-files '*.md')
-NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/check-docstrings.mjs scripts/review-config.mjs scripts/review-state.mjs tests/cli.test.mjs tests/compile-time-contract.test.mjs tests/review-config.test.mjs tests/review-state.test.mjs tests/review-state.property.test.mjs tests/review-state.robustness.test.mjs tests/workflow-build.test.mjs tests/workflow-candidate-paths.test.mjs tests/workflow-dry-run.test.mjs tests/workflow-task-graph.test.mjs
+NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/check-docstrings.mjs scripts/review-config.mjs scripts/review-state.mjs tests/cli.test.mjs tests/compile-time-contract.test.mjs tests/docstrings.test.mjs tests/review-config.test.mjs tests/review-state.test.mjs tests/review-state.property.test.mjs tests/review-state.robustness.test.mjs tests/workflow-build.test.mjs tests/workflow-candidate-paths.test.mjs tests/workflow-dry-run.test.mjs tests/workflow-task-graph.test.mjs
 UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
 UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
 RUFF_VERSION ?= 0.15.12

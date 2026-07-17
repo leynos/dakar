@@ -287,7 +287,7 @@ function primitiveCalls(file, primitives) {
           calls.push(expression.text)
         }
       }
-      if (ts.isPropertyAccessExpression(expression) && ['call', 'apply'].includes(expression.name.text)) {
+      if (ts.isPropertyAccessExpression(expression) && ['call', 'apply', 'bind'].includes(expression.name.text)) {
         const receiver = unwrapped(expression.expression)
         if (ts.isIdentifier(receiver)) {
           const symbol = checker.getSymbolAtLocation(receiver)
@@ -310,10 +310,10 @@ test('primitive analysis finds wrapped aliases but allows local bindings', async
   const safe = path.join(directory, 'safe.ts')
   await writeFile(
     unsafe,
-    'const first = phase\nconst invoke = first\nlet assigned\nassigned = phase\n;(invoke as typeof phase) ("Review")\ninvoke.call(null, "Verify")\n;(0, phase)("Record")\nassigned("Plan")\n',
+    'const first = phase\nconst invoke = first\nlet assigned\nassigned = phase\n;(invoke as typeof phase) ("Review")\ninvoke.call(null, "Verify")\nphase.bind(null)("Bound")\n;(0, phase)("Record")\nassigned("Plan")\n',
   )
   await writeFile(safe, 'const phase = (value: string) => value\nphase("local")\n')
   const primitives = new Set(['phase'])
-  assert.deepEqual(primitiveCalls(unsafe, primitives), ['invoke', 'invoke', 'phase', 'assigned'])
+  assert.deepEqual(primitiveCalls(unsafe, primitives), ['invoke', 'invoke', 'phase', 'phase', 'assigned'])
   assert.deepEqual(primitiveCalls(safe, primitives), [])
 })

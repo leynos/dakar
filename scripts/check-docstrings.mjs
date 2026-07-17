@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 
 const minimumPercentage = 80
-const sourcePatterns = [
+const defaultSourcePatterns = [
   'bin/dakar-review.mjs',
   'src/workflows/dakar-review/*.js',
   'src/workflows/dakar-review/*.ts',
@@ -14,6 +14,7 @@ const sourcePatterns = [
 
 /** Return tracked authored source files in the documentation audit scope. */
 function sourceFiles() {
+  const sourcePatterns = process.argv.length > 2 ? process.argv.slice(2) : defaultSourcePatterns
   return execFileSync('git', ['ls-files', ...sourcePatterns], { encoding: 'utf8' })
     .trim()
     .split('\n')
@@ -63,7 +64,11 @@ function inspectFile(file) {
 
 const symbols = sourceFiles().flatMap(inspectFile)
 const documented = symbols.filter(({ documented }) => documented).length
-const percentage = (documented / symbols.length) * 100
+const percentage = symbols.length === 0 ? 0 : (documented / symbols.length) * 100
+
+if (symbols.length === 0) {
+  process.stderr.write('Docstring coverage failed: no symbols discovered\n')
+}
 
 for (const symbol of symbols.filter(({ documented: present }) => !present)) {
   process.stderr.write(`${symbol.file}: undocumented ${symbol.name}\n`)
@@ -72,4 +77,4 @@ process.stdout.write(
   `Docstring coverage: ${documented}/${symbols.length} (${percentage.toFixed(2)}%; required ${minimumPercentage.toFixed(2)}%)\n`,
 )
 
-if (percentage < minimumPercentage) process.exitCode = 1
+if (symbols.length === 0 || percentage < minimumPercentage) process.exitCode = 1
