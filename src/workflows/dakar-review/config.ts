@@ -16,6 +16,13 @@ import type {
   UnknownObject,
 } from './types.ts'
 
+
+/**
+ * Validate workflow arguments and resolve immutable runtime configuration.
+ *
+ * @module
+ */
+
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
   /** Per-call token overhead the adapter reserves, bounded to 0–50,000 tokens. */
