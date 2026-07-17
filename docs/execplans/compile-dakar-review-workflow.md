@@ -285,6 +285,14 @@ the `Decision log`, and request direction.
   and does not require comments to be duplicated into generated output or
   self-explanatory private helpers.
 
+- Observation: direct Resolve Config, Prepare, and Synthesize agent calls could
+  throw before the workflow returned its existing phase-specific failure shape.
+  Evidence: each direct boundary now converts a thrown value into `ok: false`,
+  its `config`, `prepare`, or `synthesize` stage, and an error string; focused
+  orchestration fixtures cover the three labels.
+  Impact: callers retain the owning phase when an adapter or schema failure
+  interrupts a direct agent call; fan-out null-slot handling is unchanged.
+
 ## Decision log
 
 - Decision: use the df12-build three-piece frame: verbatim `meta.js`, flat
@@ -379,8 +387,11 @@ the `Decision log`, and request direction.
   Rationale: CodeRabbit's AI-driven review reported 48.45% without exposing a
   reproducible numerator or denominator. `npm run docstrings` now counts module
   headers, named functions, exported interfaces and types, and exported
-  constants; the completed source records 103 of 103 symbols documented
-  (100.00%, exceeding the 80.00% threshold) without changing runtime code.
+  constants. Ambient `*.d.ts` declarations are compile-time contracts rather
+  than authored runtime symbols and are excluded with the generated artefact;
+  the resulting default scope contains 94 of 94 documented symbols without
+  changing runtime code. The earlier 103-of-103 result remains historical
+  evidence from before that scope correction.
   Date/Author: 2026-07-16, Codex after documentation validation.
 
 ## Outcomes & retrospective

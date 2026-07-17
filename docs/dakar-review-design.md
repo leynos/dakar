@@ -317,13 +317,16 @@ The workflow result contains:
 
 ## 11. Failure modes
 
-- Missing explicit config: the CLI or config phase fails before review.
-- Prepare cannot compute a range: the workflow returns `stage: "prepare"` and
-  launches no review fan-out.
+- Missing explicit config or a thrown Resolve Config agent call: the workflow
+  returns `stage: "config"` before review.
+- Prepare cannot compute a range or its direct agent call throws: the workflow
+  returns `stage: "prepare"` and launches no review fan-out.
 - Finder emits weak candidates: the verifier discards them and synthesis
   reports discard counts.
 - Verifier references an unknown id: the workflow records an
   `unknown_candidate` discard instead of crashing.
+- Synthesis agent throws: the workflow returns `stage: "synthesize"` with the
+  failure message.
 - Record agent fails: the workflow returns `stage: "record"` with
   `recordInput`; the CLI attempts one deterministic recovery to a state file
   derived from its trusted repository and state root.
@@ -339,6 +342,8 @@ The implementation must preserve these invariants:
 - Missing value-bearing CLI flags fail instead of becoming boolean `true`.
 - Shell commands generated for agents quote user-controlled refs and paths.
 - Unknown verifier candidate ids do not abort synthesis.
+- Thrown direct-agent failures are returned with their owning `config`,
+  `prepare`, or `synthesize` stage rather than escaping without phase context.
 - Stdout contains one final result object or Markdown report, never progress
   text.
 - A completed review with failed recording either gets recovered by the CLI or

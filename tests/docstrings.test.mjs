@@ -1,7 +1,7 @@
 /** @file Exercise the docstring coverage command at its CLI boundary. */
 
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,12 +20,29 @@ async function repository(t) {
 }
 
 /** Run the docstring command against the fixture's tracked sample file. */
-function audit(directory) {
-  return spawnSync(process.execPath, [script, 'sample.mjs'], {
+function audit(directory, patterns = ['sample.mjs']) {
+  return spawnSync(process.execPath, [script, ...patterns], {
     cwd: directory,
     encoding: 'utf8',
   })
 }
+
+test('docstring audit default scope excludes ambient declarations', async (t) => {
+  const directory = await repository(t)
+  const sourceDirectory = path.join(directory, 'src', 'workflows', 'dakar-review')
+  await mkdir(sourceDirectory, { recursive: true })
+  await writeFile(
+    path.join(sourceDirectory, 'regular.ts'),
+    '/** @file Regular source. */\nconst marker = true\nfunction undocumented() {}\n',
+  )
+  await writeFile(path.join(sourceDirectory, 'odw-globals.d.ts'), 'declare function ambient(): void\n')
+  assert.equal(spawnSync('git', ['add', '.'], { cwd: directory }).status, 0)
+  const result = audit(directory, [])
+  assert.notEqual(result.status, 0)
+  assert.match(result.stdout, /1\/2 \(50\.00%; required 80\.00%\)/u)
+  assert.match(result.stderr, /regular\.ts: undocumented undocumented/u)
+  assert.doesNotMatch(result.stderr, /odw-globals/u)
+})
 
 test('docstring audit rejects an empty symbol scope', async (t) => {
   const directory = await repository(t)

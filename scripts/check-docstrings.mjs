@@ -10,6 +10,7 @@ const defaultSourcePatterns = [
   'bin/dakar-review.mjs',
   'src/workflows/dakar-review/*.js',
   'src/workflows/dakar-review/*.ts',
+  ':(exclude)src/workflows/dakar-review/*.d.ts',
 ]
 
 /** Return tracked authored source files in the documentation audit scope. */

@@ -375,12 +375,14 @@ odw run workflows/dakar-review.js --source . --wait --timeout 900 \
 
 ## Error and skip behaviour
 
-If the prepare step cannot compute a review range, the workflow returns
-`ok: false` with `stage: "prepare"`. If recording fails after synthesis, the
-returned review is still visible in the ODW result; the CLI first attempts its
-one-shot local recovery (see the record-phase recovery behaviour described
-above). Only if that recovery also fails will a later run review the same
-commits again because the history file was not updated.
+If a direct agent call fails during configuration resolution, range preparation,
+or report synthesis, the workflow returns `ok: false` with stage `config`,
+`prepare`, or `synthesize`, respectively, and includes the failure message.
+If recording fails after synthesis, the returned review is still visible in
+the ODW result; the CLI first attempts its one-shot local recovery (see the
+record-phase recovery behaviour described above). Only if that recovery also
+fails will a later run review the same commits again because the history file
+was not updated.
 
 If `origin/main` is not available, pass a different `base`. If prepare reports
 that the workspace is not a git repository, pass `repoRoot` as an absolute path

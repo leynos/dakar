@@ -635,16 +635,21 @@ async function workflowMain() {
     };
   }
   phase("Resolve Config");
-  const resolvedConfig = await agent(
-    resolveConfigPrompt(initialPromptContext, CONFIG_ARG),
-    {
-      label: "config-resolve",
-      phase: "Resolve Config",
-      adapter: SYNTHESIS_ADAPTER,
-      model: SYNTHESIS_MODEL_BASE,
-      schema: CONFIG_SCHEMA
-    }
-  );
+  let resolvedConfig;
+  try {
+    resolvedConfig = await agent(
+      resolveConfigPrompt(initialPromptContext, CONFIG_ARG),
+      {
+        label: "config-resolve",
+        phase: "Resolve Config",
+        adapter: SYNTHESIS_ADAPTER,
+        model: SYNTHESIS_MODEL_BASE,
+        schema: CONFIG_SCHEMA
+      }
+    );
+  } catch (error) {
+    return { ok: false, stage: "config", error: error instanceof Error ? error.message : String(error) };
+  }
   if (!resolvedConfig || resolvedConfig.ok === false || typeof resolvedConfig.config !== "string" || resolvedConfig.config.trim() === "") {
     return { ok: false, stage: "config", resolvedConfig };
   }
@@ -655,16 +660,21 @@ async function workflowMain() {
     repoRoot: REPO_ROOT
   });
   phase("Prepare");
-  const prepared = await agent(
-    preparePrompt(promptContext, BASE_REF, HEAD_REF, STATE_ROOT),
-    {
-      label: "state-prepare",
-      phase: "Prepare",
-      adapter: SYNTHESIS_ADAPTER,
-      model: SYNTHESIS_MODEL_BASE,
-      schema: PREPARE_SCHEMA
-    }
-  );
+  let prepared;
+  try {
+    prepared = await agent(
+      preparePrompt(promptContext, BASE_REF, HEAD_REF, STATE_ROOT),
+      {
+        label: "state-prepare",
+        phase: "Prepare",
+        adapter: SYNTHESIS_ADAPTER,
+        model: SYNTHESIS_MODEL_BASE,
+        schema: PREPARE_SCHEMA
+      }
+    );
+  } catch (error) {
+    return { ok: false, stage: "prepare", error: error instanceof Error ? error.message : String(error) };
+  }
   if (!prepared || prepared.ok === false) {
     return { ok: false, stage: "prepare", config: CODE_RABBIT_CONFIG, resolvedConfig, prepared };
   }
@@ -817,16 +827,21 @@ async function workflowMain() {
     ])
   ].join("\n");
   phase("Synthesize");
-  const synthesis = await agent(
-    synthesisPrompt(accepted, discardReasonCounts(discarded), prepared, promptContext),
-    {
-      label: "synthesis",
-      phase: "Synthesize",
-      adapter: SYNTHESIS_ADAPTER,
-      model: SYNTHESIS_MODEL_BASE,
-      schema: SYNTHESIS_SCHEMA
-    }
-  );
+  let synthesis;
+  try {
+    synthesis = await agent(
+      synthesisPrompt(accepted, discardReasonCounts(discarded), prepared, promptContext),
+      {
+        label: "synthesis",
+        phase: "Synthesize",
+        adapter: SYNTHESIS_ADAPTER,
+        model: SYNTHESIS_MODEL_BASE,
+        schema: SYNTHESIS_SCHEMA
+      }
+    );
+  } catch (error) {
+    return { ok: false, stage: "synthesize", error: error instanceof Error ? error.message : String(error) };
+  }
   if (!synthesis || !Array.isArray(synthesis.findings) || !synthesis.metrics) {
     return {
       ok: false,

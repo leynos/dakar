@@ -252,5 +252,13 @@ Run `npm run docstrings` when adding or changing authored workflow or CLI
 symbols. The audit covers module headers, named functions (including internal
 functions), exported interfaces and types, and exported constants in
 `bin/dakar-review.mjs` and `src/workflows/dakar-review/`. It excludes the
-generated `workflows/dakar-review.js` artefact and fails below 80% coverage;
-`make lint` and therefore `make check` run it automatically.
+generated `workflows/dakar-review.js` artefact and ambient `*.d.ts`
+declarations. The default authored-source scope contains 94 documented symbols
+and fails below 80% coverage; `make lint` and therefore `make check` run it
+automatically.
+
+Direct `agent()` calls in Resolve Config, Prepare, and Synthesize must convert
+thrown adapter or schema failures into structured workflow results with stages
+`config`, `prepare`, and `synthesize`, respectively. Preserve the original
+error text. Fan-out review and verification calls retain their separate
+null-slot and completeness handling.

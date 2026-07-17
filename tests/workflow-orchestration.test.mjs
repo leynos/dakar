@@ -95,6 +95,19 @@ test('generated workflow threads the resolved policy path through every downstre
   }
 })
 
+for (const [label, stage] of [
+  ['config-resolve', 'config'],
+  ['state-prepare', 'prepare'],
+  ['synthesis', 'synthesize'],
+]) {
+  test(`generated workflow tags a rejected ${stage} agent call`, async () => {
+    const { agentLabels, result } = await runWorkflow({ failedLabel: label })
+
+    assert.deepEqual(result, { ok: false, stage, error: 'fixture failure' })
+    assert.equal(agentLabels.at(-1), label)
+  })
+}
+
 test('generated workflow rejects verifier verdicts returned for a different scheduled candidate', async () => {
   const ids = []
   const { result } = await runWorkflow({

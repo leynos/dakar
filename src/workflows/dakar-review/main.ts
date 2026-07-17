@@ -95,16 +95,21 @@ if (DRY_RUN) {
 }
 
 phase('Resolve Config')
-const resolvedConfig = await agent<ConfigResult>(
-  resolveConfigPrompt(initialPromptContext, CONFIG_ARG),
-  {
-    label: 'config-resolve',
-    phase: 'Resolve Config',
-    adapter: SYNTHESIS_ADAPTER,
-    model: SYNTHESIS_MODEL_BASE,
-    schema: CONFIG_SCHEMA,
-  },
-)
+let resolvedConfig: ConfigResult
+try {
+  resolvedConfig = await agent<ConfigResult>(
+    resolveConfigPrompt(initialPromptContext, CONFIG_ARG),
+    {
+      label: 'config-resolve',
+      phase: 'Resolve Config',
+      adapter: SYNTHESIS_ADAPTER,
+      model: SYNTHESIS_MODEL_BASE,
+      schema: CONFIG_SCHEMA,
+    },
+  )
+} catch (error) {
+  return { ok: false, stage: 'config', error: error instanceof Error ? error.message : String(error) }
+}
 
 if (
   !resolvedConfig ||
@@ -122,16 +127,21 @@ const promptContext: PromptContext = Object.freeze({
 })
 
 phase('Prepare')
-const prepared = await agent<PreparedReview>(
-  preparePrompt(promptContext, BASE_REF, HEAD_REF, STATE_ROOT),
-  {
-        label: 'state-prepare',
-        phase: 'Prepare',
-        adapter: SYNTHESIS_ADAPTER,
-        model: SYNTHESIS_MODEL_BASE,
-        schema: PREPARE_SCHEMA,
-      },
-)
+let prepared: PreparedReview
+try {
+  prepared = await agent<PreparedReview>(
+    preparePrompt(promptContext, BASE_REF, HEAD_REF, STATE_ROOT),
+    {
+      label: 'state-prepare',
+      phase: 'Prepare',
+      adapter: SYNTHESIS_ADAPTER,
+      model: SYNTHESIS_MODEL_BASE,
+      schema: PREPARE_SCHEMA,
+    },
+  )
+} catch (error) {
+  return { ok: false, stage: 'prepare', error: error instanceof Error ? error.message : String(error) }
+}
 
 if (!prepared || prepared.ok === false) {
   return { ok: false, stage: 'prepare', config: CODE_RABBIT_CONFIG, resolvedConfig, prepared }
@@ -325,16 +335,21 @@ const authoritativeReport = [
 ].join('\n')
 
 phase('Synthesize')
-const synthesis = await agent<SynthesisResult>(
-  synthesisPrompt(accepted, discardReasonCounts(discarded), prepared, promptContext),
-  {
-    label: 'synthesis',
-    phase: 'Synthesize',
-    adapter: SYNTHESIS_ADAPTER,
-    model: SYNTHESIS_MODEL_BASE,
-    schema: SYNTHESIS_SCHEMA,
-  },
-)
+let synthesis: SynthesisResult
+try {
+  synthesis = await agent<SynthesisResult>(
+    synthesisPrompt(accepted, discardReasonCounts(discarded), prepared, promptContext),
+    {
+      label: 'synthesis',
+      phase: 'Synthesize',
+      adapter: SYNTHESIS_ADAPTER,
+      model: SYNTHESIS_MODEL_BASE,
+      schema: SYNTHESIS_SCHEMA,
+    },
+  )
+} catch (error) {
+  return { ok: false, stage: 'synthesize', error: error instanceof Error ? error.message : String(error) }
+}
 
 if (!synthesis || !Array.isArray(synthesis.findings) || !synthesis.metrics) {
   return {
