@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * @file Run Dakar's ODW review workflow from an installable CLI.
+ * Run Dakar's ODW review workflow from an installable CLI.
  *
  * The command preserves a parseable stdout result for automation while handling
  * repository-local configuration, AGENTS.md context, live ODW telemetry, and
  * deterministic review-history recovery around the workflow runtime.
+ *
+ * @module
  */
 
 import { spawn, spawnSync } from 'node:child_process'

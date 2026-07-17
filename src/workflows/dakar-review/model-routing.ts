@@ -1,4 +1,8 @@
-/** @file Resolve review roles, reasoning levels, adapters, and model names. */
+/**
+ * Resolve review roles, reasoning levels, adapters, and model names.
+ *
+ * @module
+ */
 
 import type { ModelSpec, Reasoning } from './types.ts'
 

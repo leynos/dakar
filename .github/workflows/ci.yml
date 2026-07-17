@@ -48,3 +48,7 @@ jobs:
           cargo +1.95.0 install merman-cli --version "=${MERMAN_CLI_VERSION}" --locked
       - name: Validate diagrams
         run: make nixie
+      - name: Install Node.js dependencies
+        run: npm ci
+      - name: Documentation gate
+        run: make docs-check

@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true
+  },
+  "include": [
+    "bin/**/*.mjs",
+    "scripts/*.mjs",
+    "src/workflows/dakar-review/**/*"
+  ]
+}

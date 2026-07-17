@@ -1,4 +1,8 @@
-/** @file Define JSON Schemas for every structured ODW agent hand-off. */
+/**
+ * Define JSON Schemas for every structured ODW agent hand-off.
+ *
+ * @module
+ */
 
 /**
  * Validates structured configuration-resolution results from the Config phase.

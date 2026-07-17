@@ -1,4 +1,8 @@
-/** @file Build the canonical ODW artefact from the typed Dakar source tree. */
+/**
+ * Build the canonical ODW artefact from the typed Dakar source tree.
+ *
+ * @module
+ */
 
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'

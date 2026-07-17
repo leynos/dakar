@@ -1,4 +1,8 @@
-/** @file Normalize, cap, verify, and reduce candidate review findings. */
+/**
+ * Normalize, cap, verify, and reduce candidate review findings.
+ *
+ * @module
+ */
 
 import type { BoundCandidateResult, Candidate, Discarded, RawCandidate, Verdict } from './types.ts'
 

@@ -1,4 +1,8 @@
-/** @file Classify changed files and construct the bounded review task graph. */
+/**
+ * Classify changed files and construct the bounded review task graph.
+ *
+ * @module
+ */
 
 import { adapterForReasoning, baseModel, modelForRole, modelName } from './model-routing.ts'
 import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'

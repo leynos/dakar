@@ -1,4 +1,8 @@
-/** @file Quote untrusted values for shell commands embedded in agent prompts. */
+/**
+ * Quote untrusted values for shell commands embedded in agent prompts.
+ *
+ * @module
+ */
 
 /**
  * Quotes one untrusted value as a single POSIX shell word.

@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * @file Resolve Dakar's CodeRabbit-compatible review configuration.
+ * Resolve Dakar's CodeRabbit-compatible review configuration.
  *
  * The helper is shared by the installable CLI and the ODW workflow. It keeps
  * configuration precedence deterministic and reports the paths considered so a
  * review result can explain which policy file shaped the run.
+ *
+ * @module
  */
 
 import { existsSync } from 'node:fs'

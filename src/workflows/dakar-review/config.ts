@@ -1,4 +1,8 @@
-/** @file Validate workflow arguments and resolve immutable runtime configuration. */
+/**
+ * Validate workflow arguments and resolve immutable runtime configuration.
+ *
+ * @module
+ */
 
 import { adapterForReasoning, baseModel, DEFAULT_REVIEW_MODELS, isReasoning, modelName, reasoningFromModel } from './model-routing.ts'
 import type { AgentInstructions, ModelSpec, Reasoning, UnknownObject } from './types.ts'

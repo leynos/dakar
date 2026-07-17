@@ -248,14 +248,18 @@ Record when a narrow architectural choice is important to preserve
 independently of the living design; proposed records must remain visibly
 proposed until approved.
 
-Run `npm run docstrings` when adding or changing authored workflow or CLI
-symbols. The audit covers module headers, named functions (including internal
-functions), exported interfaces and types, and exported constants in
-`bin/dakar-review.mjs` and `src/workflows/dakar-review/`. It excludes the
-generated `workflows/dakar-review.js` artefact and ambient `*.d.ts`
-declarations. The default authored-source scope contains 94 documented symbols
-and fails below 80% coverage; `make lint` and therefore `make check` run it
-automatically.
+Run `npm run docs:check` (or `make docs-check`) when adding or changing
+authored workflow or CLI symbols. The gate is TypeDoc's `notDocumented`
+validation, configured by `typedoc.json` over `bin`, `scripts`, and
+`src/workflows/dakar-review`: every module must open with a
+`/** … @module */` block and every exported declaration must carry a JSDoc
+block. It requires 100% documentation of that surface, treats warnings as
+errors, emits no documentation artefacts, and reports the qualified name of
+each undocumented declaration. It excludes the generated
+`workflows/dakar-review.js` artefact, ambient `*.d.ts` declarations,
+`meta.js`, and tests; JSON Schema constants are tagged `@internal` so their
+`description` fields remain the per-field documentation. `make lint` and
+therefore `make check` run it automatically.
 
 Direct `agent()` calls in Resolve Config, Prepare, and Synthesize must convert
 thrown adapter or schema failures into structured workflow results with stages
