@@ -1,4 +1,8 @@
-/** @file Define JSON Schemas for every structured ODW agent hand-off. */
+/**
+ * Define JSON Schemas for every structured ODW agent hand-off.
+ *
+ * @module
+ */
 
 /**
  * Validates bounded candidate findings returned by each Review task.

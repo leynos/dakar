@@ -13,12 +13,17 @@ TypeScript or JavaScript assumptions do not override the ODW contract.
   `odw-authoring` skill so the dialect, injected primitives, schema contracts,
   workspace mode, and validation expectations are understood.
 - ODW primitives are ambient, not imported. Keep the module graph acyclic ESM,
-  use explicit `.ts` extensions for sibling imports, and use erasable
-  TypeScript syntax. Do not introduce CommonJS, runtime dependencies,
-  `Date.now()`, `Math.random()`, or argument-less `new Date()` calls.
-- Begin every JavaScript or TypeScript module with a `/** @file … */` comment
-  describing its purpose and responsibilities. Prefer small cohesive functions,
-  precise names, immutable data, and comments that explain why rather than what.
+  use explicit `.ts` extensions for sibling imports, and use erasable TypeScript
+  syntax. Do not introduce CommonJS, runtime dependencies, `Date.now()`,
+  `Math.random()`, or argument-less `new Date()` calls.
+- Begin every JavaScript or TypeScript module with a `/** … @module */`
+  comment (a top JSDoc block ending with TypeDoc's bare `@module` tag)
+  describing its purpose and responsibilities. `make docs-check` (TypeDoc's
+  `notDocumented` validation, zero tolerance) enforces this and a JSDoc block
+  on every exported declaration; JSON Schema constants are tagged `@internal`
+  so their `description` fields remain the per-field documentation. Prefer
+  small cohesive functions, precise names, immutable data, and comments that
+  explain why rather than what.
 - `bin/dakar-review.mjs` is the user-facing CLI. Keep stdout reserved for the
   final JSON or Markdown result. Progress, telemetry, run ids, and recovery
   warnings belong on stderr.
@@ -33,8 +38,8 @@ TypeScript or JavaScript assumptions do not override the ODW contract.
   linter findings unless the repository policy explicitly requires it and no
   deterministic tool covers it yet.
 
-Write prose, comments, and commit messages in en-GB Oxford English. Keep
-changes small and atomic, update the relevant user, developer, and architecture
+Write prose, comments, and commit messages in en-GB Oxford English. Keep changes
+small and atomic, update the relevant user, developer, and architecture
 documentation when contracts change, and add a regression test for each bug
 fix. Pin build and test tooling exactly in `package.json`; the shipped workflow
 has no runtime dependencies.

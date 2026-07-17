@@ -1,4 +1,8 @@
-/** @file Declare the data contracts shared by the typed workflow modules. */
+/**
+ * Declare the data contracts shared by the typed workflow modules.
+ *
+ * @module
+ */
 
 /** Represents an untrusted object whose fields require runtime narrowing. */
 export type UnknownObject = Record<string, unknown>

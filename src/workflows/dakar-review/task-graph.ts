@@ -1,7 +1,10 @@
-/** @file Classify changed files and construct the bounded review task graph. */
-
-import { adapterForReasoning, baseModel, flexLaneRole, modelForRole, modelName } from './model-routing.ts'
+/**
+ * Classify changed files and construct the bounded review task graph.
+ *
+ * @module
+ */
 import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'
+import { adapterForReasoning, baseModel, flexLaneRole, modelForRole, modelName } from './model-routing.ts'
 
 /** Defines the bounded limits and model set used to construct review tasks. */
 export interface TaskGraphConfig {

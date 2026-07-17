@@ -39,6 +39,13 @@ import type {
   Verdict,
 } from './types.ts'
 
+
+/**
+ * Orchestrate Dakar's ODW phases through the injected runtime primitives.
+ *
+ * @module
+ */
+
 /** Bundles one Flex call's success flag, decoded value, and attempt count. */
 interface FlexCallOutcome<T> {
   ok: boolean

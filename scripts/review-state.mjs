@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * @file Prepare and record Dakar code-review history.
+ * Prepare and record Dakar code-review history.
  *
  * The helper keeps ODW workflow JavaScript free of filesystem and git imports.
  * It computes the next unreviewed commit range from git plus reviews.toml, then
  * appends a compact TOML review entry after the workflow completes.
+ *
+ * @module
  */
 
 import { execFileSync } from 'node:child_process'
