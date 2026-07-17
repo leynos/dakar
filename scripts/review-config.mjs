@@ -184,6 +184,17 @@ function withPolicy(result) {
 }
 
 /**
+ * @typedef {object} ReviewConfigResolution Outcome of a review-configuration
+ * search, retaining the full search trail so the workflow output stays
+ * auditable.
+ * @property {boolean} ok Whether a configuration file was found.
+ * @property {string} config Path of the resolved configuration file; empty when `ok` is false.
+ * @property {string} source Which search stage supplied the file (explicit argument, repository, XDG, bundled example).
+ * @property {string[]} checked Every path probed, in search order, including the winner.
+ * @property {object} [policy] Normalized review policy parsed from the resolved config; present only when `ok` is true.
+ * @property {string} [error] Reason the search failed; present only when `ok` is false.
+ */
+/**
  * Resolve the CodeRabbit-compatible review config path, trying sources in priority order.
  *
  * Searches, in order: explicit `--config` argument, well-known repository filenames,
@@ -195,8 +206,7 @@ function withPolicy(result) {
  * @param {string} [opts.config] - explicit config path supplied by the caller.
  * @param {string} [opts.packageRoot] - Dakar package root for the bundled example fallback.
  * @param {object} [opts.env] - environment variable map (default: `process.env`).
- * @returns {{ ok: boolean, config: string, source: string, checked: string[], policy?: object, error?: string }}
- * resolution result with normalized policy on success.
+ * @returns {ReviewConfigResolution} resolution result with normalized policy on success.
  */
 export function resolveReviewConfig({
   repoRoot = process.cwd(),

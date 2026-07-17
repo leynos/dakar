@@ -1,6 +1,10 @@
 /** @file Define JSON Schemas for every structured ODW agent hand-off. */
 
-/** Validates bounded candidate findings returned by each Review task. */
+/**
+ * Validates bounded candidate findings returned by each Review task.
+ *
+ * @internal
+ */
 export const CANDIDATE_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -26,21 +30,33 @@ const VERDICT_PROPERTIES = {
   reason: { type: 'string' }, evidenceChecked: { type: 'string' },
 }
 
-/** Validates one adversarial verification decision for a candidate finding. */
+/**
+ * Validates one adversarial verification decision for a candidate finding.
+ *
+ * @internal
+ */
 export const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: VERDICT_PROPERTIES,
   required: ['candidateId', 'status', 'reason', 'evidenceChecked'],
 }
 
-/** Validates one audit verdict, extending the per-item shape with a remediation cluster. */
+/**
+ * Validates one audit verdict, extending the per-item shape with a remediation cluster.
+ *
+ * @internal
+ */
 export const VERDICT_WITH_CLUSTER_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: { ...VERDICT_PROPERTIES, clusterId: { type: 'string' } },
   required: ['candidateId', 'status', 'reason', 'evidenceChecked'],
 }
 
-/** Validates the single issue-set audit response returned by the Terra-class lane. */
+/**
+ * Validates the single issue-set audit response returned by the Terra-class lane.
+ *
+ * @internal
+ */
 export const AUDIT_SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['verdicts'],
