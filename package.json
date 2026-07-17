@@ -7,15 +7,21 @@
     "dakar-review": "./bin/dakar-review.mjs"
   },
   "scripts": {
+    "docstrings": "node scripts/check-docstrings.mjs",
     "markdownlint": "markdownlint-cli2 $(git ls-files '*.md')",
     "nixie": "nixie $(git ls-files '*.md')",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
     "test:state": "node --test tests/review-state.test.mjs",
     "test:cli": "node --test tests/cli.test.mjs",
+    "workflow:build": "node scripts/build-workflow.mjs",
+    "workflow:freshness": "node scripts/build-workflow.mjs --check",
     "odw:dry-run": "sh -eu -c 'runs_root=$(mktemp -d); trap '\\''rm -rf \"$runs_root\"'\\'' EXIT; odw run workflows/dakar-review.js --runs-root \"$runs_root\" --source . --wait --timeout 20 --args '\\''{\"dryRun\":true}'\\'''"
   },
   "devDependencies": {
-    "fast-check": "^4.8.0",
-    "markdownlint-cli2": "^0.22.1"
+    "esbuild": "0.28.1",
+    "fast-check": "4.9.0",
+    "markdownlint-cli2": "0.22.1",
+    "typescript": "6.0.3"
   }
 }

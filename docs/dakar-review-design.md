@@ -2,12 +2,14 @@
 
 Status: Living design
 Audience: Developers implementing and operating Dakar review workflows
-Date: 2026-06-30
+Date: 2026-07-14
 Companion documents:
 [`docs/users-guide.md`](users-guide.md),
 [`docs/developers-guide.md`](developers-guide.md),
 [`docs/design/initial-workflow.md`](design/initial-workflow.md), and
 [`docs/roadmap.md`](roadmap.md)
+Accepted decision record:
+[`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md)
 
 ## 1. Problem
 
@@ -99,13 +101,45 @@ Figure 1: Dakar separates deterministic CLI and helper work from ODW agent
 orchestration. The CLI can repair review-history recording after a workflow
 record-phase failure.
 
-The first implementation keeps the ODW workflow in one file because ODW files
-cannot be treated as ordinary importable JavaScript modules. The current
-workflow still exceeds the CodeRabbit JavaScript size rule. That is a real
-maintainability concern, but the fix must preserve ODW's dialect constraints:
-literal `meta`, injected primitives, top-level `return`, and no Node imports.
-The roadmap treats workflow decomposition as a designed refactor rather than a
-mechanical lint fix.
+ODW still receives one workflow file, but that runtime constraint does not
+require one source file. ADR 001 establishes typed source modules under
+`src/workflows/dakar-review/` and a small compiler that produces the committed
+`workflows/dakar-review.js` artefact. The build concatenates a verbatim literal
+metadata banner, a flat esbuild bundle rooted at `main.ts`, and a generated
+`return await workflowMain()` footer.
+
+The following diagram shows the source-of-truth boundary. Screen readers should
+read it from left to right: contributors edit the source modules, the compiler
+checks and frames them, and ODW loads only the generated artefact.
+
+```mermaid
+flowchart LR
+  META[meta.js verbatim banner] --> BUILD[ODW-specific compiler]
+  TS[main.ts and typed modules] --> ESBUILD[flat esbuild ESM bundle]
+  ESBUILD --> BUILD
+  FOOTER[generated workflowMain return] --> BUILD
+  BUILD --> CHECKS{loader checks pass?}
+  CHECKS -->|yes| ART[workflows/dakar-review.js]
+  CHECKS -->|no| FAIL[fail without writing]
+  ART --> ODW[ODW loader]
+```
+
+Figure 2: TypeScript modules are development-time source; the checked,
+committed JavaScript artefact is the runtime interface.
+
+`main.ts` remains the only composition root and the only source module that
+calls injected ODW primitives. Pure modules own schemas, argument defaults,
+model routing, task planning, prompt construction, candidate normalization,
+and verdict reduction. `main.ts` imports subsystem functions and passes
+run-scoped configuration through explicit parameters; modules do not import
+`main.ts` or reach into mutable globals. Candidate containment remains
+upstream of verifier command construction, and shell quoting remains one shared
+authority.
+
+The generated artefact is never hand-edited. It remains committed because the
+installed CLI and direct ODW users need a ready workflow without TypeScript or
+esbuild at runtime. `docs/design/initial-workflow.md` defines the component
+contracts, while ADR 001 records why compilation is the selected boundary.
 
 ## 5. Review pipeline
 
@@ -132,7 +166,7 @@ flowchart LR
   J --> K[Record head]
 ```
 
-Figure 2: Finder tasks propose candidates. Only verifier-approved candidates
+Figure 3: Finder tasks propose candidates. Only verifier-approved candidates
 become findings.
 
 The task graph starts with deterministic file classification because it gives
@@ -274,21 +308,28 @@ The workflow result contains:
 - `verdicts`: verifier decisions;
 - `metrics`: run metrics and model assignment data;
 - `recorded`: review-history write result;
-- `recordInput`: the deterministic payload needed to retry recording.
+- `recordAttempts`: bounded workflow recording attempts made before returning;
+- `recordInput`: the deterministic review data needed to retry recording; the
+  CLI derives the destination from its trusted repository and state root rather
+  than accepting a state-file path from workflow output.
 
 `reportMarkdown` is presentation text. It has no deterministic schema.
 
 ## 11. Failure modes
 
-- Missing explicit config: the CLI or config phase fails before review.
-- Prepare cannot compute a range: the workflow returns `stage: "prepare"` and
-  launches no review fan-out.
+- Missing explicit config or a thrown Resolve Config agent call: the workflow
+  returns `stage: "config"` before review.
+- Prepare cannot compute a range or its direct agent call throws: the workflow
+  returns `stage: "prepare"` and launches no review fan-out.
 - Finder emits weak candidates: the verifier discards them and synthesis
   reports discard counts.
 - Verifier references an unknown id: the workflow records an
   `unknown_candidate` discard instead of crashing.
+- Synthesis agent throws: the workflow returns `stage: "synthesize"` with the
+  failure message.
 - Record agent fails: the workflow returns `stage: "record"` with
-  `recordInput`; the CLI attempts one deterministic recovery.
+  `recordInput`; the CLI attempts one deterministic recovery to a state file
+  derived from its trusted repository and state root.
 - Telemetry follow times out: the CLI exits non-zero and leaves the ODW run
   inspectable by run id.
 
@@ -301,17 +342,33 @@ The implementation must preserve these invariants:
 - Missing value-bearing CLI flags fail instead of becoming boolean `true`.
 - Shell commands generated for agents quote user-controlled refs and paths.
 - Unknown verifier candidate ids do not abort synthesis.
+- Thrown direct-agent failures are returned with their owning `config`,
+  `prepare`, or `synthesize` stage rather than escaping without phase context.
 - Stdout contains one final result object or Markdown report, never progress
   text.
 - A completed review with failed recording either gets recovered by the CLI or
   exits non-zero with `stage: "record"`.
 - Telemetry and cost fields mark estimated token counts differently from
   adapter-reported token counts.
+- The generated workflow contains exactly one literal `meta` export, no
+  surviving module import or additional export, and exactly one
+  `workflowMain` entry.
+- The compiler rejects module-closure wrappers, dynamic imports, `import.meta`,
+  a runtime module missing from the declared manifest, and output that fails
+  the ODW-style asynchronous-function-body parse.
+- A generated workflow rebuilt from unchanged source is byte-identical, and
+  the content-freshness gate rejects a working-tree artefact that differs from
+  its source without requiring a commit.
+- TypeScript source uses erasable syntax, explicit `.ts` relative imports, and
+  ambient rather than imported ODW primitives.
 
-The first implementation verifies these with focused Node tests and ODW
-dry-run checks. Future telemetry work needs end-to-end fixtures that exercise
-quiet mode, telemetry mode, failed record recovery, AGENTS-aware prompting,
-and pricing-table changes in combination.
+Pure source behaviour is verified through direct module tests. Compiler
+negative probes and a loader-wrap parse verify the generated shape. Existing
+ODW dry-run and CLI suites continue exercising the committed artefact, and one
+isolated live smoke verifies review-history recording and the subsequent
+already-reviewed skip. Future telemetry work still needs end-to-end fixtures
+that exercise quiet mode, telemetry mode, failed record recovery, AGENTS-aware
+prompting, and pricing-table changes in combination.
 
 ## 13. References
 
@@ -321,3 +378,6 @@ and pricing-table changes in combination.
 - [SWR-Bench](https://www.semanticscholar.org/paper/2affab64adb964bef66df6e99be3db601b8256ff)
 - [Agentic Code Review](https://www.semanticscholar.org/paper/b3c711a5b7583853784ced9a5ea4ad20ef2811b9)
 - [Runtime-Structured Task Decomposition](https://www.semanticscholar.org/paper/a3e5974206faef2d75679a2a4ded4cd3d3c099a6)
+- [df12-build ODW compilation](https://github.com/leynos/df12-build/blob/main/docs/odw-compilation-and-compile-time-testing.md)
+- [esbuild API](https://esbuild.github.io/api/)
+- [Node.js TypeScript support](https://nodejs.org/api/typescript.html)

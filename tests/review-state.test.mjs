@@ -7,7 +7,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
@@ -83,6 +83,40 @@ test('record rejects input without a state file', () => {
   assert.throws(() => appendReview({ headCommit: 'abc123' }), /stateFile/u)
 })
 
+test('record derives its state file from trusted repository and state-root arguments', () => {
+  const repo = createRepo()
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-derived-'))
+  const manipulated = join(mkdtempSync(join(tmpdir(), 'dakar-state-manipulated-')), 'reviews.toml')
+  const recorded = appendReview({
+    stateFile: manipulated,
+    headCommit: 'a'.repeat(40),
+    commitCount: 1,
+    findingsTotal: 0,
+  }, { 'repo-root': repo, 'state-root': stateRoot })
+
+  assert.match(recorded.stateFile, /dakar\/acme\/widget\/feature-review-history\/reviews\.toml$/u)
+  assert.ok(recorded.stateFile.startsWith(`${stateRoot}/`))
+  assert.equal(existsSync(manipulated), false)
+})
+
+test('record derives its default state file through XDG helper semantics', () => {
+  const repo = createRepo()
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-xdg-'))
+  const prior = process.env.XDG_STATE_HOME
+  process.env.XDG_STATE_HOME = stateRoot
+  try {
+    const recorded = appendReview({
+      headCommit: 'b'.repeat(40),
+      commitCount: 1,
+      findingsTotal: 0,
+    }, { 'repo-root': repo })
+    assert.ok(recorded.stateFile.startsWith(`${stateRoot}/dakar/`))
+  } finally {
+    if (prior === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = prior
+  }
+})
+
 test('record rejects completed entries without a valid head commit', () => {
   const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
 
@@ -93,6 +127,19 @@ test('record rejects completed entries without a valid head commit', () => {
   )
 })
 
+test('record accepts complete SHA-1 and SHA-256 object ids but rejects abbreviations', () => {
+  for (const length of [40, 64]) {
+    const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
+    const headCommit = 'a'.repeat(length)
+    assert.equal(appendReview({ stateFile, headCommit, commitCount: 1, findingsTotal: 0 }).headCommit, headCommit)
+  }
+  const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
+  assert.throws(
+    () => appendReview({ stateFile, headCommit: 'a'.repeat(12), commitCount: 1, findingsTotal: 0 }),
+    /complete 40- or 64-character/u,
+  )
+})
+
 test('record rejects completed entries with invalid counters', () => {
   const stateFile = join(mkdtempSync(join(tmpdir(), 'dakar-state-')), 'reviews.toml')
   const headCommit = 'a'.repeat(40)
@@ -100,6 +147,21 @@ test('record rejects completed entries with invalid counters', () => {
   assert.throws(() => appendReview({ stateFile, headCommit, findingsTotal: 0 }), /commitCount/u)
   assert.throws(() => appendReview({ stateFile, headCommit, commitCount: 'many', findingsTotal: 0 }), /commitCount/u)
   assert.throws(() => appendReview({ stateFile, headCommit, commitCount: 1, findingsTotal: 1.5 }), /findingsTotal/u)
+})
+
+test('recording the same head twice is idempotent', () => {
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))
+  const stateFile = join(stateRoot, 'reviews.toml')
+  const input = {
+    stateFile,
+    headCommit: 'a'.repeat(40),
+    commitCount: 1,
+    findingsTotal: 0,
+  }
+  appendReview(input)
+  appendReview({ ...input, reviewId: 'retry' })
+  const contents = readFileSync(stateFile, 'utf8')
+  assert.equal((contents.match(/\[\[reviews\]\]/gu) || []).length, 1)
 })
 
 test('prepare rejects raw missing option values', () => {

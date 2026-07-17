@@ -91,3 +91,36 @@ test('dry-run routes requested reasoning through ODW adapters', () => {
   assert.equal(result.synthesisAdapter, 'codex-medium')
   assert.equal(result.synthesisModel, 'gpt-5.5/medium')
 })
+
+test('dry-run rejects malformed model and limit inputs in favour of safe defaults', () => {
+  const result = runDryRun({
+    maxTasks: 'not-a-number',
+    maxCandidates: 0,
+    maxFindings: -4,
+    models: [],
+  })
+
+  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20 })
+  assert.deepEqual(result.models, [
+    'gpt-5.5/medium',
+    'gpt-5.5/high',
+    'gpt-5.4-mini/medium',
+    'gpt-5.3-codex-spark/medium',
+  ])
+})
+
+test('dry-run always retains the mandatory review summary within a small task budget', () => {
+  const result = runDryRun({ maxTasks: 1 })
+  assert.equal(result.defaultTaskGraph.length, 1)
+  assert.equal(result.defaultTaskGraph[0].kind, 'review-summary')
+})
+
+test('dry-run clamps oversized limits to explicit ceilings', () => {
+  const result = runDryRun({ maxTasks: 999, maxCandidates: 9999, maxFindings: 999 })
+  assert.deepEqual(result.limits, { maxTasks: 64, maxCandidates: 1000, maxFindings: 200 })
+})
+
+test('dry-run treats positive sub-unit limits as invalid defaults', () => {
+  const result = runDryRun({ maxTasks: 0.5, maxCandidates: 0.9, maxFindings: 0.1 })
+  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20 })
+})

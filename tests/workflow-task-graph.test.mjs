@@ -1,50 +1,25 @@
 /**
  * @file Unit-test the deterministic review task planner in the ODW workflow.
  *
- * `buildTaskGraph` is defined inside the workflow body, so the tests slice the
- * declaration region above the control flow and compile it with inert injected
- * primitives (mirroring ODW's loader) to exercise the planner directly. The
- * invariants under test: every changed file is represented, the mandatory
+ * The invariants under test: every changed file is represented, the mandatory
  * review-summary task always survives, the plan never exceeds maxTasks, and the
  * planner fails closed instead of silently dropping work.
  */
 
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fc from 'fast-check'
 
-const WORKFLOW_PATH = new URL('../workflows/dakar-review.js', import.meta.url)
-const CONTROL_FLOW_MARKER = 'if (cfg.dryRun === true) {'
+import { DEFAULT_REVIEW_MODELS } from '../src/workflows/dakar-review/model-routing.ts'
+import { buildTaskGraph, chunk, distributeTaskSlots } from '../src/workflows/dakar-review/task-graph.ts'
 
-async function loadPlanner(workflowArgs = {}) {
-  let source = await readFile(WORKFLOW_PATH, 'utf8')
-  source = source.replace(/^export const meta\s*=/mu, 'const meta =')
-  const markerIndex = source.indexOf(CONTROL_FLOW_MARKER)
-  assert.notEqual(markerIndex, -1, 'control-flow marker should exist above the planner region')
-  const helperSource = source.slice(0, markerIndex)
-  const factory = new Function(
-    'args',
-    'phase',
-    'log',
-    'agent',
-    'parallel',
-    'pipeline',
-    'budget',
-    'workflow',
-    'validate',
-    `${helperSource}\nreturn { buildTaskGraph, distributeTaskSlots, MAX_TASKS }`,
-  )
-  return factory(
-    workflowArgs,
-    () => {},
-    () => {},
-    async () => ({}),
-    async () => [],
-    async () => [],
-    { total: null, spent: () => 0, remaining: () => Infinity },
-    async () => ({}),
-    () => ({ ok: true, errors: [], warnings: [] }),
-  )
+function plannerConfig(overrides = {}) {
+  return {
+    maxFindings: 20,
+    maxTasks: 8,
+    reviewModels: DEFAULT_REVIEW_MODELS,
+    ...overrides,
+  }
 }
 
 function filesIn(tasks) {
@@ -60,8 +35,8 @@ function filesIn(tasks) {
   return seen
 }
 
-test('buildTaskGraph represents every changed file and appends a review summary', async () => {
-  const { buildTaskGraph, MAX_TASKS } = await loadPlanner({ maxTasks: 8 })
+test('buildTaskGraph represents every changed file and appends a review summary', () => {
+  const config = plannerConfig({ maxTasks: 8 })
   const changedFiles = [
     'src/a.js',
     'src/b.js',
@@ -70,38 +45,37 @@ test('buildTaskGraph represents every changed file and appends a review summary'
     'docs/guide.md',
   ]
 
-  const tasks = buildTaskGraph({ changedFiles })
+  const tasks = buildTaskGraph({ changedFiles }, config)
 
-  assert.ok(tasks.length <= MAX_TASKS)
+  assert.ok(tasks.length <= config.maxTasks)
   assert.equal(tasks[tasks.length - 1].kind, 'review-summary')
   assert.equal(tasks.filter((task) => task.kind === 'review-summary').length, 1)
   assert.deepEqual([...filesIn(tasks)].sort(), [...changedFiles].sort())
 })
 
-test('buildTaskGraph rebalances chunking so a large group never drops files', async () => {
-  const { buildTaskGraph, MAX_TASKS } = await loadPlanner({ maxTasks: 4 })
+test('buildTaskGraph rebalances chunking so a large group never drops files', () => {
+  const config = plannerConfig({ maxTasks: 4 })
   const changedFiles = Array.from({ length: 20 }, (_, index) => `src/module-${index}.js`)
 
-  const tasks = buildTaskGraph({ changedFiles })
+  const tasks = buildTaskGraph({ changedFiles }, config)
 
-  assert.ok(tasks.length <= MAX_TASKS, `expected <= ${MAX_TASKS} tasks, got ${tasks.length}`)
+  assert.ok(tasks.length <= config.maxTasks, `expected <= ${config.maxTasks} tasks, got ${tasks.length}`)
   assert.equal(tasks[tasks.length - 1].kind, 'review-summary')
   // Every one of the 20 source files must still be covered by some task.
   assert.equal(filesIn(tasks).size, changedFiles.length)
   assert.deepEqual([...filesIn(tasks)].sort(), [...changedFiles].sort())
 })
 
-test('buildTaskGraph fails closed when maxTasks cannot fit every group', async () => {
-  const { buildTaskGraph } = await loadPlanner({ maxTasks: 4 })
+test('buildTaskGraph fails closed when maxTasks cannot fit every group', () => {
+  const config = plannerConfig({ maxTasks: 4 })
   const changedFiles = ['src/a.js', 'tests/a.test.js', 'settings.yaml', 'docs/guide.md']
 
   // Four distinct groups plus a mandatory review summary cannot fit maxTasks=4;
   // the planner must abort rather than silently truncate the plan.
-  assert.throws(() => buildTaskGraph({ changedFiles }), /maxTasks=4 is too small/u)
+  assert.throws(() => buildTaskGraph({ changedFiles }, config), /maxTasks=4 is too small/u)
 })
 
-test('distributeTaskSlots gives every group at least one slot within budget', async () => {
-  const { distributeTaskSlots } = await loadPlanner({})
+test('distributeTaskSlots gives every group at least one slot within budget', () => {
   const groups = [
     { kind: 'source', files: ['a', 'b', 'c', 'd'] },
     { kind: 'tests', files: ['e'] },
@@ -115,4 +89,22 @@ test('distributeTaskSlots gives every group at least one slot within budget', as
   assert.ok(total <= 5)
   // The heavier group should receive the surplus slots.
   assert.ok(slots.get('source') > slots.get('tests'))
+})
+
+test('chunk rejects sizes that cannot partition by a positive integer', () => {
+  for (const size of [0, -1, 0.5, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => chunk([1], size), /positive integer/u)
+  }
+})
+
+test('chunk preserves every value exactly once for every positive size', () => {
+  fc.assert(fc.property(
+    fc.array(fc.integer()),
+    fc.integer({ min: 1, max: 100 }),
+    (values, size) => {
+      const chunks = chunk(values, size)
+      assert.deepEqual(chunks.flat(), values)
+      assert.ok(chunks.every((part) => part.length > 0 && part.length <= size))
+    },
+  ))
 })

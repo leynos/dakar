@@ -7,5 +7,10 @@ node_modules/
 .typos-oxendict-base.json
 .typos-oxendict-base.toml
 
+# Python-generated artefacts
+__pycache__/
+*.py[cod]
+.coverage
+
 # Memtrace local index
 .memdb/

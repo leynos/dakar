@@ -53,6 +53,10 @@ odw run workflows/dakar-review.js --source . --wait --timeout 900 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar"}'
 ```
 
+`workflows/dakar-review.js` is a pre-generated runtime artefact included with
+Dakar. Running the CLI or invoking that file directly does not require
+TypeScript, esbuild, or a contributor build step.
+
 The `config` argument points at the CodeRabbit YAML file whose review tone,
 path instructions, and pre-merge checks should guide the review. The `base`
 argument is the branch or ref used to compute the merge base when there is no
@@ -196,6 +200,8 @@ fields are:
   verification.
 - `metrics`: counts for tasks, candidates, accepted findings, discarded
   findings, model assignments, and warnings.
+- `recordAttempts`: the number of workflow attempts made to record review
+  history, from one through three.
 - `recorded`: the review-history write result.
 
 Only `findings` should be treated as actionable review output. The `discarded`
@@ -342,7 +348,10 @@ attempts one deterministic local recovery by calling Dakar's state helper
 directly. A recovered result has `recorded.recoveredBy: "dakar-review"` and
 `metrics.recordRecoveredByCli: true`. If recovery also fails, the result keeps
 `stage: "record"` and exits non-zero so the caller knows the same commit range
-may be reviewed again.
+may be reviewed again. The workflow result's `recordAttempts` field reports how
+many of its three bounded recording attempts ran before that CLI fallback. The
+fallback derives the destination from the CLI's trusted repository and state
+root; it does not accept a workflow-supplied state-file path.
 
 ## Routing and limits
 
@@ -366,12 +375,14 @@ odw run workflows/dakar-review.js --source . --wait --timeout 900 \
 
 ## Error and skip behaviour
 
-If the prepare step cannot compute a review range, the workflow returns
-`ok: false` with `stage: "prepare"`. If recording fails after synthesis, the
-returned review is still visible in the ODW result; the CLI first attempts its
-one-shot local recovery (see the record-phase recovery behaviour described
-above). Only if that recovery also fails will a later run review the same
-commits again because the history file was not updated.
+If a direct agent call fails during configuration resolution, range preparation,
+or report synthesis, the workflow returns `ok: false` with stage `config`,
+`prepare`, or `synthesize`, respectively, and includes the failure message.
+If recording fails after synthesis, the returned review is still visible in
+the ODW result; the CLI first attempts its one-shot local recovery (see the
+record-phase recovery behaviour described above). Only if that recovery also
+fails will a later run review the same commits again because the history file
+was not updated.
 
 If `origin/main` is not available, pass a different `base`. If prepare reports
 that the workspace is not a git repository, pass `repoRoot` as an absolute path

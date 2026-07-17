@@ -4,6 +4,8 @@ This guide is for maintainers working on Dakar's local ODW review workflow.
 The primary architecture reference is
 [`docs/dakar-review-design.md`](dakar-review-design.md). The initial design
 record remains at [`docs/design/initial-workflow.md`](design/initial-workflow.md),
+the accepted compilation boundary is recorded in
+[`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md),
 and delivery plans live under [`docs/execplans/`](execplans/).
 
 ## 1. Local validation
@@ -48,15 +50,77 @@ entries by hand.
 
 ## 2. Workflow implementation conventions
 
-`workflows/dakar-review.js` must remain a pure ODW workflow file:
+`workflows/dakar-review.js` must remain a pure ODW runtime artefact:
 
 - keep a literal `meta` export;
 - do not add Node imports;
-- use injected ODW primitives such as `agent`, `parallel`, `pipeline`, and
-  `phase`;
+- use injected ODW primitives such as `agent`, `parallel`, `pipeline`,
+  `sleep`, and `phase`;
 - use JSON Schemas for every agent output consumed by workflow JavaScript;
 - filter null or failed slots after `parallel()` and `pipeline()`;
 - keep reductions deterministic and independent of completion order.
+
+The maintainable workflow source lives in `src/workflows/dakar-review/`; the
+compiler preserves the runtime contract in the committed artefact. Never
+hand-edit `workflows/dakar-review.js`. Edit the source tree, run
+`make workflow-build`, and commit source and artefact together. Run
+`make workflow-freshness` to prove that the committed artefact matches its
+inputs without rewriting it.
+
+The source tree has these responsibilities:
+
+- `meta.js`: one literal metadata export, concatenated verbatim;
+- `main.ts`: the composition root, phase transitions, agent dispatch, metrics,
+  record input, and final result;
+- `odw-globals.d.ts`: ambient declarations for every injected ODW primitive;
+- `types.ts` and `schemas.ts`: erased cross-module types and runtime JSON
+  Schemas;
+- `config.ts` and `model-routing.ts`: argument defaults and adapter/model
+  selection;
+- `shell.ts`: the shared shell-word quoting authority;
+- `task-graph.ts`: path classification, slot distribution, and task creation;
+- `candidates.ts`: candidate containment, normalization, and verdict
+  reduction; and
+- `prompts.ts`: stable prompt prefixes and dynamic prompt tails.
+
+The internally facing interfaces follow the same ownership boundaries.
+`resolveWorkflowConfig()` returns the frozen `WorkflowConfig` passed into
+routing and planning. `modelForRole()` and the other model-routing helpers map
+that configuration to model and adapter selections. `buildTaskGraph()` and
+`defaultTaskGraph()` consume `TaskGraphConfig`; they return `ReviewTask`
+objects without calling ODW. Candidate processing flows through
+`normalizeCandidates()`, `candidatesForVerification()`,
+`acceptedFromVerdicts()`, and `discardedFromVerdicts()`. Prompt functions take
+an explicit `PromptContext`, and `shellWord()` is the only shell-word quoting
+interface. Runtime JSON Schemas are exported from `schemas.ts`, while shared
+compile-time shapes are exported from `types.ts`. These modules are pure;
+`main.ts` alone calls the ambient ODW primitives and owns phase sequencing.
+
+Document each module with a top-of-file `/** @file … */` block, and document
+exported functions plus non-obvious trust, loader, and state boundaries with
+JSDoc. The generated `workflows/dakar-review.js` artefact and ambient
+declarations are outputs or contracts rather than authoring surfaces; assess
+docstring coverage against their source modules instead of duplicating comments
+in generated output or declaration signatures.
+
+Keep the graph acyclic ESM. Relative imports use explicit `.ts` extensions,
+type-only dependencies use `import type`, and TypeScript remains restricted to
+erasable syntax. ODW primitives are ambient and must never be imported.
+
+Use pure functions with explicit configuration parameters by default.
+Introduce a factory only when a dependency is genuinely bound once and record
+the reason in the design or ExecPlan decision log. Never bind a value that
+changes between phases: prompt construction must receive the policy path
+resolved by the Resolve Config phase rather than capture the initial `auto`
+placeholder. Internal bundle names are not interfaces; only the exact
+`workflowMain` entry is load-bearing. Declare every runtime module in the build
+manifest and wire it from `main.ts` so the compiler can compare the manifest
+with esbuild's metafile.
+
+Source tests should import the narrow module they exercise. Do not slice the
+generated artefact to recover helpers: esbuild may normalize quotes, remove
+comments, and reorder declarations. Artefact tests remain responsible for the
+ODW loader shape, dry-run contract, CLI integration, and installed behaviour.
 
 The workflow should keep deterministic git and filesystem work in
 `scripts/review-state.mjs`. Agent prompts may ask Codex to run that helper, but
@@ -103,7 +167,12 @@ If a workflow result contains a completed review but `recorded.ok` is false,
 the CLI should attempt exactly one deterministic record recovery through
 `scripts/review-state.mjs`. Preserve `recorded.recoveredBy` and
 `metrics.recordRecoveredByCli` so later evaluation can distinguish native ODW
-recording from CLI repair.
+recording from CLI repair. The workflow makes at most three recording attempts,
+logs before attempts two and three, and returns the attempts made as
+`recordAttempts`; keep that observability intact when changing Record-phase
+handling. CLI recovery passes trusted `repo-root` and `state-root` arguments to
+the state helper, which derives the destination and ignores any state-file path
+in untrusted workflow output.
 
 `--telemetry` is the only supported live-progress mode. It starts ODW in the
 background, follows `odw logs <run-id> --follow`, writes that stream to
@@ -142,8 +211,9 @@ reports include only accepted findings.
 
 When adding a new task kind, update these places together:
 
-- `TASK_KINDS` in `workflows/dakar-review.js`;
-- `buildTaskGraph()` and `taskSpec()`;
+- the `taskKinds` configuration in `src/workflows/dakar-review/config.ts` and
+  `buildTaskGraph()` and `taskSpec()` in
+  `src/workflows/dakar-review/task-graph.ts`;
 - the dry-run contract test in `tests/workflow-dry-run.test.mjs`;
 - the workflow contract section in `docs/design/initial-workflow.md`;
 - user-facing behaviour in `docs/users-guide.md` if the change affects
@@ -172,6 +242,23 @@ contracts belong in `tests/workflow-dry-run.test.mjs`.
 Update `docs/users-guide.md` for user-visible command, argument, result, or
 state-path changes. Update this developer's guide for maintainer-facing
 conventions. Update `docs/design/initial-workflow.md` for architecture and
-component contract changes. Use an Architecture Decision Record only when the
-decision is narrow, accepted, and important to preserve independently from the
-living design.
+component contract changes. Update `docs/dakar-review-design.md` when system
+boundaries or verification invariants change. Use an Architecture Decision
+Record when a narrow architectural choice is important to preserve
+independently of the living design; proposed records must remain visibly
+proposed until approved.
+
+Run `npm run docstrings` when adding or changing authored workflow or CLI
+symbols. The audit covers module headers, named functions (including internal
+functions), exported interfaces and types, and exported constants in
+`bin/dakar-review.mjs` and `src/workflows/dakar-review/`. It excludes the
+generated `workflows/dakar-review.js` artefact and ambient `*.d.ts`
+declarations. The default authored-source scope contains 94 documented symbols
+and fails below 80% coverage; `make lint` and therefore `make check` run it
+automatically.
+
+Direct `agent()` calls in Resolve Config, Prepare, and Synthesize must convert
+thrown adapter or schema failures into structured workflow results with stages
+`config`, `prepare`, and `synthesize`, respectively. Preserve the original
+error text. Fan-out review and verification calls retain their separate
+null-slot and completeness handling.
