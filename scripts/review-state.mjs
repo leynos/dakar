@@ -117,21 +117,38 @@ function slug(input) {
 }
 
 /**
+ * @typedef {object} RemoteOwnerName Owner/name pair extracted from a git
+ * remote URL, slugified for use in state-file paths; both fields fall back
+ * to `'unknown'` on parse failure.
+ * @property {string} owner Slugified remote owner (user or organization).
+ * @property {string} name Slugified repository name, `.git` suffix removed.
+ */
+/**
  * Extract the owner and repository name from a git remote URL.
  *
  * Handles both HTTPS and SCP-style SSH remote URLs. Returns `'unknown'` slugs
  * when the URL does not match the expected format.
  *
  * @param {string} remoteUrl - raw git remote URL.
- * @returns {{ owner: string, name: string }} slugified owner and repository name.
+ * @returns {RemoteOwnerName} slugified owner and repository name.
  */
 function remoteOwnerName(remoteUrl) {
   const normalized = remoteUrl.trim()
   const scpLike = normalized.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/)
   if (!scpLike) {
-    return { owner: 'unknown', name: 'unknown' }
+    return {
+      /** Fallback slug used when the remote URL cannot be parsed. */
+      owner: 'unknown',
+      /** Fallback slug used when the remote URL cannot be parsed. */
+      name: 'unknown',
+    }
   }
-  return { owner: slug(scpLike[1]), name: slug(scpLike[2]) }
+  return {
+    /** Slugified repository owner extracted from the remote URL. */
+    owner: slug(scpLike[1]),
+    /** Slugified repository name extracted from the remote URL. */
+    name: slug(scpLike[2]),
+  }
 }
 
 /**
@@ -175,12 +192,18 @@ function derivedStateFile(rawArgs) {
   return stateFilePath({ stateRoot: xdgStateRoot(optionString(rawArgs, 'state-root')), owner, name, branchSlug })
 }
 /**
+ * @typedef {object} ReviewedHead One completed review entry parsed from
+ * `reviews.toml`.
+ * @property {string} head Recorded head commit id (full or historically abbreviated).
+ * @property {string} completedAt Completion timestamp as recorded in the state file; empty when absent.
+ */
+/**
  * Parse completed review head commits from `reviews.toml` content.
  *
  * Only entries whose `status` is `'completed'` (or absent) contribute a head.
  *
  * @param {string} tomlText - raw TOML file content.
- * @returns {{ head: string, completedAt: string }[]} list of completed review entries.
+ * @returns {ReviewedHead[]} list of completed review entries.
  */
 function parseReviewedHeads(tomlText) {
   const entries = []
@@ -190,12 +213,23 @@ function parseReviewedHeads(tomlText) {
     const status = chunk.match(/^status = "([^"]+)"$/mu)
     const completedAt = chunk.match(/^completed_at = "([^"]+)"$/mu)
     if (head && (!status || status[1] === 'completed')) {
-      entries.push({ head: head[1], completedAt: completedAt ? completedAt[1] : '' })
+      entries.push({
+        /** Recorded review head commit id for this completed entry. */
+        head: head[1],
+        /** ISO completion timestamp, or empty when the entry omits one. */
+        completedAt: completedAt ? completedAt[1] : '',
+      })
     }
   }
   return entries
 }
 
+/**
+ * @typedef {object} ReachableHead A recorded head resolved to a commit on
+ * the current ancestry path.
+ * @property {string} head Canonical full SHA the recorded id resolved to.
+ * @property {number} rank Ancestry rank of the commit (lower is nearer HEAD), used to pick the most recent reviewed base.
+ */
 /**
  * Resolve a recorded review head to one canonical reachable commit.
  *
@@ -204,14 +238,19 @@ function parseReviewedHeads(tomlText) {
  *
  * @param {Map<string, number>} reachableBases - canonical SHA to ancestry rank.
  * @param {string} recordedHead - full or abbreviated recorded commit id.
- * @returns {{ head: string, rank: number } | null} unique canonical match.
+ * @returns {ReachableHead | null} unique canonical match.
  */
 function resolveReachableHead(reachableBases, recordedHead) {
   if (!/^[0-9a-f]{7,64}$/u.test(recordedHead)) {
     return null
   }
   if (reachableBases.has(recordedHead)) {
-    return { head: recordedHead, rank: reachableBases.get(recordedHead) }
+    return {
+      /** The recorded head id itself: already a canonical reachable commit. */
+      head: recordedHead,
+      /** Ancestry rank of this commit (0 = nearest HEAD). */
+      rank: reachableBases.get(recordedHead),
+    }
   }
   let match = null
   for (const [head, rank] of reachableBases) {
@@ -221,7 +260,12 @@ function resolveReachableHead(reachableBases, recordedHead) {
     if (match !== null) {
       return null
     }
-    match = { head, rank }
+    match = {
+      /** Canonical commit id whose prefix matches the recorded abbreviated head. */
+      head,
+      /** Ancestry rank of the matched commit (0 = nearest HEAD). */
+      rank,
+    }
   }
   return match
 }
@@ -676,6 +720,14 @@ function integerField(input, camelKey, snakeKey) {
 }
 
 /**
+ * @typedef {object} AppendReviewResult Confirmation that a review entry was
+ * durably recorded, echoing the state file and head commit so callers can
+ * log or verify the write.
+ * @property {boolean} ok Always `true`; failures throw instead.
+ * @property {string} stateFile Path of the TOML state file the entry was appended to.
+ * @property {string} headCommit Head commit id recorded in the new entry.
+ */
+/**
  * Append a completed review entry to the `reviews.toml` state file.
  *
  * Creates the parent directories if absent, then atomically appends a
@@ -685,7 +737,7 @@ function integerField(input, camelKey, snakeKey) {
  * @param {object} input - record input; must include `headCommit`, `commitCount`, and `findingsTotal`. It must include
  * `stateFile` only when `trustedLocation` is absent.
  * @param {object | null} [trustedLocation] - trusted repository and state-root arguments used to derive the state file.
- * @returns {{ ok: boolean, stateFile: string, headCommit: string }} confirmation of the recorded entry.
+ * @returns {AppendReviewResult} confirmation of the recorded entry.
  */
 function appendReview(input, trustedLocation = null) {
   const rawStateFile = input.stateFile || input.state_file
@@ -724,7 +776,14 @@ function appendReview(input, trustedLocation = null) {
       mode: 0o600,
     })
   })
-  return { ok: true, stateFile, headCommit }
+  return {
+    /** Always true: a thrown error otherwise short-circuits this function. */
+    ok: true,
+    /** Absolute path to the `reviews.toml` file the entry was appended to. */
+    stateFile,
+    /** Normalized lowercase commit id recorded for this review entry. */
+    headCommit,
+  }
 }
 
 /**

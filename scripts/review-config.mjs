@@ -15,6 +15,16 @@ import { fileURLToPath } from 'node:url'
 const DEFAULT_REPO_CONFIGS = ['.coderabbit.yaml', '.coderabbit.yml', 'coderabbit.yaml', 'coderabbit.yml']
 
 /**
+ * @typedef {object} ReviewConfigResolution Outcome of a review-configuration
+ * search, retaining the full search trail so the workflow output stays
+ * auditable.
+ * @property {boolean} ok Whether a configuration file was found.
+ * @property {string} config Path of the resolved configuration file; empty when `ok` is false.
+ * @property {string} source Which search stage supplied the file (explicit argument, repository, XDG, bundled example).
+ * @property {string[]} checked Every path probed, in search order, including the winner.
+ * @property {string} [error] Reason the search failed; present only when `ok` is false.
+ */
+/**
  * Resolve the CodeRabbit-compatible review config path, trying sources in priority order.
  *
  * Searches, in order: explicit `--config` argument, well-known repository filenames,
@@ -26,7 +36,7 @@ const DEFAULT_REPO_CONFIGS = ['.coderabbit.yaml', '.coderabbit.yml', 'coderabbit
  * @param {string} [opts.config] - explicit config path supplied by the caller.
  * @param {string} [opts.packageRoot] - Dakar package root for the bundled example fallback.
  * @param {object} [opts.env] - environment variable map (default: `process.env`).
- * @returns {{ ok: boolean, config: string, source: string, checked: string[], error?: string }} resolution result.
+ * @returns {ReviewConfigResolution} resolution result.
  */
 export function resolveReviewConfig({
   repoRoot = process.cwd(),
@@ -41,13 +51,27 @@ export function resolveReviewConfig({
     const explicit = isAbsolute(config) ? config : resolve(resolvedRepoRoot, config)
     checked.push(explicit)
     if (existsSync(explicit)) {
-      return { ok: true, config: explicit, source: 'explicit', checked }
+      return {
+        /** True: the explicit config path exists and was accepted. */
+        ok: true,
+        /** Absolute path to the accepted explicit config file. */
+        config: explicit,
+        /** Always `'explicit'` for this branch: the caller supplied `--config`. */
+        source: 'explicit',
+        /** Every path candidate checked before this result, in priority order. */
+        checked,
+      }
     }
     return {
+      /** False: the explicit config path does not exist. */
       ok: false,
+      /** Absolute path that was checked and not found. */
       config: explicit,
+      /** Always `'explicit'` for this branch: the caller supplied `--config`. */
       source: 'explicit',
+      /** Every path candidate checked before this result, in priority order. */
       checked,
+      /** Explanation of why resolution failed. */
       error: `explicit config does not exist: ${explicit}`,
     }
   }
@@ -56,26 +80,58 @@ export function resolveReviewConfig({
     const path = join(resolvedRepoRoot, candidate)
     checked.push(path)
     if (existsSync(path)) {
-      return { ok: true, config: path, source: 'repository', checked }
+      return {
+        /** True: a well-known repository config filename was found. */
+        ok: true,
+        /** Absolute path to the accepted repository config file. */
+        config: path,
+        /** Always `'repository'` for this branch. */
+        source: 'repository',
+        /** Every path candidate checked before this result, in priority order. */
+        checked,
+      }
     }
   }
 
   const userConfig = join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(), '.config'), 'dakar', 'config.yaml')
   checked.push(userConfig)
   if (existsSync(userConfig)) {
-    return { ok: true, config: userConfig, source: 'user', checked }
+    return {
+      /** True: the user's XDG config directory holds a config file. */
+      ok: true,
+      /** Absolute path to the accepted user config file. */
+      config: userConfig,
+      /** Always `'user'` for this branch. */
+      source: 'user',
+      /** Every path candidate checked before this result, in priority order. */
+      checked,
+    }
   }
 
   const bundledExample = join(resolve(packageRoot), 'examples', 'df12-code-review.yaml')
   checked.push(bundledExample)
   if (existsSync(bundledExample)) {
-    return { ok: true, config: bundledExample, source: 'example', checked }
+    return {
+      /** True: the bundled example config was used as a last resort. */
+      ok: true,
+      /** Absolute path to the bundled example config file. */
+      config: bundledExample,
+      /** Always `'example'` for this branch. */
+      source: 'example',
+      /** Every path candidate checked before this result, in priority order. */
+      checked,
+    }
   }
   return {
+    /** False: no config source, including the bundled example, resolved. */
     ok: false,
+    /** Absolute path to the bundled example that was expected but missing. */
     config: bundledExample,
+    /** Always `'example'` for this branch: every other source was exhausted. */
     source: 'example',
+    /** Every path candidate checked before this result, in priority order. */
     checked,
+    /** Explanation of why resolution failed. */
     error: `bundled example config does not exist: ${bundledExample}`,
   }
 }

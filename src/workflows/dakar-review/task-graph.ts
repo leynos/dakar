@@ -5,8 +5,11 @@ import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'
 
 /** Defines the bounded limits and model set used to construct review tasks. */
 export interface TaskGraphConfig {
+  /** Workflow-wide findings cap; each task further tightens this per its kind. */
   maxFindings: number
+  /** Total task budget, including the mandatory review-summary task. */
   maxTasks: number
+  /** Ordered model assignments used to route tasks by role. */
   reviewModels: readonly Readonly<ModelSpec>[]
 }
 

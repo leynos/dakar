@@ -24,10 +24,17 @@ const RUNTIME_MODULES = [
   'task-graph.ts',
 ]
 
+/**
+ * Signals a violated ODW build invariant (e.g. an orphan module, a malformed
+ * `meta` banner, or a stale artefact) with a machine-readable `code` so
+ * callers such as the CLI entry point can report the failure kind precisely.
+ */
 export class WorkflowBuildError extends Error {
   constructor(code, message) {
     super(message)
+    /** Always `'WorkflowBuildError'`, distinguishing this from other thrown errors. */
     this.name = 'WorkflowBuildError'
+    /** Machine-readable code identifying which build invariant was violated. */
     this.code = code
   }
 }
