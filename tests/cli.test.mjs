@@ -92,6 +92,57 @@ process.stdout.write(JSON.stringify({ ok: true, receivedArgs: input }))
   return { targetRepo, runsRoot, xdgConfig, fakeOdw }
 }
 
+// Builds a committed repository plus a fake ODW binary that echoes the `--config`
+// path it was handed and that file's parsed contents, so tests can prove the CLI
+// hands ODW a derived config carrying the per-call timeout rather than the
+// packaged path.
+function setUpConfigCaptureRepo() {
+  const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-config-repo-'))
+  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  const fakeOdw = join(targetRepo, 'capture-config-odw.mjs')
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+import { readFileSync } from 'node:fs'
+const values = process.argv.slice(2)
+const configPath = values[values.indexOf('--config') + 1]
+const config = JSON.parse(readFileSync(configPath, 'utf8'))
+process.stdout.write(JSON.stringify({ ok: true, configPath, config }))
+`)
+  chmodSync(fakeOdw, 0o755)
+  return { targetRepo, runsRoot, xdgConfig, fakeOdw }
+}
+
+test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout', () => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpConfigCaptureRepo()
+  const packagedConfig = join(repoRoot, 'odw.config.json')
+  const piAdapters = ['pi-luna-flex', 'pi-luna-flex-medium', 'pi-terra-flex']
+  const runOnce = (extraArgs) =>
+    JSON.parse(
+      runCli(
+        ['--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw, ...extraArgs],
+        { env: { XDG_CONFIG_HOME: xdgConfig } },
+      ),
+    )
+
+  const byDefault = runOnce([])
+  assert.equal(byDefault.ok, true)
+  assert.notEqual(byDefault.configPath, packagedConfig, 'the CLI must pass a derived config, not the packaged path')
+  for (const name of piAdapters) {
+    assert.equal(byDefault.config.adapters[name].timeout, 300, `${name} carries the default 300 s timeout`)
+  }
+  assert.equal('timeout' in byDefault.config.adapters['codex-high'], false, 'codex adapters stay untouched')
+
+  const overridden = runOnce(['--per-call-timeout', '120'])
+  assert.notEqual(overridden.configPath, packagedConfig)
+  for (const name of piAdapters) {
+    assert.equal(overridden.config.adapters[name].timeout, 120, `${name} carries the flag's 120 s timeout`)
+  }
+})
+
 for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
   test(`CLI forwards ${flag} to the ${key} workflow argument`, () => {
     const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()

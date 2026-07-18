@@ -167,6 +167,38 @@ test('a refused Luna pack is skipped with a structured refusal while the audit s
   assert.ok(agentLabels.includes('audit'), 'the reserved audit still runs after a refusal')
 })
 
+test('a plan whose every finder pack is refused fails closed without recording', async () => {
+  // Live gap (M8): the audit reservation fits but no Luna pack is affordable, so
+  // admittedPacks is empty. The guard must key off the PLANNED packs, not the
+  // admitted ones, or a zero-file review records the head as a clean pass.
+  const { agentLabels, result } = await runWorkflow({
+    changedFiles: ['src/a.js', 'src/b.js'],
+    // budgetGbp 0.075 -> USD 0.09525: the reserve (USD 0.09375) fits, but the
+    // remaining USD 0.0015 cannot admit even one Luna pack (>= USD 0.0104 each).
+    knobs: { budgetGbp: 0.075, transactionMaxFiles: 1 },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.stage, 'review')
+  assert.equal(result.recordInput, undefined, 'a zero-coverage review must not be recordable')
+  assert.equal(result.admissionRefusals.length, 2, 'every planned pack is refused')
+  assert.equal(finderLabels(agentLabels).length, 0, 'no finder pack runs a model call')
+  assert.equal(agentLabels.includes('audit'), false, 'the audit never runs on zero coverage')
+})
+
+test('maxTasks caps the finder plan below maxLunaFlexCalls', async () => {
+  // --max-tasks is the planned-task cap; with maxTasks 1 the effective finder cap
+  // is min(1, maxLunaFlexCalls) so exactly one pack dispatches even when several
+  // homogeneous packs would otherwise be planned.
+  const { agentLabels, result } = await runWorkflow({
+    changedFiles: ['src/a.js', 'src/b.js', 'tests/a.test.js', 'docs/g.md'],
+    knobs: { maxTasks: 1 },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(finderLabels(agentLabels).length, 1, 'maxTasks 1 dispatches exactly one finder pack')
+})
+
 test('the ledger records every admitted call with the pricing-table version', async () => {
   const { result } = await runWorkflow()
 

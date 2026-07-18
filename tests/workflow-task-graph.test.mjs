@@ -14,7 +14,7 @@ import { DEFAULT_REVIEW_MODELS } from '../src/workflows/dakar-review/model-routi
 import { buildFlexFinderPlan, buildTaskGraph, chunk, distributeTaskSlots } from '../src/workflows/dakar-review/task-graph.ts'
 
 function flexConfig(overrides = {}) {
-  return { maxLunaFlexCalls: 4, transactionMaxFiles: 5, lunaRole: 'luna', maxFindings: 20, ...overrides }
+  return { maxLunaFlexCalls: 4, maxTasks: 8, transactionMaxFiles: 5, lunaRole: 'luna', maxFindings: 20, ...overrides }
 }
 
 function plannerConfig(overrides = {}) {
@@ -116,6 +116,20 @@ test('buildFlexFinderPlan truncates files beyond the Luna coverage bound', () =>
   assert.equal(truncatedFiles.length, 6)
   // The 4x5 coverage window packs the first 20 files; the last 6 are truncated.
   assert.deepEqual(truncatedFiles, changedFiles.slice(20))
+})
+
+test('buildFlexFinderPlan honours maxTasks below maxLunaFlexCalls', () => {
+  // --max-tasks composes with --max-luna-calls: the effective pack cap is the
+  // smaller of the two, and the accounting for truncation reflects that cap.
+  const changedFiles = Array.from({ length: 10 }, (_, index) => `src/module-${String(index).padStart(2, '0')}.js`)
+  const { packs, truncatedFiles } = buildFlexFinderPlan(
+    { changedFiles },
+    flexConfig({ maxTasks: 1, maxLunaFlexCalls: 4, transactionMaxFiles: 1 }),
+  )
+
+  assert.equal(packs.length, 1, 'the effective cap is min(maxTasks, maxLunaFlexCalls)')
+  assert.deepEqual(packs[0].files, ['src/module-00.js'])
+  assert.deepEqual(truncatedFiles, changedFiles.slice(1))
 })
 
 test('buildFlexFinderPlan routes to the escalation lane when asked', () => {

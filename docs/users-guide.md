@@ -90,8 +90,13 @@ checkout being reviewed.
   `origin/main`.
 - `--head <ref>` selects the head ref to review. The default is `HEAD`.
 - `--state-root <path>` overrides the review-history root.
-- `--max-tasks <number>`, `--max-candidates <number>`, and
-  `--max-findings <number>` override the workflow limits described below.
+- `--max-tasks <number>` caps the planned review tasks. Under the
+  `deterministic-flex-v1` route it composes with `--max-luna-calls`: the
+  effective finder-pack cap is the smaller of the two, so `--max-tasks 1
+  --max-luna-calls 4` dispatches at most one finder pack. See the review-tuning
+  flags below.
+- `--max-candidates <number>` and `--max-findings <number>` override the
+  workflow limits described below.
 - `--synthesis-model <model>` and `--synthesis-reasoning <level>` are
   accepted for backward compatibility and still appear in the dry-run
   contract's `synthesisModel`/`synthesisAdapter` fields, but under the
@@ -120,7 +125,8 @@ deferral" below for what each knob controls.
 - `--budget-gbp <number>` sets the hard admission budget in GBP. The default is
   `0.1`.
 - `--max-luna-calls <number>` caps the Luna Flex finder calls. The default is
-  `4`.
+  `4`. It composes with `--max-tasks`: the effective finder-pack cap is the
+  smaller of the two.
 - `--transaction-max-files <number>` sets the maximum files per finder pack. The
   default is `5`.
 - `--transaction-max-input-tokens <number>` and

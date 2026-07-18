@@ -283,6 +283,7 @@ let truncatedFiles: string[]
 try {
   const plan = buildFlexFinderPlan(prepared, {
     maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
+    maxTasks: MAX_TASKS,
     transactionMaxFiles: TRANSACTION_MAX_FILES,
     lunaRole: LUNA_LANE.role === 'luna-medium' ? 'luna-medium' : 'luna',
     maxFindings: MAX_FINDINGS,
@@ -392,13 +393,16 @@ for (let index = 0; index < reviewOutcomes.length; index += 1) {
 // failedTaskIds stays for compatibility, now listing the downgraded pack ids.
 const failedTaskIds = lunaDowngrades.map((downgrade) => downgrade.taskId)
 // Zero finder coverage must fail closed: recording a head as reviewed when no
-// finder pack completed would turn an adapter outage into a silent clean pass
-// (observed live, M7). Partial coverage continues; total loss refuses.
-if (admittedPacks.length > 0 && taskResults.length === 0) {
+// finder pack produced candidates would turn an adapter outage OR a plan whose
+// every pack was refused admission into a silent clean pass (observed live, M7;
+// M8 admission gap). The guard keys off the PLANNED packs, not the admitted
+// ones, so a plan that admits nothing still refuses rather than recording a
+// zero-file review. Partial coverage continues; total loss refuses.
+if (packs.length > 0 && taskResults.length === 0) {
   return {
     ok: false,
     stage: 'review',
-    error: 'every admitted finder pack failed; refusing to treat zero coverage as a clean review',
+    error: `zero coverage: no finder pack produced candidates for a non-empty plan (${admissionRefusals.length} admission refusal(s), ${lunaDowngrades.length} downgrade(s)); refusing to treat zero coverage as a clean review`,
     config: CODE_RABBIT_CONFIG,
     headCommit: prepared.headCommit,
     reviewBase: prepared.reviewBase,

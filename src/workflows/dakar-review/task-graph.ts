@@ -13,6 +13,7 @@ export interface TaskGraphConfig {
 /** Bounds and lane selection for the deterministic Flex finder plan. */
 export interface FlexFinderConfig {
   maxLunaFlexCalls: number
+  maxTasks: number
   transactionMaxFiles: number
   lunaRole: 'luna' | 'luna-medium'
   maxFindings: number
@@ -152,12 +153,12 @@ export function buildTaskGraph(prepared: PreparedReview, config: TaskGraphConfig
  * Builds the deterministic Luna Flex finder plan for the default route.
  *
  * Changed files are grouped by their coarse kind in a fixed order, chunked into
- * homogeneous packs of at most `transactionMaxFiles`, and capped at
- * `maxLunaFlexCalls` packs. The legacy cross-cutting review-summary task is
- * dropped on this route because the Terra issue-set audit subsumes it. Files
- * beyond the `maxLunaFlexCalls x transactionMaxFiles` coverage window are not
- * packed and are returned as `truncatedFiles` so the host can record the
- * partial-coverage bound in metrics.
+ * homogeneous packs of at most `transactionMaxFiles`, and capped at the
+ * effective pack cap, `min(maxTasks, maxLunaFlexCalls)`. The legacy
+ * cross-cutting review-summary task is dropped on this route because the Terra
+ * issue-set audit subsumes it. Files beyond the `cap x transactionMaxFiles`
+ * coverage window are not packed and are returned as `truncatedFiles` so the
+ * host can record the partial-coverage bound in metrics.
  *
  * @param prepared - Trusted prepare result containing the reviewed changed files.
  * @param config - Luna call cap, per-pack file cap, lane, and finding limit.
@@ -180,8 +181,13 @@ export function buildFlexFinderPlan(
   for (const kind of FLEX_PACK_KIND_ORDER) {
     for (const files of chunk(buckets.get(kind) || [], perPack)) orderedChunks.push({ kind, files })
   }
-  const admittedChunks = orderedChunks.slice(0, Math.max(1, config.maxLunaFlexCalls))
-  const truncatedFiles = orderedChunks.slice(Math.max(1, config.maxLunaFlexCalls)).flatMap((entry) => entry.files)
+  // --max-tasks is the planned-task cap and composes with --max-luna-calls: the
+  // effective finder cap is the smaller of the two, so a low maxTasks bounds the
+  // dispatched packs even when maxLunaFlexCalls is higher. Truncation accounting
+  // reflects this effective cap.
+  const effectiveCap = Math.max(1, Math.min(config.maxTasks, config.maxLunaFlexCalls))
+  const admittedChunks = orderedChunks.slice(0, effectiveCap)
+  const truncatedFiles = orderedChunks.slice(effectiveCap).flatMap((entry) => entry.files)
   const packs = admittedChunks.map((entry, index): ReviewTask => ({
     taskId: `luna-flex-${index + 1}`,
     kind: entry.kind,

@@ -8,18 +8,42 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { deriveOdwConfig } from '../scripts/odw-config.mjs'
 import { resolveReviewConfig } from '../scripts/review-config.mjs'
 import { appendReview, prepare } from '../scripts/review-state.mjs'
+
+/** ODW's documented default per-model-call timeout in seconds. */
+const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workflowPath = join(packageRoot, 'workflows', 'dakar-review.js')
 const odwConfigPath = join(packageRoot, 'odw.config.json')
 const piAgentDir = join(packageRoot, 'adapters', 'pi')
+
+/**
+ * Write a per-run ODW config that stamps the per-call timeout on the pi Flex
+ * adapters, returning the temp file path for the CLI's own ODW spawns.
+ *
+ * The packaged config leaves each adapter call unbounded, so a run-local copy
+ * carries the `--per-call-timeout` value (or the documented default) on the three
+ * pi Flex adapters only. The file lives under the OS temp directory and is
+ * removed after the run, exactly like the usage-log file.
+ *
+ * @param {number} [perCallTimeoutSeconds] - per-model-call timeout in seconds.
+ * @returns {string} absolute path to the derived config temp file.
+ */
+function writeDerivedOdwConfig(perCallTimeoutSeconds = DEFAULT_PER_CALL_TIMEOUT_SECONDS) {
+  const baseConfig = JSON.parse(readFileSync(odwConfigPath, 'utf8'))
+  const derived = deriveOdwConfig(baseConfig, perCallTimeoutSeconds)
+  const path = join(tmpdir(), `dakar-odw-config-${process.pid}-${Date.now()}.json`)
+  writeFileSync(path, JSON.stringify(derived, null, 2))
+  return path
+}
 
 /**
  * Build the environment for spawned ODW processes.
@@ -318,7 +342,10 @@ function buildOdwRunArgs(options, workflowArgs, wait) {
     '--source',
     packageRoot,
     '--config',
-    odwConfigPath,
+    // The CLI's own spawns use a run-local config that bounds the pi Flex calls
+    // with the per-call timeout; it falls back to the packaged path only if the
+    // derivation was skipped.
+    options.odwConfigPath || odwConfigPath,
   ]
   if (wait) {
     odwArgs.push('--wait', '--timeout', String(options.timeout || 900))
@@ -700,9 +727,21 @@ async function run(argv) {
       process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
     }
   }
-  const outcome = options.telemetry
-    ? await runOdwWithTelemetry(options, workflowArgs)
-    : runOdwQuiet(options, workflowArgs)
+  // Derive a run-local ODW config that bounds the pi Flex calls with the per-call
+  // timeout, then remove it after the run like the usage-log file.
+  options.odwConfigPath = writeDerivedOdwConfig(options.perCallTimeoutSeconds ?? DEFAULT_PER_CALL_TIMEOUT_SECONDS)
+  let outcome
+  try {
+    outcome = options.telemetry
+      ? await runOdwWithTelemetry(options, workflowArgs)
+      : runOdwQuiet(options, workflowArgs)
+  } finally {
+    try {
+      rmSync(options.odwConfigPath, { force: true })
+    } catch {
+      // A leftover temp file is harmless.
+    }
+  }
   if (outcome.status !== undefined) {
     return outcome.status
   }

@@ -339,6 +339,21 @@ the conflict in `Decision Log`, and escalate.
     review gate; `make all` green on the committed tree) and
     leynos/dakar#6 (this branch). Roadmap 7.6.2 remains unticked
     until the df12-build pull request lands; M8 closes with it.
+  - [x] (2026-07-18 22:30Z) Three dakar#6 review findings fixed
+    red-first. (1) The zero-coverage guard now keys off the planned
+    packs, so a budget admitting only the audit reservation (for
+    example `--budget-gbp 0.075`) fails closed instead of recording
+    an unreviewed head — the admission path had reopened the exact
+    hazard the guard was built for. (2) `--per-call-timeout` is now
+    enforced: probes established that ODW adapters accept a `timeout`
+    key in seconds and surface expiry as a catchable in-workflow
+    error, so the CLI derives a per-run ODW config
+    (`scripts/odw-config.mjs`) stamping the knob onto the three pi
+    Flex adapters, and the retry schedule engages exactly as
+    `worstCaseReviewSeconds` models. (3) `--max-tasks` now composes
+    with `--max-luna-calls` (effective pack cap is the smaller), with
+    truncation accounting and documentation updated. 237/237 tests;
+    `make check` green via scrutineer.
 
 ## Surprises & discoveries
 

@@ -668,8 +668,9 @@ function buildFlexFinderPlan(prepared, config) {
   for (const kind of FLEX_PACK_KIND_ORDER) {
     for (const files of chunk(buckets.get(kind) || [], perPack)) orderedChunks.push({ kind, files });
   }
-  const admittedChunks = orderedChunks.slice(0, Math.max(1, config.maxLunaFlexCalls));
-  const truncatedFiles = orderedChunks.slice(Math.max(1, config.maxLunaFlexCalls)).flatMap((entry) => entry.files);
+  const effectiveCap = Math.max(1, Math.min(config.maxTasks, config.maxLunaFlexCalls));
+  const admittedChunks = orderedChunks.slice(0, effectiveCap);
+  const truncatedFiles = orderedChunks.slice(effectiveCap).flatMap((entry) => entry.files);
   const packs = admittedChunks.map((entry, index) => ({
     taskId: `luna-flex-${index + 1}`,
     kind: entry.kind,
@@ -876,6 +877,7 @@ async function workflowMain() {
   try {
     const plan = buildFlexFinderPlan(prepared, {
       maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
+      maxTasks: MAX_TASKS,
       transactionMaxFiles: TRANSACTION_MAX_FILES,
       lunaRole: LUNA_LANE.role === "luna-medium" ? "luna-medium" : "luna",
       maxFindings: MAX_FINDINGS
@@ -966,11 +968,11 @@ async function workflowMain() {
     }
   }
   const failedTaskIds = lunaDowngrades.map((downgrade) => downgrade.taskId);
-  if (admittedPacks.length > 0 && taskResults.length === 0) {
+  if (packs.length > 0 && taskResults.length === 0) {
     return {
       ok: false,
       stage: "review",
-      error: "every admitted finder pack failed; refusing to treat zero coverage as a clean review",
+      error: `zero coverage: no finder pack produced candidates for a non-empty plan (${admissionRefusals.length} admission refusal(s), ${lunaDowngrades.length} downgrade(s)); refusing to treat zero coverage as a clean review`,
       config: CODE_RABBIT_CONFIG,
       headCommit: prepared.headCommit,
       reviewBase: prepared.reviewBase,
