@@ -336,3 +336,115 @@ for missing fundamentals.
   - Requires phases 3 and 4.
   - Success: publication preserves the structured result and discard audit
     rather than posting unverified candidate noise.
+
+## 7. Deterministic-tiered review cost (ADR 002)
+
+Idea: if deterministic host code owns every derivable decision and the two
+Flex-tier model lanes are admitted against a hard budget, an ordinary review
+becomes provably affordable — mean at or below £0.05, hard ceiling £0.10 —
+without losing high-severity recall.
+
+This phase implements
+[ADR 002](adr-002-deterministic-tiered-review-cost.md). It supersedes the
+USD 0.25 per-file benchmark used by phase 4 with ADR 002's per-review targets
+(`targetCostPerReviewGbp = 0.11`); the phase 4 ledger and pricing-table tasks
+become prerequisites rather than parallel work. The immediate delivery goal is
+a minimally useful live review below USD 0.25 of provider spend, with a
+stretch goal below USD 0.11.
+
+### 7.1. Pricing table, cost ledger, and admission control
+
+This step answers whether Dakar can bound worst-case review cost before any
+model call is dispatched. Subsumes 4.3.1. See ADR 002 §"Cost budget and
+admission control".
+
+- [ ] 7.1.1. Land the versioned pricing table with a foreign-exchange
+  snapshot.
+  - Success: cost estimates record the pricing-table version and FX snapshot;
+    rates cover Luna and Terra, standard and Flex, all four token bands.
+- [ ] 7.1.2. Add the per-call cost ledger with estimated and reported usage.
+  - Requires 7.1.1.
+  - Success: every model call records model, service tier, reasoning effort,
+    estimated worst-case cost, and provider-reported token usage separately.
+- [ ] 7.1.3. Add the admission controller with the hard ordinary-review
+  budget.
+  - Requires 7.1.2.
+  - Success: the required audit is reserved first, and an optional call whose
+    worst-case estimate breaches the remaining budget is refused with a
+    structured reason.
+
+### 7.2. Deterministic host takeover of agent-wrapped phases
+
+This step answers whether removing model mediation from derivable phases
+preserves the workflow contract while eliminating their spend. See ADR 002
+§"Deterministic host boundary" and migration step 2.
+
+- [ ] 7.2.1. Call config resolution and range preparation in-process from the
+  workflow host.
+  - Success: `Resolve Config` and `Prepare` launch no agent; failure modes
+    keep their structured `stage` semantics.
+- [ ] 7.2.2. Render the final report deterministically from accepted
+  findings.
+  - Success: the synthesis agent call is removed; rendering is byte-stable
+    for the same consolidated input.
+- [ ] 7.2.3. Record review history in-process with the existing lock and
+  validation invariants.
+  - Success: the record agent loop is removed; the reviewed-head invariant
+    and CLI recovery contract still hold.
+
+### 7.3. Flex lanes: Luna transactions and the Terra issue-set audit
+
+This step answers whether one bounded audit can replace per-candidate
+verification without material recall loss. See ADR 002 §"Luna Flex
+transactional boundary", §"Terra Flex boundary", and §"Flex scheduling and
+failure policy".
+
+- [ ] 7.3.1. Add `codex-luna-flex` and `codex-terra-flex` adapters with
+  contract tests.
+  - Requires 7.1.1.
+  - Success: Codex effective configuration contains `service_tier = "flex"`
+    and the pinned per-lane reasoning effort for both adapters.
+- [ ] 7.3.2. Route finder tasks to bounded Luna Flex transactions.
+  - Requires 7.3.1.
+  - Success: no ordinary review launches more than `maxLunaFlexCalls`
+    transactions, each within the configured file and token bounds.
+- [ ] 7.3.3. Replace per-candidate verification with deterministic compaction
+  and one Terra Flex issue-set audit.
+  - Requires 7.3.2.
+  - Success: the verify fan-out is removed; the audit deduplicates,
+    consolidates causes, and may state that no actionable issue remains.
+- [ ] 7.3.4. Handle Flex resource unavailability with bounded backoff and
+  deferral.
+  - Requires 7.3.1.
+  - Success: HTTP 429 `resource_unavailable` retries with backoff and jitter,
+    never silently uses standard processing, and an exhausted required audit
+    leaves the head unrecorded as completely reviewed.
+
+### 7.4. Live cost validation on the estate corpus
+
+This step answers whether the implemented route meets the delivery goal on
+real branches. See ADR 002 §"Verification".
+
+- [ ] 7.4.1. Build the candidate-branch harness for API-key live runs.
+  - Requires 7.2 and 7.3.
+  - Success: selected estate pull requests of varying sizes can be reviewed
+    from clean clones with isolated review state and captured cost ledgers.
+- [ ] 7.4.2. Measure and record per-review provider cost against the targets.
+  - Requires 7.4.1.
+  - Success: an ordinary review completes with useful findings below USD 0.25
+    provider spend; results record whether the USD 0.11 stretch was met.
+
+### 7.5. Deferred ADR 002 completions
+
+- [ ] 7.5.1. Adopt SARIF 2.1.0 as the canonical findings envelope.
+  - Requires 7.3.3.
+  - See ADR 002 §"Findings and hand-off format" and roadmap 6.1.1.
+- [ ] 7.5.2. Run configured deterministic gates with short-circuit before
+  semantic review.
+  - Requires 7.2.1.
+  - See ADR 002 §"Deterministic gate short-circuit".
+- [ ] 7.5.3. Compare legacy and deterministic-flex routes on adjudicated
+  fixtures.
+  - Requires 7.4.2 and 3.3.1.
+  - Success: the acceptance criteria in ADR 002 §"Verification" hold before
+    the new route becomes the default.
