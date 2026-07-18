@@ -46,16 +46,31 @@ The CLI runs the installed Dakar workflow and passes the reviewed checkout as
 `repoRoot`, which is required because ODW normally gives agents copied
 workspaces without `.git`.
 
-The equivalent direct ODW invocation is:
+Before invoking ODW, the CLI resolves configuration and prepares the review
+range itself, host-side, with no model calls: it calls
+`scripts/review-state.mjs prepare` in-process and passes the result as the
+workflow's `prepared` argument. If nothing is unreviewed, the CLI prints the
+skip result and exits without invoking ODW at all. The equivalent direct ODW
+invocation therefore also needs a `prepared` object built the same way; it is
+shown here for illustration only, and `dakar-review` is the supported path:
 
 ```bash
 odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar"}'
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
+           "repoRoot":"/path/to/dakar","prepared":{"...":"see prepare output"}}'
 ```
 
 `workflows/dakar-review.js` is a pre-generated runtime artefact included with
 Dakar. Running the CLI or invoking that file directly does not require
 TypeScript, esbuild, or a contributor build step.
+
+Set `OPENAI_API_KEY` before running a live review. The default
+`deterministic-flex-v1` route dispatches finder and audit calls through the
+`pi` coding agent (`@earendil-works/pi-coding-agent`) with Dakar's own
+`adapters/pi/` extension and provider catalogue; `pi` must be installed and
+on `PATH`. The CLI sets `PI_CODING_AGENT_DIR` to point `pi` at that
+catalogue and warns on stderr, without failing, if `OPENAI_API_KEY` is
+unset.
 
 The `config` argument points at the CodeRabbit YAML file whose review tone,
 path instructions, and pre-merge checks should guide the review. The `base`
@@ -77,11 +92,16 @@ checkout being reviewed.
 - `--state-root <path>` overrides the review-history root.
 - `--max-tasks <number>`, `--max-candidates <number>`, and
   `--max-findings <number>` override the workflow limits described below.
-- `--synthesis-model <model>` selects the synthesis model. The default is
-  `gpt-5.5`.
-- `--synthesis-reasoning <level>` selects `low`, `medium`, or `high` reasoning
-  for synthesis. The default is `high`.
+- `--synthesis-model <model>` and `--synthesis-reasoning <level>` are
+  accepted for backward compatibility and still appear in the dry-run
+  contract's `synthesisModel`/`synthesisAdapter` fields, but under the
+  `deterministic-flex-v1` route the audit call always runs on the fixed
+  Terra Flex lane (`gpt-5.6-terra`, medium reasoning); these flags no
+  longer change which model or adapter performs the audit.
 - `--timeout <seconds>` sets the ODW wait timeout. The default is `900`.
+  Operators overriding this should keep it above the review's
+  `worstCaseReviewSeconds` (2,020 s at default limits; see the dry-run
+  example below), the worst-case wall clock the retry schedule can take.
 - `--runs-root <path>` selects the ODW runs directory used for the run, logs,
   and result.
 - `--format <json|markdown>` selects the output format. The default is `json`.
@@ -157,10 +177,12 @@ When `XDG_STATE_HOME` is unset, Dakar uses:
 ~/.local/state/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml
 ```
 
-The workflow records the reviewed head commit after synthesis. A later run on
-the same branch reviews only commits after the last recorded head. If the
-current `HEAD` has already been recorded, the workflow returns `skipped: true`
-and does not launch review agents.
+The CLI records the reviewed head commit in-process, after the workflow
+returns a completed result, stamping `recorded.recordedBy: "dakar-review"`.
+A later run on the same branch reviews only commits after the last recorded
+head. If the current `HEAD` has already been recorded, the CLI's host-side
+prepare step detects this before invoking ODW at all: it prints the skip
+result (`skipped: true`) directly and never launches a model call.
 
 To isolate a trial run from normal review history, pass `stateRoot`:
 
@@ -171,11 +193,14 @@ dakar-review \
   --state-root /tmp/dakar-review-state
 ```
 
-The equivalent direct ODW invocation is:
+The equivalent direct ODW invocation, once a matching `prepared` object has
+been produced by `scripts/review-state.mjs prepare`, is:
 
 ```bash
 odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state"}'
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
+           "repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state",
+           "prepared":{"...":"see prepare output"}}'
 ```
 
 ## What the workflow returns
