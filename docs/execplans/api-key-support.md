@@ -1046,6 +1046,20 @@ M7 live ledger (running record; spend total updated per run):
   acceptance clause is still open — proceeding to the upper-medium
   entry where substantive feedback changes make findings most likely.
   Running M7 spend: roughly USD 0.19.
+- `rstest-bdd` 593 (upper-medium, 2026-07-18): complete,
+  `verdict: pass`, 0 findings, 1 discarded; three ledger entries (two
+  Luna packs, Terra audit). Estimated USD 0.1216; reported USD 0.1148
+  (39 input / 3,546 output / 329,529 cacheRead / 107,316 cacheWrite) —
+  marginally above the USD 0.11 stretch, well under acceptance. Hand
+  assessment of the rejection: the finder flagged an ADR-versus-roadmap
+  release-target mismatch; the audit rejected it as `not_applicable`,
+  reconciling "supported v0.6.0-final alternative" with "preferred from
+  v0.6.1" as availability versus recommendation — a defensible
+  semantic judgement, borderline rather than a recall failure. Four
+  clean passes across genuinely well-kept PRs leaves the
+  useful-findings acceptance clause open; next the large corpus entry,
+  then if needed a seeded-defect review with known ground truth.
+  Running M7 spend: roughly USD 0.31.
 
 ## Interfaces and dependencies
 
