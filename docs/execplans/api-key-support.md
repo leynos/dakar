@@ -60,9 +60,9 @@ target.
   `docs/users-guide.md` is preserved.
 - The OpenAI API key at `~/dakar-api-key.txt` must never be committed,
   echoed into logs or transcripts, or copied under the repository. It enters
-  processes only via the `CODEX_API_KEY` (or, for direct API probes,
-  `OPENAI_API_KEY`) environment variable read from that file at invocation
-  time.
+  processes only via the `OPENAI_API_KEY` environment variable (the pi
+  adapter route and direct API probes; `CODEX_API_KEY` applied only to the
+  retired Codex probes) read from that file at invocation time.
 - Live provider spend during this plan is capped at USD 5.00 in total.
   Every live invocation must use the cheapest configuration that can answer
   the question being asked.
@@ -272,7 +272,19 @@ the conflict in `Decision Log`, and escalate.
   the harness outer `--timeout 3600`. Red evidence
   `/tmp/m5-red-evidence.txt`; green at 197/197; full `make check`
   green via scrutineer. Roadmap 7.3.4 ticked.
-- [ ] M6: contract, dry-run, and documentation updates; full gates.
+- [x] (2026-07-18 23:55Z) M6: documentation closure. Users' guide
+  (pipeline, dry-run shape, result fields, routing/limits, cost and
+  ledger, retries/downgrades/deferral with the re-pay note),
+  developers' guide (lane architecture, `adapters/pi/` contract, module
+  and test maps, failure stages, docstring count refreshed to 117), and
+  the design document (superseded notes at §1, §4, §5, and §7; §8
+  rewritten around the implemented ledger; §10-§12 aligned). Honest
+  flag recorded: `--synthesis-model`/`--synthesis-reasoning` no longer
+  select the audit model (fixed Terra Flex lane) and are documented as
+  cosmetic in the dry run. Stale `CODEX_API_KEY` prose in this plan
+  corrected to `OPENAI_API_KEY` for the pi route. README (with the
+  review-process Mermaid diagram) and the live harness landed alongside
+  this milestone. All Markdown gates green.
 - [ ] M7: live cost validation on the estate corpus.
 
 ## Surprises & discoveries
@@ -827,8 +839,8 @@ Create `scripts/live-review-harness.mjs` that: clones a corpus repository
 into the scratchpad; fetches and checks out the pinned head SHA, failing
 closed if the PR head no longer matches Table 1; asserts the resolved
 state root is under its own scratch directory before invoking the CLI;
-exports `CODEX_API_KEY` by reading `~/dakar-api-key.txt` inside the
-process (never on a command line); runs
+exports `OPENAI_API_KEY` (the pi adapter route's variable) by reading
+`~/dakar-api-key.txt` inside the process (never on a command line); runs
 `dakar-review --base <sha> --head <sha> --state-root <scratch>
 --timeout 3600` with telemetry to stderr; and writes the result JSON plus
 extracted ledger to a scratch results directory.

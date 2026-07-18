@@ -340,7 +340,7 @@ symbols. The audit covers module headers, named functions (including internal
 functions), exported interfaces and types, and exported constants in
 `bin/dakar-review.mjs` and `src/workflows/dakar-review/`. It excludes the
 generated `workflows/dakar-review.js` artefact and ambient `*.d.ts`
-declarations. The default authored-source scope contains 94 documented symbols
+declarations. The default authored-source scope contains 117 documented symbols
 and fails below 80% coverage; `make lint` and therefore `make check` run it
 automatically.
 
