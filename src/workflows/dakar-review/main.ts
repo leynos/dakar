@@ -12,11 +12,10 @@ import { resolveWorkflowConfig } from './config.ts'
 import { modelName } from './model-routing.ts'
 import {
   recordPrompt as makeRecordPrompt,
-  synthesisPrompt,
   taskPrompt,
   verificationPrompt,
 } from './prompts.ts'
-import { CANDIDATE_SCHEMA, RECORD_SCHEMA, SYNTHESIS_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
+import { CANDIDATE_SCHEMA, RECORD_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
 import { buildTaskGraph, defaultTaskGraph } from './task-graph.ts'
 import type {
   BoundCandidateResult,
@@ -27,7 +26,6 @@ import type {
   PromptContext,
   RecordResult,
   ReviewTask,
-  SynthesisResult,
   Verdict,
 } from './types.ts'
 
@@ -89,7 +87,6 @@ if (DRY_RUN) {
     defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
     candidateSchema: CANDIDATE_SCHEMA,
     verdictSchema: VERDICT_SCHEMA,
-    synthesisSchema: SYNTHESIS_SCHEMA,
     agentInstructionsIncluded: Boolean(AGENT_INSTRUCTIONS && AGENT_INSTRUCTIONS.content),
   }
 }
@@ -281,45 +278,9 @@ const authoritativeReport = [
   ]),
 ].join('\n')
 
-phase('Synthesize')
-let synthesis: SynthesisResult
-try {
-  synthesis = await agent<SynthesisResult>(
-    synthesisPrompt(accepted, discardReasonCounts(discarded), prepared, promptContext),
-    {
-      label: 'synthesis',
-      phase: 'Synthesize',
-      adapter: SYNTHESIS_ADAPTER,
-      model: SYNTHESIS_MODEL_BASE,
-      schema: SYNTHESIS_SCHEMA,
-    },
-  )
-} catch (error) {
-  return { ok: false, stage: 'synthesize', error: error instanceof Error ? error.message : String(error) }
-}
-
-if (!synthesis || !Array.isArray(synthesis.findings) || !synthesis.metrics) {
-  return {
-    ok: false,
-    stage: 'synthesize',
-    error: 'synthesis step did not return a schema-compatible review result',
-    verdict: authoritativeFindings.length > 0 ? 'changes-requested' : 'pass',
-    workflowVersion: WORKFLOW_VERSION,
-    config: CODE_RABBIT_CONFIG,
-    stateFile: prepared.stateFile,
-    reviewBase: prepared.reviewBase,
-    headCommit: prepared.headCommit,
-    commitCount: prepared.commitCount,
-    changedFiles: prepared.changedFiles,
-    taskGraph,
-    taskResults,
-    candidates,
-    verdicts,
-    accepted,
-    discarded,
-    synthesis,
-  }
-}
+// Rendering is deterministic host code: authoritativeReport above is the only
+// rendering path. The former Synthesize agent call produced a report the
+// authoritative construction already superseded, so it has been removed.
 const finalVerdict = authoritativeFindings.length > 0 ? 'changes-requested' : 'pass'
 
 const metrics = {

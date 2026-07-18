@@ -8,21 +8,21 @@
  * @file Route Dakar incremental review work through ODW agents.
  *
  * The workflow computes the unreviewed range, fans scoped review tasks out to
- * Codex agents, verifies candidate findings, synthesizes the accepted review,
- * and records completed heads in Dakar's XDG state history.
+ * Codex agents, verifies candidate findings, renders the accepted review
+ * deterministically host-side, and records completed heads in Dakar's XDG state
+ * history.
  */
 
 export const meta = {
   name: 'dakar-review',
   description:
-    'Review only previously unreviewed commits using review-policy YAML guidance, routed Codex review tasks, verification, synthesis, and XDG review history.',
+    'Review only previously unreviewed commits using review-policy YAML guidance, routed Codex review tasks, verification, deterministic rendering, and XDG review history.',
   whenToUse:
     'Use on a git branch when a CodeRabbit-compatible YAML file should drive an incremental AI code review and reviews.toml should prevent duplicate commit coverage.',
   phases: [
     { title: 'Plan' },
     { title: 'Review' },
     { title: 'Verify' },
-    { title: 'Synthesize' },
     { title: 'Record' },
   ],
 }
@@ -324,29 +324,6 @@ ${JSON.stringify(candidate, null, 2)}`,
     `git -C ${shellWord(context.repoRoot)} show ${shellWord(`${prepared.headCommit}:${candidate.path}`)}`
   ].join("\n");
 }
-function synthesisPrompt(accepted, discardCounts, prepared, context) {
-  return [
-    "Create the final Dakar code-review report.",
-    "Return only JSON matching the synthesis schema.",
-    "Report rules:",
-    "1. Include only accepted findings in findings and reportMarkdown.",
-    "2. If no findings are accepted, say that no blocking findings were accepted.",
-    "3. Mention discarded-count totals without listing weak discarded claims as findings.",
-    "4. Make each accepted finding actionable and evidence-backed.",
-    "",
-    `Resolved CodeRabbit YAML: ${context.policyPath}`,
-    "",
-    `Review range: ${prepared.reviewBase}..${prepared.headCommit}`,
-    `Changed files: ${(prepared.changedFiles || []).join(", ")}`,
-    "",
-    agentInstructionsBlock(context),
-    "",
-    `Accepted candidates:
-${JSON.stringify(accepted, null, 2)}`,
-    `Discarded candidate summary:
-${JSON.stringify(discardCounts, null, 2)}`
-  ].join("\n");
-}
 function recordPrompt(recordInput, context, stateRoot) {
   const stateRootOption = stateRoot ? ` --state-root ${shellWord(stateRoot)}` : "";
   return [
@@ -399,36 +376,6 @@ var VERDICT_SCHEMA = {
     evidenceChecked: { type: "string" }
   },
   required: ["candidateId", "status", "reason", "evidenceChecked"]
-};
-var SYNTHESIS_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    verdict: { type: "string", enum: ["pass", "changes-requested"] },
-    summary: { type: "string" },
-    reportMarkdown: { type: "string" },
-    findings: { type: "array", items: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
-        path: { type: "string" },
-        line: { type: "integer" },
-        title: { type: "string" },
-        detail: { type: "string" },
-        evidence: { type: "string" },
-        sourceTasks: { type: "array", items: { type: "string" } }
-      },
-      required: ["severity", "path", "title", "detail", "evidence", "sourceTasks"]
-    } },
-    metrics: { type: "object", additionalProperties: true, properties: {
-      taskCount: { type: "integer" },
-      candidateFindings: { type: "integer" },
-      confirmedFindings: { type: "integer" },
-      discardedFindings: { type: "integer" }
-    } }
-  },
-  required: ["verdict", "summary", "reportMarkdown", "findings", "metrics"]
 };
 var RECORD_SCHEMA = {
   type: "object",
@@ -580,7 +527,6 @@ async function workflowMain() {
       defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
       candidateSchema: CANDIDATE_SCHEMA,
       verdictSchema: VERDICT_SCHEMA,
-      synthesisSchema: SYNTHESIS_SCHEMA,
       agentInstructionsIncluded: Boolean(AGENT_INSTRUCTIONS && AGENT_INSTRUCTIONS.content)
     };
   }
@@ -728,44 +674,6 @@ async function workflowMain() {
       `Evidence: ${finding.evidence}`
     ])
   ].join("\n");
-  phase("Synthesize");
-  let synthesis;
-  try {
-    synthesis = await agent(
-      synthesisPrompt(accepted, discardReasonCounts(discarded), prepared, promptContext),
-      {
-        label: "synthesis",
-        phase: "Synthesize",
-        adapter: SYNTHESIS_ADAPTER,
-        model: SYNTHESIS_MODEL_BASE,
-        schema: SYNTHESIS_SCHEMA
-      }
-    );
-  } catch (error) {
-    return { ok: false, stage: "synthesize", error: error instanceof Error ? error.message : String(error) };
-  }
-  if (!synthesis || !Array.isArray(synthesis.findings) || !synthesis.metrics) {
-    return {
-      ok: false,
-      stage: "synthesize",
-      error: "synthesis step did not return a schema-compatible review result",
-      verdict: authoritativeFindings.length > 0 ? "changes-requested" : "pass",
-      workflowVersion: WORKFLOW_VERSION,
-      config: CODE_RABBIT_CONFIG,
-      stateFile: prepared.stateFile,
-      reviewBase: prepared.reviewBase,
-      headCommit: prepared.headCommit,
-      commitCount: prepared.commitCount,
-      changedFiles: prepared.changedFiles,
-      taskGraph,
-      taskResults,
-      candidates,
-      verdicts,
-      accepted,
-      discarded,
-      synthesis
-    };
-  }
   const finalVerdict = authoritativeFindings.length > 0 ? "changes-requested" : "pass";
   const metrics = {
     workflowVersion: WORKFLOW_VERSION,

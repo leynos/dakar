@@ -199,6 +199,15 @@ the conflict in `Decision Log`, and escalate.
     `stage: 'config'`, two CLI failures proving ODW was still invoked);
     green at 156/156 with typecheck, dry run, and freshness passing;
     full `make check` green via scrutineer.
+  - [x] (2026-07-18 20:10Z) Stage c: the Synthesize agent call deleted;
+    deterministic authoritative rendering is the sole report path, with
+    a new byte-stability test (`tests/workflow-rendering.test.mjs`)
+    driving the compiled workflow twice and asserting identical
+    `reportMarkdown`; `synthesisSchema` removed from the dry run
+    (`synthesisModel`/`synthesisAdapter` remain until M3/M4 rename the
+    verify-lane naming). Red evidence `/tmp/m2c-red-evidence.txt`;
+    green at 157/157; full `make check` green via scrutineer. Roadmap
+    7.2.2 ticked.
 - [ ] M3: issue-set audit replaces per-candidate verification, on the
   existing standard-tier adapters.
 - [ ] M4: Flex adapters, Luna and Terra lane routing, admission wiring.

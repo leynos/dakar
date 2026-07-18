@@ -139,15 +139,6 @@ export interface Discarded {
   status: string
 }
 
-/** Captures the schema-permitted presentation returned by synthesis. */
-export interface SynthesisResult {
-  findings?: unknown[]
-  metrics?: UnknownObject
-  reportMarkdown?: string
-  summary?: string
-  verdict?: string
-}
-
 /** Captures the review-history helper's success or diagnostic output. */
 export interface RecordResult {
   error?: string

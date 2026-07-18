@@ -64,7 +64,7 @@ test('dry-run exposes routed workflow contract', () => {
   assert.ok(result.defaultTaskGraph.every((task) => task.taskId && task.assignedModel && task.adapter))
   assert.equal(result.candidateSchema.properties.candidates.type, 'array')
   assert.equal(result.verdictSchema.properties.status.enum.includes('accepted'), true)
-  assert.equal(result.synthesisSchema.properties.reportMarkdown.type, 'string')
+  assert.equal(result.synthesisSchema, undefined)
 })
 
 test('dry-run ignores a supplied prepared review and does not echo it', () => {

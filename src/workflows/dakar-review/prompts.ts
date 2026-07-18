@@ -88,36 +88,6 @@ export function verificationPrompt(candidate: Candidate, prepared: PreparedRevie
 }
 
 /**
- * Builds the final report prompt from authoritative accepted candidates.
- *
- * @param accepted - Verified findings permitted to appear in the report.
- * @param discardCounts - Audit counts by discard reason, without weak claim text.
- * @param prepared - Trusted reviewed range and changed-file metadata.
- * @param context - Repository, policy, and trusted instruction context.
- * @returns A synthesis prompt that separates accepted findings from discard totals.
- */
-export function synthesisPrompt(
-  accepted: Candidate[],
-  discardCounts: Record<string, number>,
-  prepared: PreparedReview,
-  context: PromptContext,
-): string {
-  return [
-    'Create the final Dakar code-review report.', 'Return only JSON matching the synthesis schema.',
-    'Report rules:',
-    '1. Include only accepted findings in findings and reportMarkdown.',
-    '2. If no findings are accepted, say that no blocking findings were accepted.',
-    '3. Mention discarded-count totals without listing weak discarded claims as findings.',
-    '4. Make each accepted finding actionable and evidence-backed.', '',
-    `Resolved CodeRabbit YAML: ${context.policyPath}`, '',
-    `Review range: ${prepared.reviewBase}..${prepared.headCommit}`,
-    `Changed files: ${(prepared.changedFiles || []).join(', ')}`, '', agentInstructionsBlock(context), '',
-    `Accepted candidates:\n${JSON.stringify(accepted, null, 2)}`,
-    `Discarded candidate summary:\n${JSON.stringify(discardCounts, null, 2)}`,
-  ].join('\n')
-}
-
-/**
  * Builds the review-history recording prompt and inert JSON heredoc.
  *
  * @param recordInput - JSON-serializable completed-review record from orchestration.

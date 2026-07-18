@@ -30,24 +30,6 @@ export const VERDICT_SCHEMA = {
   required: ['candidateId', 'status', 'reason', 'evidenceChecked'],
 }
 
-/** Validates the final report and presentation metadata from synthesis. */
-export const SYNTHESIS_SCHEMA = {
-  type: 'object', additionalProperties: false,
-  properties: {
-    verdict: { type: 'string', enum: ['pass', 'changes-requested'] }, summary: { type: 'string' },
-    reportMarkdown: { type: 'string' }, findings: { type: 'array', items: { type: 'object', additionalProperties: false,
-      properties: { severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] }, path: { type: 'string' },
-        line: { type: 'integer' }, title: { type: 'string' }, detail: { type: 'string' }, evidence: { type: 'string' },
-        sourceTasks: { type: 'array', items: { type: 'string' } } },
-      required: ['severity', 'path', 'title', 'detail', 'evidence', 'sourceTasks'] } },
-    metrics: { type: 'object', additionalProperties: true, properties: {
-      taskCount: { type: 'integer' }, candidateFindings: { type: 'integer' }, confirmedFindings: { type: 'integer' },
-      discardedFindings: { type: 'integer' },
-    } },
-  },
-  required: ['verdict', 'summary', 'reportMarkdown', 'findings', 'metrics'],
-}
-
 /** Validates review-history recording success or diagnostic output. */
 export const RECORD_SCHEMA = {
   type: 'object', additionalProperties: false,

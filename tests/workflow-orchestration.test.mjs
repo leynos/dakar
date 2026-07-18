@@ -6,7 +6,7 @@ import test from 'node:test'
 import { buildAgentMock, extractCandidateJson, FixtureFailure } from './helpers/mock-agents.mjs'
 
 function defaultResponders({ failedLabel, recordFailures, collidingCandidates, head,
-  candidateTitles, summaryCandidateTitles, verdictTransform, synthesisMetrics, recordResult, recordResults }) {
+  candidateTitles, summaryCandidateTitles, verdictTransform, recordResult, recordResults }) {
   return [
     { match: (label) => label === failedLabel, respond: () => { throw new FixtureFailure('fixture failure') } },
     {
@@ -35,10 +35,6 @@ function defaultResponders({ failedLabel, recordFailures, collidingCandidates, h
       },
     },
     {
-      match: 'synthesis',
-      respond: () => ({ verdict: 'changes-requested', summary: 'one', reportMarkdown: '# Review', findings: [{}], metrics: synthesisMetrics }),
-    },
-    {
       match: (label) => label.startsWith('state-record-'),
       respond: (_prompt, options) => {
         const attempt = Number(options.label.split('-').at(-1))
@@ -50,7 +46,7 @@ function defaultResponders({ failedLabel, recordFailures, collidingCandidates, h
   ]
 }
 
-async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '', commitLength = 40, config = '/distinct/policy.yaml', recordResult, recordResults, candidateTitles, summaryCandidateTitles = [], maxFindings, verdictTransform, synthesisMetrics = {} } = {}) {
+async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '', commitLength = 40, config = '/distinct/policy.yaml', recordResult, recordResults, candidateTitles, summaryCandidateTitles = [], maxFindings, verdictTransform } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -65,7 +61,7 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
   const prepared = { ok: true, stateFile: prepareStateFile, reviewBase: base, headCommit: head,
     commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }
   const agent = buildAgentMock(defaultResponders({ failedLabel, recordFailures, collidingCandidates, head,
-    candidateTitles, summaryCandidateTitles, verdictTransform, synthesisMetrics, recordResult, recordResults }), { prompts, agentLabels })
+    candidateTitles, summaryCandidateTitles, verdictTransform, recordResult, recordResults }), { prompts, agentLabels })
   const swallowFixtureFailure = (error) => {
     if (error instanceof FixtureFailure) return null
     throw error
@@ -92,26 +88,15 @@ test('generated workflow threads the resolved policy path through every downstre
   assert.equal(result.ok, true)
   assert.deepEqual(agentLabels, [
     'source-1', 'review-summary-1',
-    'verify-source-1:src/a.js:2:bug-1', 'synthesis', 'state-record-1',
+    'verify-source-1:src/a.js:2:bug-1', 'state-record-1',
   ])
-  assert.deepEqual(phases, ['Plan', 'Review', 'Verify', 'Synthesize', 'Record'])
+  assert.deepEqual(phases, ['Plan', 'Review', 'Verify', 'Record'])
   assert.equal(result.recordAttempts, 1)
   for (const [label, prompt] of prompts) {
     assert.match(prompt, /\/distinct\/policy\.yaml/u, `${label} should receive the resolved policy path`)
     assert.doesNotMatch(prompt, /CodeRabbit YAML: auto/u)
   }
 })
-
-for (const [label, stage] of [
-  ['synthesis', 'synthesize'],
-]) {
-  test(`generated workflow tags a rejected ${stage} agent call`, async () => {
-    const { agentLabels, result } = await runWorkflow({ failedLabel: label })
-
-    assert.deepEqual(result, { ok: false, stage, error: 'fixture failure' })
-    assert.equal(agentLabels.at(-1), label)
-  })
-}
 
 test('generated workflow rejects verifier verdicts returned for a different scheduled candidate', async () => {
   const ids = []
@@ -150,11 +135,13 @@ test('generated workflow records accepted overflow as discarded after reconcilia
   assert.equal(result.metrics.discardedFindings, 1)
 })
 
-test('generated workflow does not trust synthesis-provided metrics', async () => {
-  const { result } = await runWorkflow({ synthesisMetrics: { attackerControlled: true, taskCount: 999 } })
+test('generated workflow computes metrics host-side without a synthesis agent call', async () => {
+  const { agentLabels, result } = await runWorkflow()
 
+  assert.equal(agentLabels.includes('synthesis'), false)
   assert.equal(result.metrics.attackerControlled, undefined)
   assert.equal(result.metrics.taskCount, result.taskGraph.length)
+  assert.equal(result.metrics.confirmedFindings, result.findings.length)
 })
 
 test('generated workflow retries an incomplete successful record acknowledgement', async () => {

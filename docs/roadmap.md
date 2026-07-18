@@ -379,11 +379,11 @@ This step answers whether removing model mediation from derivable phases
 preserves the workflow contract while eliminating their spend. See ADR 002
 §"Deterministic host boundary" and migration step 2.
 
-- [ ] 7.2.1. Call config resolution and range preparation in-process from the
+- [x] 7.2.1. Call config resolution and range preparation in-process from the
   workflow host.
   - Success: `Resolve Config` and `Prepare` launch no agent; failure modes
     keep their structured `stage` semantics.
-- [ ] 7.2.2. Render the final report deterministically from accepted
+- [x] 7.2.2. Render the final report deterministically from accepted
   findings.
   - Success: the synthesis agent call is removed; rendering is byte-stable
     for the same consolidated input.
