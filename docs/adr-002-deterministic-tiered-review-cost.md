@@ -252,6 +252,23 @@ under the worst-case output estimate.
 
 ## Codex CLI adapter contract
 
+> **Amendment (2026-07-18).** Empirical verification falsified this
+> section's premise: Codex CLI 0.144.4, 0.144.6, and 0.145.0-alpha.23 all
+> omit `service_tier` from the `/v1/responses` request body in `exec`
+> mode regardless of configuration, so the Codex path cannot reach Flex
+> pricing (corroborated upstream by openai/codex issues 26604, 31562, and
+> 2916; the field's resolution is gated inside the TUI crate). Dakar's
+> adapters instead use the `pi` coding agent
+> (`@earendil-works/pi-coding-agent`) in print mode with a Dakar-owned
+> extension that injects `service_tier = "flex"` through pi's documented
+> `before_provider_request` hook, and a Dakar-owned provider catalogue.
+> A live probe confirmed the applied Flex tier and per-call usage
+> reporting. The host-enforcement, telemetry, and contract-test
+> requirements below apply unchanged to the pi adapters; the JSON below
+> is retained as the falsified original for the record. See the
+> `api-key-support` ExecPlan, milestones M0 and M4, for evidence and the
+> adapter specification.
+
 Codex CLI exposes `service_tier` as a configuration value and accepts per-call
 configuration overrides through `-c key=value`.[^3] Dakar therefore does not
 need a bespoke Responses API wrapper solely to select Flex.

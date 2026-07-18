@@ -405,11 +405,12 @@ failure policy".
   - Success: the verify fan-out is removed; the audit deduplicates,
     consolidates causes, and may state that no actionable issue remains;
     the audit quality bet is validated in isolation from Flex plumbing.
-- [ ] 7.3.2. Add `codex-luna-flex` and `codex-terra-flex` adapters with
-  contract tests.
+- [ ] 7.3.2. Add `pi-luna-flex` and `pi-terra-flex` adapters with contract
+  tests.
   - Requires 7.1.1.
-  - Success: Codex effective configuration contains `service_tier = "flex"`
-    and the pinned per-lane reasoning effort for both adapters.
+  - Success: the provider request contains `service_tier = "flex"` and the
+    pinned per-lane reasoning effort for both adapters (Codex CLI cannot
+    send the tier; see the ADR 002 amendment of 2026-07-18).
 - [ ] 7.3.3. Route finder tasks to bounded Luna Flex transactions and the
   audit to Terra Flex.
   - Requires 7.3.1 and 7.3.2.

@@ -93,10 +93,11 @@ the conflict in `Decision Log`, and escalate.
   and escalate.
 - Spend: if cumulative live provider spend reaches USD 4.00 before milestone
   M7 completes, stop and escalate with the ledger evidence.
-- Ambiguity: if the Codex CLI cannot be proven to honour
-  `service_tier = "flex"` under API-key authentication (milestone M0), stop
-  and present the fallback options rather than silently paying standard
-  rates.
+- Ambiguity: if the chosen adapter vehicle cannot be proven to deliver
+  `service_tier = "flex"` to the provider, stop and present options rather
+  than silently paying standard rates. (Fired and resolved for Codex CLI
+  on 2026-07-18; the pi path is proven. It fires again only if pi
+  regresses.)
 
 ## Risks
 
@@ -125,16 +126,16 @@ the conflict in `Decision Log`, and escalate.
   Severity: medium. Likelihood: medium.
   Mitigation: the live corpus (M7) includes pull requests with known
   substantive changes; if findings are vacuous, escalate Luna finders to
-  the pre-registered `codex-luna-flex-medium` adapter (still Flex), rerun
+  the pre-registered `pi-luna-flex-medium` adapter (still Flex), rerun
   once, and record both ledgers.
 - Risk: ODW may not surface adapter token usage to the workflow result,
   leaving the ledger with estimates only.
   Severity: medium. Likelihood: medium.
-  Mitigation: `codex exec --json` reports `input_tokens`,
-  `cached_input_tokens`, and `output_tokens`; if ODW drops them, the
-  harness parses the Codex JSON stream from the ODW run directory instead,
-  and the ledger marks those rows as harness-derived. Estimated and
-  reported fields are separate from the start.
+  Mitigation: the pi flex extension logs the assistant message's usage
+  object (input, output, cacheRead, cacheWrite) to stderr per call; if
+  ODW drops it, the harness parses the adapter stderr from the ODW run
+  directory instead, and the ledger marks those rows as harness-derived.
+  Estimated and reported fields are separate from the start.
 - Risk: replacing per-candidate verification with one audit may admit
   false positives that the old adversarial verifier would have refuted, or
   miss defects the per-candidate route caught.
@@ -164,11 +165,14 @@ the conflict in `Decision Log`, and escalate.
 - [x] (2026-07-18 17:10Z) Expert-panel review completed (three panels, six
   lenses); findings folded into this revision. Corpus base and head SHAs
   pinned.
-- [ ] M0: Flex plumb-through and billing-evidence probe (go/no-go gate).
-  (Completed: direct-API control probe proves Flex applied and usage
-  reported; capture-server evidence proves Codex CLI 0.144.4 drops
-  `service_tier`; ~20k-token Codex harness overhead measured. Remaining:
-  decision on the adapter path — escalated 2026-07-18 with options.)
+- [x] (2026-07-18 18:05Z) M0: Flex plumb-through and billing-evidence
+  probe. Direct-API control probe proves Flex applied and usage
+  reported; Codex CLI proven unable to send `service_tier` (three
+  versions tested, three upstream issues corroborate); goose eliminated
+  by source inspection; pi proven end to end (capture-server payload
+  evidence plus a 3-second live Flex round trip with usage reporting).
+  Adapter path decided: pi with a Dakar-owned flex extension, per
+  operator direction.
 - [ ] M1: pricing table, cost ledger types, admission controller (pure
   modules with tests).
 - [ ] M2: deterministic host takeover, in four stages (test-harness mock
@@ -234,6 +238,48 @@ the conflict in `Decision Log`, and escalate.
   Evidence: `flex-control.json` in the scratchpad, 2026-07-18.
   Impact: the API key, model name, Flex tier, and usage reporting are all
   proven on the direct path; only the Codex CLI leg failed.
+- Observation (M0): the Codex gap is confirmed upstream, not local
+  misconfiguration. Issues openai/codex#26604 (0.137.0 ignores
+  `service_tier="flex"` on API-key auth, open since 2026-06-05),
+  openai/codex#31562 (tier omitted for gpt-5.5/5.6 on 0.143-0.144.4),
+  and openai/codex#2916 (original 2025 feature request, still open) all
+  describe it; the source shows `ResponsesApiRequest.service_tier`
+  exists but its resolution lives in the TUI crate behind a FastMode
+  feature gate, unreachable from `codex exec`. Capture-server tests of
+  0.144.4, 0.144.6, and 0.145.0-alpha.23 (including
+  `features.fast_mode=true`) all omit the field.
+  Evidence: upstream issues; capture transcripts, 2026-07-18.
+  Impact: no Codex version currently shippable can select Flex; waiting
+  on upstream is not a plan.
+- Observation (M0): `goose` cannot select Flex either — its OpenAI
+  provider's `create_request` has no service-tier parameter; the only
+  `service_tier` occurrences are response-parsing test fixtures.
+  Evidence: `crates/goose-provider-types/src/formats/openai.rs`,
+  aaif-goose/goose, read 2026-07-18.
+  Impact: goose is eliminated without local testing.
+- Observation (M0): `pi` (`@earendil-works/pi-coding-agent`) selects
+  Flex through a supported extension point. A ten-line extension
+  returning `{ ...event.payload, service_tier: "flex" }` from the
+  documented `before_provider_request` hook put `service_tier: "flex"`
+  into the captured `/v1/responses` payload (mock provider), and a live
+  probe through a custom `openai-flex` provider returned HTTP 200 and
+  the correct answer in 3 seconds with usage reported as
+  `{input: 3, output: 5, cacheRead: 0, cacheWrite: 12819}`. pi also
+  supports `PI_CODING_AGENT_DIR` for config isolation, `-p` print mode
+  reading stdin, `--thinking` for reasoning effort, and per-model
+  custom providers with `$ENV` or `!command` API-key resolution.
+  Evidence: `captured-requests.jsonl`, `pi-live.out`, `pi-live.err` in
+  the scratchpad, 2026-07-18.
+  Impact: pi becomes the adapter vehicle (see Decision Log). Its ~12.8k
+  cache-write-token prompt overhead is smaller than Codex's ~20k and
+  reducible later via `--tools`/`--system-prompt` tuning; overhead
+  tokens land in the cache-write band on first use and the cached band
+  thereafter, which the M1 estimator must include. Two operational
+  notes: pi's `--mode json` blocked indefinitely in this environment
+  (use `-p` with an extension logging usage to stderr instead), and a
+  model absent from the selected provider's catalogue makes pi hang
+  rather than fail — the adapter must pin `--provider openai-flex` with
+  models declared in the Dakar-owned `models.json`.
 
 ## Decision log
 
@@ -342,8 +388,20 @@ the conflict in `Decision Log`, and escalate.
   tooling, and retains the harness overhead; (c) accept standard pricing
   through Codex — violates ADR 002 and roughly doubles the cost model.
   Recommendation: (a).
-  Resolution: pending operator direction.
-  Date/Author: 2026-07-18, implementing agent.
+  Resolution: the operator directed a source-level confirmation and an
+  evaluation of `goose` and `pi` before rolling a bespoke adapter. All
+  three were done (see Surprises). Decision: **the ODW adapters use the
+  `pi` coding agent** (`@earendil-works/pi-coding-agent`) in print mode
+  with a small Dakar-owned pi extension that injects
+  `service_tier: "flex"` through pi's documented
+  `before_provider_request` hook, and a Dakar-owned pi config directory
+  (custom `openai-flex` provider, `apiKey: "$OPENAI_API_KEY"`). This is
+  the operator's preferred alternative order (codex confirmed broken
+  upstream; goose lacks request-side tier support; pi works through a
+  supported extension point, so no bespoke API client is required).
+  Milestone M4 is re-specified accordingly, and ADR 002's adapter
+  contract section carries a matching amendment.
+  Date/Author: 2026-07-18, implementing agent, per operator direction.
 
 ## Outcomes & retrospective
 
@@ -580,11 +638,23 @@ phase and the new caps.
 
 ### Milestone M4: Flex adapters and lane routing
 
-Add `codex-luna-flex`, `codex-luna-flex-medium` (the pre-registered
-escalation adapter), and `codex-terra-flex` adapters to `odw.config.json`
-per ADR 002's adapter contract (per-lane pinned reasoning effort,
-`-c service_tier="flex"`), with per-call timeouts sized from M0
-measurements. Extend `model-routing.ts` with `luna` and `terra` roles
+Create the Dakar-owned pi adapter assets under `adapters/pi/`:
+`flex-tier.ts` (the pi extension that returns
+`{ ...event.payload, service_tier: "flex" }` from
+`before_provider_request` and logs the assistant message's usage object
+to stderr from `message_end`) and `models.json` (custom `openai-flex`
+provider, `baseUrl` `https://api.openai.com/v1`, `api`
+`openai-responses`, `apiKey: "$OPENAI_API_KEY"`, models `gpt-5.6-luna`
+and `gpt-5.6-terra`). Add `pi-luna-flex`, `pi-luna-flex-medium` (the
+pre-registered escalation adapter), and `pi-terra-flex` adapters to
+`odw.config.json`, each invoking
+`pi -p --no-session -e adapters/pi/flex-tier.ts --provider openai-flex`
+with the lane's `--model` and `--thinking` pinned, `{prompt}` on stdin,
+and `PI_CODING_AGENT_DIR` pointing at `adapters/pi/` so the catalogue is
+Dakar's own (a model missing from the provider catalogue makes pi hang,
+so the pinned provider and declared models are load-bearing). Per-call
+timeouts are sized from M0 measurements. Extend `model-routing.ts` with
+`luna` and `terra` roles
 carrying model, adapter, service tier, and reasoning effort. In
 `task-graph.ts`, bound the finder plan to `maxLunaFlexCalls` (default 4)
 evidence packs respecting `transactionMaxFiles` (default 5), recording
@@ -598,10 +668,12 @@ Red first: routing tests prove finder tasks receive the Luna adapter and
 never exceed four calls; orchestration tests prove admission refusal of
 the audit aborts before any Luna spend (reserve-first) and that a refused
 optional Luna call is skipped with a structured reason; an adapter test
-asserts the generated command lines contain `service_tier="flex"` and the
-pinned efforts (a cheap regression guard — the authoritative
-effective-configuration evidence is the M0 probe, cited in `Artefacts and
-notes`, satisfying ADR 002's verification clause).
+asserts the `odw.config.json` command lines pin the extension, provider,
+model, and thinking level per lane, and that `adapters/pi/flex-tier.ts`
+sets `service_tier` (cheap regression guards — the authoritative
+effective-configuration evidence is the M0 capture-server and live-probe
+transcripts, cited in `Artefacts and notes`, satisfying ADR 002's
+verification clause).
 
 Validation: full `make check` via scrutineer; dry run shows lanes, caps,
 and pricing-table version.
