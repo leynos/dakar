@@ -3,6 +3,7 @@
 import {
   acceptedFromVerdicts,
   candidatesForVerification,
+  compactForAudit,
   discardReasonCounts,
   discardedFromVerdicts,
   normalizeCandidates,
@@ -10,10 +11,11 @@ import {
 } from './candidates.ts'
 import { resolveWorkflowConfig } from './config.ts'
 import { modelName } from './model-routing.ts'
-import { taskPrompt, verificationPrompt } from './prompts.ts'
-import { CANDIDATE_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
+import { auditPrompt, taskPrompt } from './prompts.ts'
+import { AUDIT_SCHEMA, CANDIDATE_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
 import { buildTaskGraph, defaultTaskGraph } from './task-graph.ts'
 import type {
+  AuditResult,
   BoundCandidateResult,
   Candidate,
   CandidateResult,
@@ -38,12 +40,14 @@ const {
   configArg: CONFIG_ARG,
   dryRun: DRY_RUN,
   headRef: HEAD_REF,
+  maxAuditCandidates: MAX_AUDIT_CANDIDATES,
   maxCandidates: MAX_CANDIDATES,
   maxFindings: MAX_FINDINGS,
   maxTasks: MAX_TASKS,
   prepared: PREPARED,
   repoRoot: REPO_ROOT,
   reviewModels: REVIEW_MODELS,
+  routingPolicy: ROUTING_POLICY,
   synthesisAdapter: SYNTHESIS_ADAPTER,
   synthesisModelBase: SYNTHESIS_MODEL_BASE,
   synthesisModelName: SYNTHESIS_MODEL_NAME,
@@ -59,6 +63,10 @@ const promptContext: PromptContext = Object.freeze({
   policyPath: CODE_RABBIT_CONFIG,
   repoRoot: REPO_ROOT,
 })
+// Hard budget admission is wired in M4; for now the audit is told plainly that
+// it is the final model call and is not rewarded for issue volume.
+const REMAINING_BUDGET_NOTE =
+  'Remaining budget: this issue-set audit is the only remaining model call for this review; you are not rewarded for issue volume.'
 
 if (DRY_RUN) {
   return {
@@ -72,15 +80,18 @@ if (DRY_RUN) {
     models: REVIEW_MODELS.map(modelName),
     synthesisModel: SYNTHESIS_MODEL_NAME,
     synthesisAdapter: SYNTHESIS_ADAPTER,
+    routingPolicy: ROUTING_POLICY,
     taskKinds: TASK_KINDS,
     limits: {
       maxTasks: MAX_TASKS,
       maxCandidates: MAX_CANDIDATES,
       maxFindings: MAX_FINDINGS,
+      maxAuditCandidates: MAX_AUDIT_CANDIDATES,
     },
     defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
     candidateSchema: CANDIDATE_SCHEMA,
     verdictSchema: VERDICT_SCHEMA,
+    auditSchema: AUDIT_SCHEMA,
     agentInstructionsIncluded: Boolean(AGENT_INSTRUCTIONS && AGENT_INSTRUCTIONS.content),
   }
 }
@@ -166,65 +177,90 @@ if (failedTaskIds.length > 0) {
   }
 }
 const candidates = normalizeCandidates(taskResults, prepared.changedFiles, MAX_CANDIDATES)
-const verificationCandidates = [
+// The verification policy still selects what is eligible (verify-all plus one
+// sampled low finding per non-high task); compaction then orders, deduplicates,
+// and caps the eligible set for a single issue-set audit.
+const auditCandidatePool = [
   ...new Map(candidatesForVerification(candidates).map((candidate) => [candidate.candidateId, candidate])).values(),
 ]
+const { auditCandidates, overCap } = compactForAudit(auditCandidatePool, MAX_AUDIT_CANDIDATES)
 
-phase('Verify')
-const boundVerdicts =
-  verificationCandidates.length === 0
-    ? []
-    : (
-        // ODW pipeline advances candidates independently with scheduler-bounded
-        // concurrency; it is not an intentional serial rate limiter.
-        await pipeline(verificationCandidates.map((candidate, index) => ({ candidate, ordinal: index + 1 })), ({ candidate, ordinal }) =>
-          agent<Verdict>(verificationPrompt(candidate, prepared, promptContext), {
-              label: `verify-${candidate.candidateId.slice(0, 30)}-${ordinal}`,
-              phase: 'Verify',
-              adapter: SYNTHESIS_ADAPTER,
-              model: SYNTHESIS_MODEL_BASE,
-              schema: VERDICT_SCHEMA,
-            }).then((verdict) => ({ scheduledCandidate: candidate, verdict })),
-        )
-      ).filter((value): value is { scheduledCandidate: Candidate; verdict: Verdict } => value !== null)
-const verdicts = boundVerdicts.map(({ verdict }) => verdict)
-const expectedVerdictIds = new Set(verificationCandidates.map((candidate) => candidate.candidateId))
-const verificationById = new Map(verificationCandidates.map((candidate): [string, Candidate] => [candidate.candidateId, candidate]))
-const seenVerdictIds = new Set<string>()
-const verdictsComplete =
-  boundVerdicts.length === verificationCandidates.length &&
+phase('Audit')
+// One issue-set audit replaces per-candidate verification. Skipping the call
+// entirely when there are zero audit candidates is a valid, zero-model-call
+// outcome; the standard-tier adapter is retained until M4 introduces Flex lanes.
+const auditResult: AuditResult =
+  auditCandidates.length === 0
+    ? { verdicts: [] }
+    : await agent<AuditResult>(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+        label: 'audit',
+        phase: 'Audit',
+        adapter: SYNTHESIS_ADAPTER,
+        model: SYNTHESIS_MODEL_BASE,
+        schema: AUDIT_SCHEMA,
+      })
+const rawVerdicts: Verdict[] = auditResult && Array.isArray(auditResult.verdicts) ? auditResult.verdicts : []
+
+// Re-pair returned verdicts to audit candidates by candidateId. Verdicts citing
+// unknown ids are auditable noise counted in metrics, not discards (they have no
+// candidate to attach to); duplicate verdicts for one id keep the first and
+// count the rest.
+const auditById = new Map(auditCandidates.map((candidate): [string, Candidate] => [candidate.candidateId, candidate]))
+const chosenVerdicts = new Map<string, Verdict>()
+let unknownAuditVerdictCount = 0
+let duplicateAuditVerdictCount = 0
+for (const verdict of rawVerdicts.filter(Boolean)) {
+  const candidateId = typeof verdict.candidateId === 'string' ? verdict.candidateId : ''
+  if (!auditById.has(candidateId)) {
+    unknownAuditVerdictCount += 1
+    continue
+  }
+  if (chosenVerdicts.has(candidateId)) {
+    duplicateAuditVerdictCount += 1
+    continue
+  }
+  chosenVerdicts.set(candidateId, verdict)
+}
+
+const boundVerdicts = auditCandidates
+  .map((candidate) => ({ scheduledCandidate: candidate, verdict: chosenVerdicts.get(candidate.candidateId) }))
+  .filter((pair): pair is { scheduledCandidate: Candidate; verdict: Verdict } => pair.verdict !== undefined)
+
+// An incomplete required audit must not record: every audit candidate needs one
+// valid verdict, and a severity_downgraded verdict must actually lower severity.
+const auditComplete =
+  boundVerdicts.length === auditCandidates.length &&
   boundVerdicts.every(({ scheduledCandidate, verdict }) => {
     if (
-      typeof verdict.candidateId !== 'string' ||
-      typeof verdict.reason !== 'string' ||
-      verdict.reason.trim() === '' ||
-      typeof verdict.evidenceChecked !== 'string' ||
-      verdict.evidenceChecked.trim() === '' ||
-      (verdict.status === 'severity_downgraded' &&
-        (typeof verdict.acceptedSeverity !== 'string' ||
-          (SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) <=
-            (SEVERITY_RANK[verificationById.get(verdict.candidateId)?.severity || ''] ?? 4))) ||
-      !expectedVerdictIds.has(verdict.candidateId) ||
-      verdict.candidateId !== scheduledCandidate.candidateId ||
-      seenVerdictIds.has(verdict.candidateId)
-    ) {
-      return false
+      typeof verdict.reason !== 'string' || verdict.reason.trim() === '' ||
+      typeof verdict.evidenceChecked !== 'string' || verdict.evidenceChecked.trim() === ''
+    ) return false
+    if (verdict.status === 'severity_downgraded') {
+      if (typeof verdict.acceptedSeverity !== 'string') return false
+      if ((SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) <= (SEVERITY_RANK[scheduledCandidate.severity || ''] ?? 4)) return false
     }
-    seenVerdictIds.add(verdict.candidateId)
     return true
   })
-if (!verdictsComplete) {
+if (!auditComplete) {
   return {
     ok: false,
-    stage: 'verify',
-    error: 'verification did not return exactly one verdict for every scheduled candidate',
+    stage: 'audit',
+    error: 'audit did not return a verdict for every candidate',
     config: CODE_RABBIT_CONFIG,
     prepared,
     taskGraph,
-    candidates: verificationCandidates,
-    verdicts,
+    candidates: auditCandidates,
+    verdicts: rawVerdicts,
+    metrics: {
+      auditCandidateCount: auditCandidates.length,
+      overAuditCapCount: overCap.length,
+      unknownAuditVerdictCount,
+      duplicateAuditVerdictCount,
+      routingPolicy: ROUTING_POLICY,
+    },
   }
 }
+const verdicts = boundVerdicts.map(({ verdict }) => verdict)
 const reconciledAccepted = acceptedFromVerdicts(boundVerdicts)
 const accepted = reconciledAccepted.slice(0, MAX_FINDINGS)
 const overflow = reconciledAccepted.slice(MAX_FINDINGS).map((candidate): Discarded => ({
@@ -233,16 +269,16 @@ const overflow = reconciledAccepted.slice(MAX_FINDINGS).map((candidate): Discard
   reason: `Accepted candidate exceeded the configured maximum of ${MAX_FINDINGS} findings.`,
   evidenceChecked: candidate.evidenceChecked || '',
 }))
-const verificationIds = new Set(verificationCandidates.map((candidate) => candidate.candidateId))
+const auditableIds = new Set(auditCandidatePool.map((candidate) => candidate.candidateId))
 const sampledOut = candidates
-  .filter((candidate) => !verificationIds.has(candidate.candidateId))
+  .filter((candidate) => !auditableIds.has(candidate.candidateId))
   .map((candidate): Discarded => ({
     candidate,
     status: 'verification_not_sampled',
     reason: 'Low-severity candidate was not selected by the task verification policy.',
     evidenceChecked: '',
   }))
-const discarded = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut, ...overflow]
+const discarded = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut, ...overflow, ...overCap]
 const authoritativeFindings = accepted.map((candidate) => ({
   severity: candidate.severity,
   path: candidate.path,
@@ -250,6 +286,7 @@ const authoritativeFindings = accepted.map((candidate) => ({
   title: candidate.title,
   detail: candidate.detail || '',
   evidence: candidate.evidence || '',
+  clusterId: candidate.clusterId || undefined,
   sourceTasks: [candidate.taskId],
 }))
 const authoritativeSummary =
@@ -286,6 +323,11 @@ const metrics = {
   failedTaskCount: failedTaskIds.length,
   failedTaskIds,
   candidateFindings: candidates.length,
+  auditCandidateCount: auditCandidates.length,
+  overAuditCapCount: overCap.length,
+  unknownAuditVerdictCount,
+  duplicateAuditVerdictCount,
+  routingPolicy: ROUTING_POLICY,
   confirmedFindings: accepted.length,
   discardedFindings: discarded.length,
   discardReasonCounts: discardReasonCounts(discarded),

@@ -59,12 +59,23 @@ test('dry-run exposes routed workflow contract', () => {
   assert.equal(result.limits.maxTasks, 6)
   assert.equal(result.limits.maxCandidates, 12)
   assert.equal(result.limits.maxFindings, 4)
+  assert.equal(result.limits.maxAuditCandidates, 30)
+  assert.equal(result.routingPolicy, 'deterministic-flex-v1')
   assert.ok(Array.isArray(result.defaultTaskGraph))
   assert.ok(result.defaultTaskGraph.length >= 3)
   assert.ok(result.defaultTaskGraph.every((task) => task.taskId && task.assignedModel && task.adapter))
   assert.equal(result.candidateSchema.properties.candidates.type, 'array')
   assert.equal(result.verdictSchema.properties.status.enum.includes('accepted'), true)
+  assert.equal(result.auditSchema.required.includes('verdicts'), true)
+  assert.equal(result.auditSchema.properties.verdicts.items.properties.clusterId.type, 'string')
   assert.equal(result.synthesisSchema, undefined)
+})
+
+test('dry-run honours a custom audit cap and routing policy', () => {
+  const result = runDryRun({ maxAuditCandidates: 7, routingPolicy: 'legacy' })
+
+  assert.equal(result.limits.maxAuditCandidates, 7)
+  assert.equal(result.routingPolicy, 'legacy')
 })
 
 test('dry-run ignores a supplied prepared review and does not echo it', () => {
@@ -110,7 +121,7 @@ test('dry-run rejects malformed model and limit inputs in favour of safe default
     models: [],
   })
 
-  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20 })
+  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20, maxAuditCandidates: 30 })
   assert.deepEqual(result.models, [
     'gpt-5.5/medium',
     'gpt-5.5/high',
@@ -127,10 +138,10 @@ test('dry-run always retains the mandatory review summary within a small task bu
 
 test('dry-run clamps oversized limits to explicit ceilings', () => {
   const result = runDryRun({ maxTasks: 999, maxCandidates: 9999, maxFindings: 999 })
-  assert.deepEqual(result.limits, { maxTasks: 64, maxCandidates: 1000, maxFindings: 200 })
+  assert.deepEqual(result.limits, { maxTasks: 64, maxCandidates: 1000, maxFindings: 200, maxAuditCandidates: 30 })
 })
 
 test('dry-run treats positive sub-unit limits as invalid defaults', () => {
   const result = runDryRun({ maxTasks: 0.5, maxCandidates: 0.9, maxFindings: 0.1 })
-  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20 })
+  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20, maxAuditCandidates: 30 })
 })

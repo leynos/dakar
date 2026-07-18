@@ -10,12 +10,14 @@ export interface WorkflowConfig {
   readonly configArg: string
   readonly dryRun: boolean
   readonly headRef: string
+  readonly maxAuditCandidates: number
   readonly maxCandidates: number
   readonly maxFindings: number
   readonly maxTasks: number
   readonly prepared: PreparedReview | undefined
   readonly repoRoot: string
   readonly reviewModels: readonly Readonly<ModelSpec>[]
+  readonly routingPolicy: string
   readonly stateRoot: string
   readonly synthesisAdapter: string
   readonly synthesisModelBase: string
@@ -134,6 +136,7 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     configArg: nonBlankString(args.config, ''),
     dryRun: args.dryRun === true,
     headRef: nonBlankString(args.head, 'HEAD'),
+    maxAuditCandidates: positiveLimit(args.maxAuditCandidates, 30, 100),
     maxCandidates: positiveLimit(args.maxCandidates, 30, 1_000),
     maxFindings: positiveLimit(args.maxFindings, 20, 200),
     maxTasks: positiveLimit(args.maxTasks, 8, 64),
@@ -142,6 +145,9 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     prepared: isObject(args.prepared) ? (args.prepared as PreparedReview) : undefined,
     repoRoot: nonBlankString(args.repoRoot, '.'),
     reviewModels,
+    // String passthrough recorded in metrics; the sole live value is
+    // 'deterministic-flex-v1' once M4 lands the Flex lanes.
+    routingPolicy: nonBlankString(args.routingPolicy, 'deterministic-flex-v1'),
     stateRoot: nonBlankString(args.stateRoot, ''),
     synthesisAdapter: adapterForReasoning(synthesisReasoning),
     synthesisModelBase,

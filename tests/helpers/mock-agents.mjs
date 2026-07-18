@@ -24,6 +24,19 @@ export function extractCandidateJson(prompt) {
 }
 
 /**
+ * Extract the compacted candidate array embedded in an issue-set audit prompt.
+ *
+ * Audit prompts embed a `Candidate findings JSON:` block (a JSON array of the
+ * compacted candidates) terminated by a blank line and a `Changed files:`
+ * marker. Keeping this shape knowledge in one place means a future audit prompt
+ * change only needs an edit here.
+ */
+export function extractAuditCandidates(prompt) {
+  const auditJson = prompt.split('Candidate findings JSON:\n')[1].split('\n\nChanged files:')[0]
+  return JSON.parse(auditJson)
+}
+
+/**
  * Build the `agent()` mock consumed by the compiled workflow body.
  *
  * `responders` is an ordered list of `{ match, respond }` entries evaluated

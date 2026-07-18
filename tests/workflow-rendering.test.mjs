@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { buildAgentMock, extractCandidateJson, FixtureFailure } from './helpers/mock-agents.mjs'
+import { buildAgentMock, extractAuditCandidates, FixtureFailure } from './helpers/mock-agents.mjs'
 
 function renderingResponders() {
   return [
@@ -30,9 +30,9 @@ function renderingResponders() {
         metrics: { filesInspected: 1, findingsProposed: 0 } }),
     },
     {
-      match: (label) => label.startsWith('verify-'),
-      respond: (prompt) => ({ candidateId: extractCandidateJson(prompt).candidateId,
-        status: 'accepted', reason: 'confirmed', evidenceChecked: 'git object' }),
+      match: 'audit',
+      respond: (prompt) => ({ summary: 'audited', verdicts: extractAuditCandidates(prompt).map((candidate) => ({
+        candidateId: candidate.candidateId, status: 'accepted', reason: 'confirmed', evidenceChecked: 'git object' })) }),
     },
   ]
 }

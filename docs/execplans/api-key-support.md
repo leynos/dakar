@@ -226,8 +226,21 @@ the conflict in `Decision Log`, and escalate.
     `/tmp/m2d-red-evidence.txt` (8 expected failures); green at
     149/149 (seven record-retry tests removed with the phase); full
     `make check` green via scrutineer.
-- [ ] M3: issue-set audit replaces per-candidate verification, on the
-  existing standard-tier adapters.
+- [x] (2026-07-18 21:30Z) M3: issue-set audit replaces per-candidate
+  verification, on the existing standard-tier adapters. One
+  `agent<AuditResult>` call (label `audit`, phases now Plan, Review,
+  Audit) with `AUDIT_SCHEMA`; deterministic `compactForAudit` dedups,
+  severity-orders, and caps at `maxAuditCandidates` (default 30) with
+  `over_audit_cap` discards; verdict re-pairing by candidate id with
+  unknown and duplicate verdicts tallied in metrics
+  (`unknownAuditVerdictCount`, `duplicateAuditVerdictCount`, first
+  verdict wins); a candidate without a verdict, or an invalid severity
+  downgrade, fails closed as `stage: "audit"` so the CLI records
+  nothing; `clusterId` propagates to findings; `routingPolicy` recorded
+  in metrics and the dry run. Zero candidates → zero model calls. Red
+  evidence `/tmp/m3-red-evidence.txt` (26 expected failures); green at
+  162/162; full `make check` green via scrutineer. Roadmap 7.3.1
+  ticked.
 - [ ] M4: Flex adapters, Luna and Terra lane routing, admission wiring.
 - [ ] M5: Flex retry, backoff, deferral policy, and timeout budget.
 - [ ] M6: contract, dry-run, and documentation updates; full gates.

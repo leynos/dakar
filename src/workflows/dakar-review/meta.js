@@ -16,6 +16,6 @@ export const meta = {
   phases: [
     { title: 'Plan' },
     { title: 'Review' },
-    { title: 'Verify' },
+    { title: 'Audit' },
   ],
 }

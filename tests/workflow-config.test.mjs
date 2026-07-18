@@ -17,6 +17,8 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   assert.equal(config.maxCandidates, 30)
   assert.equal(config.maxFindings, 20)
   assert.equal(config.maxTasks, 8)
+  assert.equal(config.maxAuditCandidates, 30)
+  assert.equal(config.routingPolicy, 'deterministic-flex-v1')
   assert.equal(config.reviewModels, DEFAULT_REVIEW_MODELS)
   assert.equal(config.synthesisModelName, 'gpt-5.5/high')
   assert.equal(config.synthesisAdapter, 'codex-high')
@@ -48,6 +50,21 @@ test('positive limits floor values, cap extremes, and reject invalid input', () 
   assert.equal(config.maxCandidates, 2)
   assert.equal(config.maxFindings, 200)
   assert.equal(config.maxTasks, 8)
+})
+
+test('maxAuditCandidates defaults, floors, caps at 100, and rejects invalid input', () => {
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 12 }).maxAuditCandidates, 12)
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 4.9 }).maxAuditCandidates, 4)
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 999 }).maxAuditCandidates, 100)
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 0 }).maxAuditCandidates, 30)
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 'nope' }).maxAuditCandidates, 30)
+})
+
+test('routingPolicy passes through non-blank strings and falls back otherwise', () => {
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 'legacy' }).routingPolicy, 'legacy')
+  assert.equal(resolveWorkflowConfig({ routingPolicy: '   ' }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 42 }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({}).routingPolicy, 'deterministic-flex-v1')
 })
 
 test('valid custom models replace defaults while malformed entries are discarded', () => {
@@ -118,5 +135,7 @@ test('configuration resolution is total for JSON-compatible external input', () 
     assert.ok(config.maxTasks >= 1 && config.maxTasks <= 64)
     assert.ok(config.maxCandidates >= 1 && config.maxCandidates <= 1_000)
     assert.ok(config.maxFindings >= 1 && config.maxFindings <= 200)
+    assert.ok(config.maxAuditCandidates >= 1 && config.maxAuditCandidates <= 100)
+    assert.equal(typeof config.routingPolicy, 'string')
   }))
 })

@@ -399,7 +399,7 @@ verification without material recall loss. See ADR 002 §"Luna Flex
 transactional boundary", §"Terra Flex boundary", and §"Flex scheduling and
 failure policy".
 
-- [ ] 7.3.1. Replace per-candidate verification with deterministic compaction
+- [x] 7.3.1. Replace per-candidate verification with deterministic compaction
   and one issue-set audit on the existing standard-tier adapters.
   - Requires 7.2.
   - Success: the verify fan-out is removed; the audit deduplicates,

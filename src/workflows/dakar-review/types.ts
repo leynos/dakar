@@ -28,12 +28,14 @@ export interface WorkflowArgs {
   config?: string
   dryRun?: boolean
   head?: string
+  maxAuditCandidates?: unknown
   maxCandidates?: unknown
   maxFindings?: unknown
   maxTasks?: unknown
   models?: unknown
   prepared?: PreparedReview
   repoRoot?: string
+  routingPolicy?: unknown
   stateRoot?: string
   synthesisModel?: string
   synthesisReasoning?: string
@@ -108,6 +110,7 @@ export interface Candidate extends RawCandidate {
   taskKind: string
   title: string
   verificationPolicy: string
+  clusterId?: string
   evidenceChecked?: string
   verificationReason?: string
   verificationStatus?: string
@@ -117,6 +120,7 @@ export interface Candidate extends RawCandidate {
 export interface Verdict {
   acceptedSeverity?: 'critical' | 'high' | 'medium' | 'low'
   candidateId: string
+  clusterId?: string
   evidenceChecked: string
   reason: string
   status:
@@ -129,6 +133,12 @@ export interface Verdict {
     | 'tool_false_positive'
     | 'severity_downgraded'
     | 'needs_human'
+}
+
+/** Captures the single issue-set audit response returned by the audit lane. */
+export interface AuditResult {
+  verdicts: Verdict[]
+  summary?: string
 }
 
 /** Records why a candidate or unknown verifier reference was not accepted. */
