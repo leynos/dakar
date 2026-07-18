@@ -23,14 +23,18 @@ export interface AgentInstructions {
 
 /** Describes untrusted external arguments accepted by the workflow entry. */
 export interface WorkflowArgs {
+  adapterOverheadTokens?: unknown
   agentInstructions?: AgentInstructions
   base?: string
+  budgetGbp?: unknown
   config?: string
   dryRun?: boolean
   head?: string
+  lunaReasoning?: unknown
   maxAuditCandidates?: unknown
   maxCandidates?: unknown
   maxFindings?: unknown
+  maxLunaFlexCalls?: unknown
   maxTasks?: unknown
   models?: unknown
   prepared?: PreparedReview
@@ -39,6 +43,11 @@ export interface WorkflowArgs {
   stateRoot?: string
   synthesisModel?: string
   synthesisReasoning?: string
+  terraMaxInputTokens?: unknown
+  terraMaxOutputTokens?: unknown
+  transactionMaxFiles?: unknown
+  transactionMaxInputTokens?: unknown
+  transactionMaxOutputTokens?: unknown
 }
 
 /** Captures the deterministic review range returned by the state helper. */
@@ -63,7 +72,9 @@ export interface ReviewTask {
   maxFindings: number
   model: string
   modelLabel?: string
+  reasoningEffort?: string
   role: string
+  serviceTier?: string
   taskId: string
   verificationPolicy: string
 }
@@ -154,6 +165,14 @@ export interface PromptContext {
   agentInstructions: AgentInstructions | null
   policyPath: string
   repoRoot: string
+}
+
+/** Records one refused model call and why admission control rejected it. */
+export interface AdmissionRefusal {
+  callId: string
+  kind: 'luna-transaction' | 'terra-audit'
+  reason: string
+  worstCaseUsd: number
 }
 
 /** Records one priced, admitted call for the budget audit trail. */

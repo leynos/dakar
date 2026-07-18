@@ -241,7 +241,23 @@ the conflict in `Decision Log`, and escalate.
   evidence `/tmp/m3-red-evidence.txt` (26 expected failures); green at
   162/162; full `make check` green via scrutineer. Roadmap 7.3.1
   ticked.
-- [ ] M4: Flex adapters, Luna and Terra lane routing, admission wiring.
+- [x] (2026-07-18 22:20Z) M4: Flex adapters, lane routing, and admission
+  wiring. `adapters/pi/` (flex extension with the `DAKAR-USAGE` stderr
+  usage marker; `openai-flex` provider catalogue), three `pi-*-flex`
+  adapters in `odw.config.json` (`-e` extension flag kept because
+  extension auto-loading could not be verified without pi installed),
+  flex lane roles, `buildFlexFinderPlan` pack bounding (≤4 packs ×
+  ≤5 files, homogeneous kinds, truncation surfaced, legacy
+  review-summary task dropped on this route — subsumed by the audit),
+  reserve-first admission with early `stage: "admission"` refusal,
+  structured `admissionRefusals`, estimated-cost ledger
+  (`metrics.ledger`, `ledgerTotalEstimatedUsd`, pricing-table version),
+  nine bounded config knobs including `adapterOverheadTokens` (default
+  13000 from the M0 pi measurement), and CLI env plumbing
+  (`PI_CODING_AGENT_DIR`, `PI_SKIP_VERSION_CHECK`, missing-key
+  warning). Red evidence `/tmp/m4-red-evidence.txt`; green at 180/180;
+  full `make check` green via scrutineer twice. Roadmap 7.1.3, 7.3.2,
+  and 7.3.3 ticked (7.1.2 waits on reported-usage capture in M7).
 - [ ] M5: Flex retry, backoff, deferral policy, and timeout budget.
 - [ ] M6: contract, dry-run, and documentation updates; full gates.
 - [ ] M7: live cost validation on the estate corpus.

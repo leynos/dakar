@@ -5,14 +5,18 @@ import type { AgentInstructions, ModelSpec, PreparedReview, Reasoning, UnknownOb
 
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
+  readonly adapterOverheadTokens: number
   readonly agentInstructions: AgentInstructions | null
   readonly baseRef: string
+  readonly budgetGbp: number
   readonly configArg: string
   readonly dryRun: boolean
   readonly headRef: string
+  readonly lunaReasoning: 'low' | 'medium'
   readonly maxAuditCandidates: number
   readonly maxCandidates: number
   readonly maxFindings: number
+  readonly maxLunaFlexCalls: number
   readonly maxTasks: number
   readonly prepared: PreparedReview | undefined
   readonly repoRoot: string
@@ -24,6 +28,11 @@ export interface WorkflowConfig {
   readonly synthesisModelName: string
   readonly synthesisReasoning: Reasoning
   readonly taskKinds: readonly string[]
+  readonly terraMaxInputTokens: number
+  readonly terraMaxOutputTokens: number
+  readonly transactionMaxFiles: number
+  readonly transactionMaxInputTokens: number
+  readonly transactionMaxOutputTokens: number
   readonly workflowVersion: string
 }
 
@@ -49,6 +58,38 @@ function positiveLimit(value: unknown, fallback: number, ceiling: number): numbe
   const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
   const floored = Math.floor(parsed)
   return Number.isFinite(parsed) && floored > 0 ? Math.min(floored, ceiling) : fallback
+}
+
+/**
+ * Normalizes an untrusted integer to a bounded range with an inclusive floor.
+ *
+ * Unlike {@link positiveLimit}, the lower bound may be zero, which suits token
+ * overhead knobs whose valid range includes zero.
+ *
+ * @param value - Candidate number or numeric string from workflow arguments.
+ * @param fallback - Value used when the candidate is invalid or below `min`.
+ * @param min - Inclusive lower bound for a valid result.
+ * @param max - Inclusive upper bound; larger candidates clamp to this value.
+ * @returns A bounded integer within `[min, max]`.
+ */
+function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
+  const floored = Math.floor(parsed)
+  return Number.isFinite(parsed) && floored >= min ? Math.min(floored, max) : fallback
+}
+
+/**
+ * Normalizes an untrusted real number to a bounded range with an inclusive floor.
+ *
+ * @param value - Candidate number or numeric string from workflow arguments.
+ * @param fallback - Value used when the candidate is invalid or below `min`.
+ * @param min - Inclusive lower bound for a valid result.
+ * @param max - Inclusive upper bound; larger candidates clamp to this value.
+ * @returns A bounded real number within `[min, max]`.
+ */
+function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
+  return Number.isFinite(parsed) && parsed >= min ? Math.min(parsed, max) : fallback
 }
 
 /**
@@ -131,14 +172,20 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
   const synthesisReasoning = isReasoning(requestedReasoning) ? requestedReasoning : 'high'
   const synthesisModelBase = baseModel(synthesisModel)
   return Object.freeze({
+    // ADR 002 Flex admission knobs; all bounded so untrusted arguments cannot
+    // widen the cost envelope beyond the documented ceilings.
+    adapterOverheadTokens: boundedInteger(args.adapterOverheadTokens, 13_000, 0, 50_000),
     agentInstructions: configuredAgentInstructions(args.agentInstructions),
     baseRef: nonBlankString(args.base, 'origin/main'),
+    budgetGbp: boundedNumber(args.budgetGbp, 0.1, 0.01, 10),
     configArg: nonBlankString(args.config, ''),
     dryRun: args.dryRun === true,
     headRef: nonBlankString(args.head, 'HEAD'),
+    lunaReasoning: args.lunaReasoning === 'medium' ? 'medium' : 'low',
     maxAuditCandidates: positiveLimit(args.maxAuditCandidates, 30, 100),
     maxCandidates: positiveLimit(args.maxCandidates, 30, 1_000),
     maxFindings: positiveLimit(args.maxFindings, 20, 200),
+    maxLunaFlexCalls: positiveLimit(args.maxLunaFlexCalls, 4, 16),
     maxTasks: positiveLimit(args.maxTasks, 8, 64),
     // Unvalidated passthrough: the CLI prepares the review range host-side and
     // main.ts validates these fields fail-closed before any downstream use.
@@ -154,6 +201,11 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     synthesisModelName: modelName({ model: synthesisModelBase, reasoning: synthesisReasoning }),
     synthesisReasoning,
     taskKinds: Object.freeze(['docs', 'config', 'tests', 'source', 'review-summary']),
+    terraMaxInputTokens: boundedInteger(args.terraMaxInputTokens, 48_000, 1, 1_000_000),
+    terraMaxOutputTokens: boundedInteger(args.terraMaxOutputTokens, 2_500, 1, 100_000),
+    transactionMaxFiles: positiveLimit(args.transactionMaxFiles, 5, 20),
+    transactionMaxInputTokens: boundedInteger(args.transactionMaxInputTokens, 12_000, 1, 200_000),
+    transactionMaxOutputTokens: boundedInteger(args.transactionMaxOutputTokens, 750, 1, 100_000),
     workflowVersion: 'divide-and-conquer-v1',
   })
 }

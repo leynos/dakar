@@ -71,6 +71,31 @@ test('dry-run exposes routed workflow contract', () => {
   assert.equal(result.synthesisSchema, undefined)
 })
 
+test('dry-run reports the Flex lanes, budget, and reserved audit estimate', () => {
+  const result = runDryRun()
+
+  assert.deepEqual(result.lanes.luna, {
+    role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low',
+  })
+  assert.deepEqual(result.lanes['luna-medium'], {
+    role: 'luna-medium', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-medium', serviceTier: 'flex', reasoning: 'medium',
+  })
+  assert.deepEqual(result.lanes.terra, {
+    role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex', serviceTier: 'flex', reasoning: 'medium',
+  })
+  assert.equal(result.budgetGbp, 0.1)
+  assert.equal(result.pricingTableVersion, '2026-07-18')
+  // Reserved Terra audit worst case: 48000 x 1.5625/1e6 + 2500 x 7.5/1e6 = 0.09375.
+  assert.ok(Math.abs(result.reservedAuditUsd - 0.09375) < 1e-9, `reservedAuditUsd was ${result.reservedAuditUsd}`)
+  assert.equal(result.flexLimits.maxLunaFlexCalls, 4)
+  assert.equal(result.flexLimits.transactionMaxFiles, 5)
+  assert.equal(result.flexLimits.transactionMaxInputTokens, 12000)
+  assert.equal(result.flexLimits.transactionMaxOutputTokens, 750)
+  assert.equal(result.flexLimits.terraMaxInputTokens, 48000)
+  assert.equal(result.flexLimits.terraMaxOutputTokens, 2500)
+  assert.equal(result.flexLimits.adapterOverheadTokens, 13000)
+})
+
 test('dry-run honours a custom audit cap and routing policy', () => {
   const result = runDryRun({ maxAuditCandidates: 7, routingPolicy: 'legacy' })
 

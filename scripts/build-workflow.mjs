@@ -14,10 +14,12 @@ const DEFAULT_OUTPUT = path.join(ROOT, 'workflows', 'dakar-review.js')
 // is framed verbatim, while declaration-only and type-only modules are erased.
 // The metafile comparison below enforces this manifest in both directions.
 const RUNTIME_MODULES = [
+  'admission.ts',
   'candidates.ts',
   'config.ts',
   'main.ts',
   'model-routing.ts',
+  'pricing.ts',
   'prompts.ts',
   'schemas.ts',
   'shell.ts',

@@ -28,6 +28,55 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   assert.throws(() => config.reviewModels.push({ model: 'leak', reasoning: 'low' }), TypeError)
 })
 
+test('resolveWorkflowConfig supplies the ADR 002 Flex knob defaults', () => {
+  const config = resolveWorkflowConfig(undefined)
+
+  assert.equal(config.budgetGbp, 0.1)
+  assert.equal(config.maxLunaFlexCalls, 4)
+  assert.equal(config.transactionMaxFiles, 5)
+  assert.equal(config.transactionMaxInputTokens, 12000)
+  assert.equal(config.transactionMaxOutputTokens, 750)
+  assert.equal(config.terraMaxInputTokens, 48000)
+  assert.equal(config.terraMaxOutputTokens, 2500)
+  assert.equal(config.adapterOverheadTokens, 13000)
+  assert.equal(config.lunaReasoning, 'low')
+})
+
+test('Flex knobs clamp to their bounds and reject invalid input', () => {
+  const low = resolveWorkflowConfig({
+    budgetGbp: 0.001,
+    maxLunaFlexCalls: 0,
+    transactionMaxFiles: 0,
+    adapterOverheadTokens: -5,
+  })
+  assert.equal(low.budgetGbp, 0.1)
+  assert.equal(low.maxLunaFlexCalls, 4)
+  assert.equal(low.transactionMaxFiles, 5)
+  assert.equal(low.adapterOverheadTokens, 13000)
+
+  const high = resolveWorkflowConfig({
+    budgetGbp: 999,
+    maxLunaFlexCalls: 999,
+    transactionMaxFiles: 999,
+    adapterOverheadTokens: 999999,
+  })
+  assert.equal(high.budgetGbp, 10)
+  assert.equal(high.maxLunaFlexCalls, 16)
+  assert.equal(high.transactionMaxFiles, 20)
+  assert.equal(high.adapterOverheadTokens, 50000)
+
+  assert.equal(resolveWorkflowConfig({ budgetGbp: 0.05 }).budgetGbp, 0.05)
+  assert.equal(resolveWorkflowConfig({ adapterOverheadTokens: 0 }).adapterOverheadTokens, 0)
+  assert.equal(resolveWorkflowConfig({ budgetGbp: 'nope' }).budgetGbp, 0.1)
+})
+
+test('lunaReasoning accepts low and medium and rejects other values', () => {
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 'medium' }).lunaReasoning, 'medium')
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 'low' }).lunaReasoning, 'low')
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 'high' }).lunaReasoning, 'low')
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 42 }).lunaReasoning, 'low')
+})
+
 test('resolveWorkflowConfig passes the prepared review through unvalidated', () => {
   const prepared = {
     ok: true, stateFile: '/tmp/reviews.toml', reviewBase: 'a'.repeat(40), headCommit: 'b'.repeat(40),

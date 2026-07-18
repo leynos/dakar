@@ -17,6 +17,21 @@ import { appendReview, prepare } from '../scripts/review-state.mjs'
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workflowPath = join(packageRoot, 'workflows', 'dakar-review.js')
 const odwConfigPath = join(packageRoot, 'odw.config.json')
+const piAgentDir = join(packageRoot, 'adapters', 'pi')
+
+/**
+ * Build the environment for spawned ODW processes.
+ *
+ * The pi Flex adapters need Dakar's own pi configuration directory (custom
+ * `openai-flex` provider catalogue and the service-tier extension) and must
+ * skip pi's interactive version check. Both variables inherit through ODW to
+ * the adapter subprocesses it spawns.
+ *
+ * @returns {NodeJS.ProcessEnv} the parent environment plus the pi variables.
+ */
+function odwEnv() {
+  return { ...process.env, PI_CODING_AGENT_DIR: piAgentDir, PI_SKIP_VERSION_CHECK: '1' }
+}
 
 const OPTION_SPECS = new Map([
   ['repo-root', { key: 'repoRoot', value: true }],
@@ -311,6 +326,7 @@ function runOdwQuiet(options, workflowArgs) {
   const result = spawnSync(options.odwBin || 'odw', buildOdwRunArgs(options, workflowArgs, true), {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
+    env: odwEnv(),
   })
 
   if (result.status !== 0) {
@@ -343,7 +359,7 @@ function runOdwQuiet(options, workflowArgs) {
  */
 function followOdwLogs(odwBin, args, timeoutMs) {
   return new Promise((resolvePromise) => {
-    const child = spawn(odwBin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(odwBin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: odwEnv() })
     let timedOut = false
     const timer = globalThis.setTimeout(() => {
       timedOut = true
@@ -380,6 +396,7 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
     const result = spawnSync(odwBin, buildRunScopedArgs('result', options, runId), {
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
+      env: odwEnv(),
     })
     if (result.status === 0) {
       return recordReview(extractJson(result.stdout), {
@@ -412,6 +429,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   const result = spawnSync(odwBin, buildOdwRunArgs(options, workflowArgs, false), {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
+    env: odwEnv(),
   })
 
   if (result.status !== 0) {
@@ -573,6 +591,12 @@ async function run(argv) {
       return 0
     }
     workflowArgs.prepared = preparation.prepared
+    // The default deterministic-flex-v1 route dispatches through the pi Flex
+    // adapters, which resolve the API key from OPENAI_API_KEY. Warn rather than
+    // fail so a dry-run-shaped smoke test or a mocked ODW binary still runs.
+    if ((workflowArgs.routingPolicy || 'deterministic-flex-v1') === 'deterministic-flex-v1' && !process.env.OPENAI_API_KEY) {
+      process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
+    }
   }
   const outcome = options.telemetry
     ? await runOdwWithTelemetry(options, workflowArgs)

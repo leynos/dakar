@@ -37,6 +37,19 @@ export function extractAuditCandidates(prompt) {
 }
 
 /**
+ * Extract the changed files a finder pack prompt was scoped to.
+ *
+ * Finder prompts embed a `Changed files for this task: a, b` line. Keeping this
+ * shape knowledge here means a finder-prompt change only needs an edit in one
+ * place. Returns an empty array for the `(no changed files)` sentinel.
+ */
+export function extractTaskFiles(prompt) {
+  const line = prompt.split('Changed files for this task: ')[1]?.split('\n')[0] ?? ''
+  if (line === '' || line === '(no changed files)') return []
+  return line.split(', ')
+}
+
+/**
  * Build the `agent()` mock consumed by the compiled workflow body.
  *
  * `responders` is an ordered list of `{ match, respond }` entries evaluated
@@ -50,9 +63,12 @@ export function extractAuditCandidates(prompt) {
  * kept here so every mock enforces the same duplicate-label assertion and
  * recording order regardless of which milestone's fixtures are in play.
  */
-export function buildAgentMock(responders, { prompts, agentLabels }) {
+export function buildAgentMock(responders, { prompts, agentLabels, agentCalls }) {
   return async (prompt, options = {}) => {
     agentLabels.push(options.label)
+    if (agentCalls) {
+      agentCalls.push({ label: options.label, adapter: options.adapter, model: options.model, phase: options.phase })
+    }
     assert.equal(prompts.has(options.label), false, `duplicate agent label: ${options.label}`)
     prompts.set(options.label, prompt)
     for (const { match, respond } of responders) {

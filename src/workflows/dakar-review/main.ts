@@ -9,17 +9,21 @@ import {
   normalizeCandidates,
   SEVERITY_RANK,
 } from './candidates.ts'
+import { admit } from './admission.ts'
 import { resolveWorkflowConfig } from './config.ts'
-import { modelName } from './model-routing.ts'
+import { flexLaneRole, modelName } from './model-routing.ts'
+import { DEFAULT_PRICING_TABLE, estimateWorstCaseUsd } from './pricing.ts'
 import { auditPrompt, taskPrompt } from './prompts.ts'
 import { AUDIT_SCHEMA, CANDIDATE_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
-import { buildTaskGraph, defaultTaskGraph } from './task-graph.ts'
+import { buildFlexFinderPlan, defaultTaskGraph } from './task-graph.ts'
 import type {
+  AdmissionRefusal,
   AuditResult,
   BoundCandidateResult,
   Candidate,
   CandidateResult,
   Discarded,
+  LedgerEntry,
   PreparedReview,
   PromptContext,
   ReviewTask,
@@ -35,26 +39,49 @@ import type {
 async function workflowMain() {
 const config = resolveWorkflowConfig(args)
 const {
+  adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS,
   agentInstructions: AGENT_INSTRUCTIONS,
   baseRef: BASE_REF,
+  budgetGbp: BUDGET_GBP,
   configArg: CONFIG_ARG,
   dryRun: DRY_RUN,
   headRef: HEAD_REF,
+  lunaReasoning: LUNA_REASONING,
   maxAuditCandidates: MAX_AUDIT_CANDIDATES,
   maxCandidates: MAX_CANDIDATES,
   maxFindings: MAX_FINDINGS,
+  maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
   maxTasks: MAX_TASKS,
   prepared: PREPARED,
   repoRoot: REPO_ROOT,
   reviewModels: REVIEW_MODELS,
   routingPolicy: ROUTING_POLICY,
   synthesisAdapter: SYNTHESIS_ADAPTER,
-  synthesisModelBase: SYNTHESIS_MODEL_BASE,
   synthesisModelName: SYNTHESIS_MODEL_NAME,
   taskKinds: TASK_KINDS,
+  terraMaxInputTokens: TERRA_MAX_INPUT_TOKENS,
+  terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
+  transactionMaxFiles: TRANSACTION_MAX_FILES,
+  transactionMaxInputTokens: TRANSACTION_MAX_INPUT_TOKENS,
+  transactionMaxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS,
   workflowVersion: WORKFLOW_VERSION,
 } = config
 const TASK_GRAPH_CONFIG = { maxFindings: MAX_FINDINGS, maxTasks: MAX_TASKS, reviewModels: REVIEW_MODELS }
+// The host selects each Flex lane; ADR 002 forbids an agent promoting itself to
+// a costlier model or service tier. `lunaReasoning` chooses the low or the
+// pre-registered medium escalation adapter for the finder lane.
+const PRICING_TABLE = DEFAULT_PRICING_TABLE
+const LUNA_LANE = flexLaneRole(LUNA_REASONING === 'medium' ? 'luna-medium' : 'luna')
+const TERRA_LANE = flexLaneRole('terra')
+const BUDGET_USD = BUDGET_GBP * PRICING_TABLE.usdPerGbp
+const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
+  model: TERRA_LANE.model,
+  serviceTier: TERRA_LANE.serviceTier,
+  inputTokens: TERRA_MAX_INPUT_TOKENS,
+  cachedInputTokens: 0,
+  maxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
+})
+const FLEX_LANES = Object.freeze({ luna: flexLaneRole('luna'), 'luna-medium': flexLaneRole('luna-medium'), terra: TERRA_LANE })
 // Configuration is resolved host-side by the CLI and supplied verbatim; the
 // workflow no longer re-resolves it through an agent call.
 const CODE_RABBIT_CONFIG = CONFIG_ARG || 'auto'
@@ -87,6 +114,22 @@ if (DRY_RUN) {
       maxCandidates: MAX_CANDIDATES,
       maxFindings: MAX_FINDINGS,
       maxAuditCandidates: MAX_AUDIT_CANDIDATES,
+    },
+    // ADR 002 Flex route: report the host-selected lanes, the hard budget, the
+    // reserved Terra audit worst case, and the additional admission knobs.
+    lanes: FLEX_LANES,
+    budgetGbp: BUDGET_GBP,
+    budgetUsd: BUDGET_USD,
+    pricingTableVersion: PRICING_TABLE.version,
+    reservedAuditUsd: RESERVED_AUDIT_USD,
+    flexLimits: {
+      maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
+      transactionMaxFiles: TRANSACTION_MAX_FILES,
+      transactionMaxInputTokens: TRANSACTION_MAX_INPUT_TOKENS,
+      transactionMaxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS,
+      terraMaxInputTokens: TERRA_MAX_INPUT_TOKENS,
+      terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
+      adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS,
     },
     defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
     candidateSchema: CANDIDATE_SCHEMA,
@@ -132,10 +175,39 @@ if (prepared.alreadyReviewed || prepared.commitCount === 0) {
   }
 }
 
+// Reserve the required Terra audit before spending on any optional Luna call
+// (ADR 002 principle 5). If the reserve alone cannot fit the hard budget, no
+// model call runs at all.
+const ledger: LedgerEntry[] = []
+if (RESERVED_AUDIT_USD > BUDGET_USD) {
+  return {
+    ok: false,
+    stage: 'admission',
+    error: `reserved Terra audit worst case USD ${RESERVED_AUDIT_USD.toFixed(5)} exceeds the hard budget USD ${BUDGET_USD.toFixed(5)}`,
+    config: CODE_RABBIT_CONFIG,
+    prepared,
+    routingPolicy: ROUTING_POLICY,
+    metrics: {
+      routingPolicy: ROUTING_POLICY,
+      budgetUsd: BUDGET_USD,
+      reservedAuditUsd: RESERVED_AUDIT_USD,
+      pricingTableVersion: PRICING_TABLE.version,
+    },
+  }
+}
+
 phase('Plan')
-let taskGraph: ReviewTask[]
+let packs: ReviewTask[]
+let truncatedFiles: string[]
 try {
-  taskGraph = buildTaskGraph(prepared, TASK_GRAPH_CONFIG)
+  const plan = buildFlexFinderPlan(prepared, {
+    maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
+    transactionMaxFiles: TRANSACTION_MAX_FILES,
+    lunaRole: LUNA_LANE.role === 'luna-medium' ? 'luna-medium' : 'luna',
+    maxFindings: MAX_FINDINGS,
+  })
+  packs = plan.packs
+  truncatedFiles = plan.truncatedFiles
 } catch (error) {
   return {
     ok: false,
@@ -145,10 +217,48 @@ try {
     prepared,
   }
 }
+const taskGraph = packs
+
+// Admission is deterministic and runs before any dispatch: each finder pack's
+// worst case is estimated from a bounded token model and admitted only if it
+// leaves room for the standing audit reservation. Refused packs are skipped
+// with a structured reason rather than silently dropped.
+const admissionState = { budgetUsd: BUDGET_USD, reservedAuditUsd: RESERVED_AUDIT_USD, spentUsd: 0 }
+const admissionRefusals: AdmissionRefusal[] = []
+const admittedPacks: ReviewTask[] = []
+for (const pack of packs) {
+  const promptChars = taskPrompt(pack, prepared, promptContext).length
+  const inputTokens = Math.min(Math.ceil(promptChars / 4), TRANSACTION_MAX_INPUT_TOKENS) + ADAPTER_OVERHEAD_TOKENS
+  const worstCaseUsd = estimateWorstCaseUsd(PRICING_TABLE, {
+    model: LUNA_LANE.model,
+    serviceTier: LUNA_LANE.serviceTier,
+    inputTokens,
+    cachedInputTokens: 0,
+    maxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS,
+  })
+  const decision = admit(admissionState, worstCaseUsd, 'luna-transaction')
+  if (!decision.admitted) {
+    admissionRefusals.push({ callId: pack.taskId, kind: 'luna-transaction', reason: decision.reason, worstCaseUsd })
+    continue
+  }
+  admissionState.spentUsd += worstCaseUsd
+  ledger.push({
+    callId: pack.taskId,
+    phase: 'Review',
+    lane: 'luna-flex',
+    model: LUNA_LANE.model,
+    serviceTier: LUNA_LANE.serviceTier,
+    reasoningEffort: LUNA_LANE.reasoning,
+    estimatedWorstCaseUsd: worstCaseUsd,
+    pricingTableVersion: PRICING_TABLE.version,
+    attempts: 1,
+  })
+  admittedPacks.push(pack)
+}
 
 phase('Review')
 const reviewAttempts = await parallel(
-    taskGraph.map((task) => async () => ({
+    admittedPacks.map((task) => async () => ({
       task,
       result: await agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext), {
         label: task.taskId,
@@ -160,7 +270,7 @@ const reviewAttempts = await parallel(
     })),
   )
 const failedTaskIds = reviewAttempts
-  .map((value, index) => (value === null || value.result === null ? taskGraph[index]?.taskId : undefined))
+  .map((value, index) => (value === null || value.result === null ? admittedPacks[index]?.taskId : undefined))
   .filter((taskId): taskId is string => typeof taskId === 'string')
 const taskResults = reviewAttempts.filter(
   (value): value is BoundCandidateResult => value !== null && value.result !== null,
@@ -186,19 +296,53 @@ const auditCandidatePool = [
 const { auditCandidates, overCap } = compactForAudit(auditCandidatePool, MAX_AUDIT_CANDIDATES)
 
 phase('Audit')
-// One issue-set audit replaces per-candidate verification. Skipping the call
-// entirely when there are zero audit candidates is a valid, zero-model-call
-// outcome; the standard-tier adapter is retained until M4 introduces Flex lanes.
-const auditResult: AuditResult =
-  auditCandidates.length === 0
-    ? { verdicts: [] }
-    : await agent<AuditResult>(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
-        label: 'audit',
-        phase: 'Audit',
-        adapter: SYNTHESIS_ADAPTER,
-        model: SYNTHESIS_MODEL_BASE,
-        schema: AUDIT_SCHEMA,
-      })
+// One Terra Flex issue-set audit replaces per-candidate verification. Skipping
+// the call entirely when there are zero audit candidates is a valid,
+// zero-model-call outcome that consumes none of the reservation.
+let auditResult: AuditResult = { verdicts: [] }
+if (auditCandidates.length > 0) {
+  const auditDecision = admit(admissionState, RESERVED_AUDIT_USD, 'terra-audit')
+  if (!auditDecision.admitted) {
+    return {
+      ok: false,
+      stage: 'admission',
+      error: auditDecision.reason,
+      config: CODE_RABBIT_CONFIG,
+      prepared,
+      taskGraph,
+      admissionRefusals,
+      metrics: {
+        routingPolicy: ROUTING_POLICY,
+        budgetUsd: BUDGET_USD,
+        reservedAuditUsd: RESERVED_AUDIT_USD,
+        spentUsd: admissionState.spentUsd,
+        pricingTableVersion: PRICING_TABLE.version,
+        ledger,
+        ledgerTotalEstimatedUsd: ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0),
+        admissionRefusalCount: admissionRefusals.length,
+      },
+    }
+  }
+  admissionState.spentUsd += RESERVED_AUDIT_USD
+  ledger.push({
+    callId: 'audit',
+    phase: 'Audit',
+    lane: 'terra-flex',
+    model: TERRA_LANE.model,
+    serviceTier: TERRA_LANE.serviceTier,
+    reasoningEffort: TERRA_LANE.reasoning,
+    estimatedWorstCaseUsd: RESERVED_AUDIT_USD,
+    pricingTableVersion: PRICING_TABLE.version,
+    attempts: 1,
+  })
+  auditResult = await agent<AuditResult>(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+    label: 'audit',
+    phase: 'Audit',
+    adapter: TERRA_LANE.adapter,
+    model: TERRA_LANE.model,
+    schema: AUDIT_SCHEMA,
+  })
+}
 const rawVerdicts: Verdict[] = auditResult && Array.isArray(auditResult.verdicts) ? auditResult.verdicts : []
 
 // Re-pair returned verdicts to audit candidates by candidateId. Verdicts citing
@@ -251,12 +395,15 @@ if (!auditComplete) {
     taskGraph,
     candidates: auditCandidates,
     verdicts: rawVerdicts,
+    admissionRefusals,
     metrics: {
       auditCandidateCount: auditCandidates.length,
       overAuditCapCount: overCap.length,
       unknownAuditVerdictCount,
       duplicateAuditVerdictCount,
       routingPolicy: ROUTING_POLICY,
+      ledger,
+      ledgerTotalEstimatedUsd: ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0),
     },
   }
 }
@@ -314,11 +461,13 @@ const authoritativeReport = [
 // authoritative construction already superseded, so it has been removed.
 const finalVerdict = authoritativeFindings.length > 0 ? 'changes-requested' : 'pass'
 
+const ledgerTotalEstimatedUsd = ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0)
 const metrics = {
   workflowVersion: WORKFLOW_VERSION,
   verdict: finalVerdict,
   taskCount: taskGraph.length,
   plannedTaskCount: taskGraph.length,
+  admittedTaskCount: admittedPacks.length,
   completedTaskCount: taskResults.length,
   failedTaskCount: failedTaskIds.length,
   failedTaskIds,
@@ -337,6 +486,17 @@ const metrics = {
     model: task.assignedModel,
     adapter: task.adapter,
   })),
+  // ADR 002 cost ledger: reported usage and cost stay absent in-workflow and
+  // are enriched by the CLI/harness later; estimates are the admission trail.
+  ledger,
+  ledgerTotalEstimatedUsd,
+  budgetUsd: BUDGET_USD,
+  reservedAuditUsd: RESERVED_AUDIT_USD,
+  spentUsd: admissionState.spentUsd,
+  pricingTableVersion: PRICING_TABLE.version,
+  admissionRefusalCount: admissionRefusals.length,
+  truncatedFiles,
+  truncatedFileCount: truncatedFiles.length,
   diffStat: prepared.diffStat,
   warnings: prepared.warnings || [],
 }
@@ -372,6 +532,7 @@ return {
   verdicts,
   findings: authoritativeFindings,
   discarded,
+  admissionRefusals,
   summary: authoritativeSummary,
   reportMarkdown: authoritativeReport,
   metrics,

@@ -56,6 +56,57 @@
       "flags": {
         "model": ["--model"]
       }
+    },
+    "pi-luna-flex": {
+      "label": "pi coding agent, Luna, Flex processing, low reasoning",
+      "command": [
+        "pi",
+        "-p",
+        "--no-session",
+        "-e",
+        "adapters/pi/flex-tier.ts",
+        "--provider",
+        "openai-flex",
+        "--model",
+        "gpt-5.6-luna",
+        "--thinking",
+        "low"
+      ],
+      "stdin": "{prompt}"
+    },
+    "pi-luna-flex-medium": {
+      "label": "pi coding agent, Luna, Flex processing, medium reasoning",
+      "command": [
+        "pi",
+        "-p",
+        "--no-session",
+        "-e",
+        "adapters/pi/flex-tier.ts",
+        "--provider",
+        "openai-flex",
+        "--model",
+        "gpt-5.6-luna",
+        "--thinking",
+        "medium"
+      ],
+      "stdin": "{prompt}"
+    },
+    "pi-terra-flex": {
+      "label": "pi coding agent, Terra, Flex processing, medium reasoning",
+      "command": [
+        "pi",
+        "-p",
+        "--no-session",
+        "-e",
+        "adapters/pi/flex-tier.ts",
+        "--provider",
+        "openai-flex",
+        "--model",
+        "gpt-5.6-terra",
+        "--thinking",
+        "medium"
+      ],
+      "stdin": "{prompt}"
     }
   }
 }

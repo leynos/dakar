@@ -162,6 +162,20 @@ function discardedFromVerdicts(candidates, verdicts) {
   return discarded;
 }
 
+// src/workflows/dakar-review/admission.ts
+function admit(state, worstCaseUsd, kind) {
+  const projected = kind === "luna-transaction" ? state.spentUsd + worstCaseUsd + state.reservedAuditUsd : state.spentUsd + worstCaseUsd;
+  if (projected <= state.budgetUsd) {
+    return { admitted: true, worstCaseUsd };
+  }
+  const overUsd = projected - state.budgetUsd;
+  return {
+    admitted: false,
+    reason: `admitting this ${kind} would exceed the budget by USD ${overUsd.toFixed(5)}`,
+    worstCaseUsd
+  };
+}
+
 // src/workflows/dakar-review/model-routing.ts
 var DEFAULT_REVIEW_MODELS = Object.freeze([
   Object.freeze({ label: "codex-medium", model: "gpt-5.5", reasoning: "medium", role: "medium" }),
@@ -191,6 +205,16 @@ function modelForRole(role, reviewModels) {
 function isReasoning(value) {
   return value === "low" || value === "medium" || value === "high";
 }
+var FLEX_LANE_ROLES = Object.freeze({
+  luna: Object.freeze({ role: "luna", model: "gpt-5.6-luna", adapter: "pi-luna-flex", serviceTier: "flex", reasoning: "low" }),
+  "luna-medium": Object.freeze({ role: "luna-medium", model: "gpt-5.6-luna", adapter: "pi-luna-flex-medium", serviceTier: "flex", reasoning: "medium" }),
+  terra: Object.freeze({ role: "terra", model: "gpt-5.6-terra", adapter: "pi-terra-flex", serviceTier: "flex", reasoning: "medium" })
+});
+function flexLaneRole(role) {
+  const spec = FLEX_LANE_ROLES[role];
+  if (spec === void 0) throw new Error(`unknown flex lane role: ${role}`);
+  return spec;
+}
 
 // src/workflows/dakar-review/config.ts
 function isObject(value) {
@@ -200,6 +224,15 @@ function positiveLimit(value, fallback, ceiling) {
   const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
   const floored = Math.floor(parsed);
   return Number.isFinite(parsed) && floored > 0 ? Math.min(floored, ceiling) : fallback;
+}
+function boundedInteger(value, fallback, min, max) {
+  const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
+  const floored = Math.floor(parsed);
+  return Number.isFinite(parsed) && floored >= min ? Math.min(floored, max) : fallback;
+}
+function boundedNumber(value, fallback, min, max) {
+  const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= min ? Math.min(parsed, max) : fallback;
 }
 function nonBlankString(value, fallback) {
   return typeof value === "string" && value.trim() !== "" ? value : fallback;
@@ -238,14 +271,20 @@ function resolveWorkflowConfig(value) {
   const synthesisReasoning = isReasoning(requestedReasoning) ? requestedReasoning : "high";
   const synthesisModelBase = baseModel(synthesisModel);
   return Object.freeze({
+    // ADR 002 Flex admission knobs; all bounded so untrusted arguments cannot
+    // widen the cost envelope beyond the documented ceilings.
+    adapterOverheadTokens: boundedInteger(args2.adapterOverheadTokens, 13e3, 0, 5e4),
     agentInstructions: configuredAgentInstructions(args2.agentInstructions),
     baseRef: nonBlankString(args2.base, "origin/main"),
+    budgetGbp: boundedNumber(args2.budgetGbp, 0.1, 0.01, 10),
     configArg: nonBlankString(args2.config, ""),
     dryRun: args2.dryRun === true,
     headRef: nonBlankString(args2.head, "HEAD"),
+    lunaReasoning: args2.lunaReasoning === "medium" ? "medium" : "low",
     maxAuditCandidates: positiveLimit(args2.maxAuditCandidates, 30, 100),
     maxCandidates: positiveLimit(args2.maxCandidates, 30, 1e3),
     maxFindings: positiveLimit(args2.maxFindings, 20, 200),
+    maxLunaFlexCalls: positiveLimit(args2.maxLunaFlexCalls, 4, 16),
     maxTasks: positiveLimit(args2.maxTasks, 8, 64),
     // Unvalidated passthrough: the CLI prepares the review range host-side and
     // main.ts validates these fields fail-closed before any downstream use.
@@ -261,9 +300,64 @@ function resolveWorkflowConfig(value) {
     synthesisModelName: modelName({ model: synthesisModelBase, reasoning: synthesisReasoning }),
     synthesisReasoning,
     taskKinds: Object.freeze(["docs", "config", "tests", "source", "review-summary"]),
+    terraMaxInputTokens: boundedInteger(args2.terraMaxInputTokens, 48e3, 1, 1e6),
+    terraMaxOutputTokens: boundedInteger(args2.terraMaxOutputTokens, 2500, 1, 1e5),
+    transactionMaxFiles: positiveLimit(args2.transactionMaxFiles, 5, 20),
+    transactionMaxInputTokens: boundedInteger(args2.transactionMaxInputTokens, 12e3, 1, 2e5),
+    transactionMaxOutputTokens: boundedInteger(args2.transactionMaxOutputTokens, 750, 1, 1e5),
     workflowVersion: "divide-and-conquer-v1"
   });
 }
+
+// src/workflows/dakar-review/pricing.ts
+var TOKENS_PER_MILLION = 1e6;
+function bandFor(table, model, serviceTier) {
+  const key = `${model}:${serviceTier}`;
+  const band = table.rates[key];
+  if (band === void 0) {
+    throw new Error(
+      `no pricing band for "${key}" in pricing table version "${table.version}"`
+    );
+  }
+  return band;
+}
+function estimateWorstCaseUsd(table, call) {
+  const band = bandFor(table, call.model, call.serviceTier);
+  const uncachedInputUsd = call.inputTokens * band.cacheWriteUsdPerMTok / TOKENS_PER_MILLION;
+  const cachedInputUsd = call.cachedInputTokens * band.cachedInputUsdPerMTok / TOKENS_PER_MILLION;
+  const outputUsd = call.maxOutputTokens * band.outputUsdPerMTok / TOKENS_PER_MILLION;
+  return uncachedInputUsd + cachedInputUsd + outputUsd;
+}
+var DEFAULT_PRICING_TABLE = {
+  version: "2026-07-18",
+  usdPerGbp: 1.27,
+  rates: {
+    "gpt-5.6-luna:flex": {
+      inputUsdPerMTok: 0.5,
+      cachedInputUsdPerMTok: 0.05,
+      cacheWriteUsdPerMTok: 0.625,
+      outputUsdPerMTok: 3
+    },
+    "gpt-5.6-terra:flex": {
+      inputUsdPerMTok: 1.25,
+      cachedInputUsdPerMTok: 0.125,
+      cacheWriteUsdPerMTok: 1.5625,
+      outputUsdPerMTok: 7.5
+    },
+    "gpt-5.6-luna:standard": {
+      inputUsdPerMTok: 1,
+      cachedInputUsdPerMTok: 0.1,
+      cacheWriteUsdPerMTok: 1.25,
+      outputUsdPerMTok: 6
+    },
+    "gpt-5.6-terra:standard": {
+      inputUsdPerMTok: 2.5,
+      cachedInputUsdPerMTok: 0.25,
+      cacheWriteUsdPerMTok: 3.125,
+      outputUsdPerMTok: 15
+    }
+  }
+};
 
 // src/workflows/dakar-review/shell.ts
 function shellWord(value) {
@@ -437,6 +531,12 @@ var AUDIT_SCHEMA = {
 };
 
 // src/workflows/dakar-review/task-graph.ts
+var FLEX_PACK_KIND_ORDER = ["source", "tests", "config", "docs"];
+function flexPackKind(path) {
+  const kind = classifyPath(path);
+  if (kind === "tests" || kind === "config" || kind === "docs") return kind;
+  return "source";
+}
 function classifyPath(path) {
   if (/\b(test|tests|spec|__tests__)\b/u.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/u.test(path)) return "tests";
   if (/\.(md|mdx|rst|adoc)$/u.test(path) || path.startsWith("docs/")) return "docs";
@@ -511,6 +611,38 @@ function buildTaskGraph(prepared, config) {
   tasks.push(taskSpec("review-summary", prepared.changedFiles || [], 0, config));
   return tasks;
 }
+function buildFlexFinderPlan(prepared, config) {
+  const lane = flexLaneRole(config.lunaRole);
+  const perPack = Math.max(1, config.transactionMaxFiles);
+  const buckets = /* @__PURE__ */ new Map();
+  for (const file of prepared.changedFiles || []) {
+    const kind = flexPackKind(file);
+    const files = buckets.get(kind) ?? [];
+    files.push(file);
+    buckets.set(kind, files);
+  }
+  const orderedChunks = [];
+  for (const kind of FLEX_PACK_KIND_ORDER) {
+    for (const files of chunk(buckets.get(kind) || [], perPack)) orderedChunks.push({ kind, files });
+  }
+  const admittedChunks = orderedChunks.slice(0, Math.max(1, config.maxLunaFlexCalls));
+  const truncatedFiles = orderedChunks.slice(Math.max(1, config.maxLunaFlexCalls)).flatMap((entry) => entry.files);
+  const packs = admittedChunks.map((entry, index) => ({
+    taskId: `luna-flex-${index + 1}`,
+    kind: entry.kind,
+    files: entry.files,
+    assignedModel: modelName({ model: lane.model, reasoning: lane.reasoning }),
+    adapter: lane.adapter,
+    model: lane.model,
+    modelLabel: lane.adapter,
+    role: lane.role,
+    serviceTier: lane.serviceTier,
+    reasoningEffort: lane.reasoning,
+    maxFindings: Math.max(1, Math.min(config.maxFindings, entry.kind === "source" ? 6 : 3)),
+    verificationPolicy: "verify-all"
+  }));
+  return { packs, truncatedFiles };
+}
 function defaultTaskGraph(config) {
   const tasks = [
     taskSpec("source", ["src/example.js"], 0, config),
@@ -526,26 +658,46 @@ function defaultTaskGraph(config) {
 async function workflowMain() {
   const config = resolveWorkflowConfig(args);
   const {
+    adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS,
     agentInstructions: AGENT_INSTRUCTIONS,
     baseRef: BASE_REF,
+    budgetGbp: BUDGET_GBP,
     configArg: CONFIG_ARG,
     dryRun: DRY_RUN,
     headRef: HEAD_REF,
+    lunaReasoning: LUNA_REASONING,
     maxAuditCandidates: MAX_AUDIT_CANDIDATES,
     maxCandidates: MAX_CANDIDATES,
     maxFindings: MAX_FINDINGS,
+    maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
     maxTasks: MAX_TASKS,
     prepared: PREPARED,
     repoRoot: REPO_ROOT,
     reviewModels: REVIEW_MODELS,
     routingPolicy: ROUTING_POLICY,
     synthesisAdapter: SYNTHESIS_ADAPTER,
-    synthesisModelBase: SYNTHESIS_MODEL_BASE,
     synthesisModelName: SYNTHESIS_MODEL_NAME,
     taskKinds: TASK_KINDS,
+    terraMaxInputTokens: TERRA_MAX_INPUT_TOKENS,
+    terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
+    transactionMaxFiles: TRANSACTION_MAX_FILES,
+    transactionMaxInputTokens: TRANSACTION_MAX_INPUT_TOKENS,
+    transactionMaxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS,
     workflowVersion: WORKFLOW_VERSION
   } = config;
   const TASK_GRAPH_CONFIG = { maxFindings: MAX_FINDINGS, maxTasks: MAX_TASKS, reviewModels: REVIEW_MODELS };
+  const PRICING_TABLE = DEFAULT_PRICING_TABLE;
+  const LUNA_LANE = flexLaneRole(LUNA_REASONING === "medium" ? "luna-medium" : "luna");
+  const TERRA_LANE = flexLaneRole("terra");
+  const BUDGET_USD = BUDGET_GBP * PRICING_TABLE.usdPerGbp;
+  const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
+    model: TERRA_LANE.model,
+    serviceTier: TERRA_LANE.serviceTier,
+    inputTokens: TERRA_MAX_INPUT_TOKENS,
+    cachedInputTokens: 0,
+    maxOutputTokens: TERRA_MAX_OUTPUT_TOKENS
+  });
+  const FLEX_LANES = Object.freeze({ luna: flexLaneRole("luna"), "luna-medium": flexLaneRole("luna-medium"), terra: TERRA_LANE });
   const CODE_RABBIT_CONFIG = CONFIG_ARG || "auto";
   const promptContext = Object.freeze({
     agentInstructions: AGENT_INSTRUCTIONS,
@@ -572,6 +724,22 @@ async function workflowMain() {
         maxCandidates: MAX_CANDIDATES,
         maxFindings: MAX_FINDINGS,
         maxAuditCandidates: MAX_AUDIT_CANDIDATES
+      },
+      // ADR 002 Flex route: report the host-selected lanes, the hard budget, the
+      // reserved Terra audit worst case, and the additional admission knobs.
+      lanes: FLEX_LANES,
+      budgetGbp: BUDGET_GBP,
+      budgetUsd: BUDGET_USD,
+      pricingTableVersion: PRICING_TABLE.version,
+      reservedAuditUsd: RESERVED_AUDIT_USD,
+      flexLimits: {
+        maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
+        transactionMaxFiles: TRANSACTION_MAX_FILES,
+        transactionMaxInputTokens: TRANSACTION_MAX_INPUT_TOKENS,
+        transactionMaxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS,
+        terraMaxInputTokens: TERRA_MAX_INPUT_TOKENS,
+        terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
+        adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS
       },
       defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
       candidateSchema: CANDIDATE_SCHEMA,
@@ -600,10 +768,35 @@ async function workflowMain() {
       headCommit: prepared.headCommit
     };
   }
+  const ledger = [];
+  if (RESERVED_AUDIT_USD > BUDGET_USD) {
+    return {
+      ok: false,
+      stage: "admission",
+      error: `reserved Terra audit worst case USD ${RESERVED_AUDIT_USD.toFixed(5)} exceeds the hard budget USD ${BUDGET_USD.toFixed(5)}`,
+      config: CODE_RABBIT_CONFIG,
+      prepared,
+      routingPolicy: ROUTING_POLICY,
+      metrics: {
+        routingPolicy: ROUTING_POLICY,
+        budgetUsd: BUDGET_USD,
+        reservedAuditUsd: RESERVED_AUDIT_USD,
+        pricingTableVersion: PRICING_TABLE.version
+      }
+    };
+  }
   phase("Plan");
-  let taskGraph;
+  let packs;
+  let truncatedFiles;
   try {
-    taskGraph = buildTaskGraph(prepared, TASK_GRAPH_CONFIG);
+    const plan = buildFlexFinderPlan(prepared, {
+      maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
+      transactionMaxFiles: TRANSACTION_MAX_FILES,
+      lunaRole: LUNA_LANE.role === "luna-medium" ? "luna-medium" : "luna",
+      maxFindings: MAX_FINDINGS
+    });
+    packs = plan.packs;
+    truncatedFiles = plan.truncatedFiles;
   } catch (error) {
     return {
       ok: false,
@@ -613,9 +806,42 @@ async function workflowMain() {
       prepared
     };
   }
+  const taskGraph = packs;
+  const admissionState = { budgetUsd: BUDGET_USD, reservedAuditUsd: RESERVED_AUDIT_USD, spentUsd: 0 };
+  const admissionRefusals = [];
+  const admittedPacks = [];
+  for (const pack of packs) {
+    const promptChars = taskPrompt(pack, prepared, promptContext).length;
+    const inputTokens = Math.min(Math.ceil(promptChars / 4), TRANSACTION_MAX_INPUT_TOKENS) + ADAPTER_OVERHEAD_TOKENS;
+    const worstCaseUsd = estimateWorstCaseUsd(PRICING_TABLE, {
+      model: LUNA_LANE.model,
+      serviceTier: LUNA_LANE.serviceTier,
+      inputTokens,
+      cachedInputTokens: 0,
+      maxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS
+    });
+    const decision = admit(admissionState, worstCaseUsd, "luna-transaction");
+    if (!decision.admitted) {
+      admissionRefusals.push({ callId: pack.taskId, kind: "luna-transaction", reason: decision.reason, worstCaseUsd });
+      continue;
+    }
+    admissionState.spentUsd += worstCaseUsd;
+    ledger.push({
+      callId: pack.taskId,
+      phase: "Review",
+      lane: "luna-flex",
+      model: LUNA_LANE.model,
+      serviceTier: LUNA_LANE.serviceTier,
+      reasoningEffort: LUNA_LANE.reasoning,
+      estimatedWorstCaseUsd: worstCaseUsd,
+      pricingTableVersion: PRICING_TABLE.version,
+      attempts: 1
+    });
+    admittedPacks.push(pack);
+  }
   phase("Review");
   const reviewAttempts = await parallel(
-    taskGraph.map((task) => async () => ({
+    admittedPacks.map((task) => async () => ({
       task,
       result: await agent(taskPrompt(task, prepared, promptContext), {
         label: task.taskId,
@@ -626,7 +852,7 @@ async function workflowMain() {
       })
     }))
   );
-  const failedTaskIds = reviewAttempts.map((value, index) => value === null || value.result === null ? taskGraph[index]?.taskId : void 0).filter((taskId) => typeof taskId === "string");
+  const failedTaskIds = reviewAttempts.map((value, index) => value === null || value.result === null ? admittedPacks[index]?.taskId : void 0).filter((taskId) => typeof taskId === "string");
   const taskResults = reviewAttempts.filter(
     (value) => value !== null && value.result !== null
   );
@@ -647,13 +873,50 @@ async function workflowMain() {
   ];
   const { auditCandidates, overCap } = compactForAudit(auditCandidatePool, MAX_AUDIT_CANDIDATES);
   phase("Audit");
-  const auditResult = auditCandidates.length === 0 ? { verdicts: [] } : await agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
-    label: "audit",
-    phase: "Audit",
-    adapter: SYNTHESIS_ADAPTER,
-    model: SYNTHESIS_MODEL_BASE,
-    schema: AUDIT_SCHEMA
-  });
+  let auditResult = { verdicts: [] };
+  if (auditCandidates.length > 0) {
+    const auditDecision = admit(admissionState, RESERVED_AUDIT_USD, "terra-audit");
+    if (!auditDecision.admitted) {
+      return {
+        ok: false,
+        stage: "admission",
+        error: auditDecision.reason,
+        config: CODE_RABBIT_CONFIG,
+        prepared,
+        taskGraph,
+        admissionRefusals,
+        metrics: {
+          routingPolicy: ROUTING_POLICY,
+          budgetUsd: BUDGET_USD,
+          reservedAuditUsd: RESERVED_AUDIT_USD,
+          spentUsd: admissionState.spentUsd,
+          pricingTableVersion: PRICING_TABLE.version,
+          ledger,
+          ledgerTotalEstimatedUsd: ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0),
+          admissionRefusalCount: admissionRefusals.length
+        }
+      };
+    }
+    admissionState.spentUsd += RESERVED_AUDIT_USD;
+    ledger.push({
+      callId: "audit",
+      phase: "Audit",
+      lane: "terra-flex",
+      model: TERRA_LANE.model,
+      serviceTier: TERRA_LANE.serviceTier,
+      reasoningEffort: TERRA_LANE.reasoning,
+      estimatedWorstCaseUsd: RESERVED_AUDIT_USD,
+      pricingTableVersion: PRICING_TABLE.version,
+      attempts: 1
+    });
+    auditResult = await agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+      label: "audit",
+      phase: "Audit",
+      adapter: TERRA_LANE.adapter,
+      model: TERRA_LANE.model,
+      schema: AUDIT_SCHEMA
+    });
+  }
   const rawVerdicts = auditResult && Array.isArray(auditResult.verdicts) ? auditResult.verdicts : [];
   const auditById = new Map(auditCandidates.map((candidate) => [candidate.candidateId, candidate]));
   const chosenVerdicts = /* @__PURE__ */ new Map();
@@ -690,12 +953,15 @@ async function workflowMain() {
       taskGraph,
       candidates: auditCandidates,
       verdicts: rawVerdicts,
+      admissionRefusals,
       metrics: {
         auditCandidateCount: auditCandidates.length,
         overAuditCapCount: overCap.length,
         unknownAuditVerdictCount,
         duplicateAuditVerdictCount,
-        routingPolicy: ROUTING_POLICY
+        routingPolicy: ROUTING_POLICY,
+        ledger,
+        ledgerTotalEstimatedUsd: ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0)
       }
     };
   }
@@ -743,11 +1009,13 @@ async function workflowMain() {
     ])
   ].join("\n");
   const finalVerdict = authoritativeFindings.length > 0 ? "changes-requested" : "pass";
+  const ledgerTotalEstimatedUsd = ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0);
   const metrics = {
     workflowVersion: WORKFLOW_VERSION,
     verdict: finalVerdict,
     taskCount: taskGraph.length,
     plannedTaskCount: taskGraph.length,
+    admittedTaskCount: admittedPacks.length,
     completedTaskCount: taskResults.length,
     failedTaskCount: failedTaskIds.length,
     failedTaskIds,
@@ -766,6 +1034,17 @@ async function workflowMain() {
       model: task.assignedModel,
       adapter: task.adapter
     })),
+    // ADR 002 cost ledger: reported usage and cost stay absent in-workflow and
+    // are enriched by the CLI/harness later; estimates are the admission trail.
+    ledger,
+    ledgerTotalEstimatedUsd,
+    budgetUsd: BUDGET_USD,
+    reservedAuditUsd: RESERVED_AUDIT_USD,
+    spentUsd: admissionState.spentUsd,
+    pricingTableVersion: PRICING_TABLE.version,
+    admissionRefusalCount: admissionRefusals.length,
+    truncatedFiles,
+    truncatedFileCount: truncatedFiles.length,
     diffStat: prepared.diffStat,
     warnings: prepared.warnings || []
   };
@@ -795,6 +1074,7 @@ async function workflowMain() {
     verdicts,
     findings: authoritativeFindings,
     discarded,
+    admissionRefusals,
     summary: authoritativeSummary,
     reportMarkdown: authoritativeReport,
     metrics,

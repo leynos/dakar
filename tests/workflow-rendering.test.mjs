@@ -16,18 +16,13 @@ import { buildAgentMock, extractAuditCandidates, FixtureFailure } from './helper
 function renderingResponders() {
   return [
     {
-      match: 'source-1',
-      respond: () => ({
-        taskId: 'source-1', summary: 'candidate',
+      match: (label) => /^luna-flex-\d+$/u.test(label),
+      respond: (_prompt, options) => ({
+        taskId: options.label, summary: 'candidate',
         candidates: [{ title: 'Bug', severity: 'high', path: 'src/a.js', line: 2,
           detail: 'Broken branch', evidence: 'diff line', confidence: 'high' }],
         metrics: { filesInspected: 1, findingsProposed: 1 },
       }),
-    },
-    {
-      match: 'review-summary-1',
-      respond: () => ({ taskId: 'review-summary-1', summary: 'covered', candidates: [],
-        metrics: { filesInspected: 1, findingsProposed: 0 } }),
     },
     {
       match: 'audit',

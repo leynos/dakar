@@ -187,6 +187,50 @@ process.stdout.write(JSON.stringify({ ok: true, agentInstructions: input.agentIn
   assert.doesNotMatch(result.agentInstructions.content, /Mutable marker/u)
 })
 
+test('CLI sets PI_CODING_AGENT_DIR and PI_SKIP_VERSION_CHECK on the ODW spawn', () => {
+  const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-pi-env-repo-'))
+  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  const fakeOdw = join(targetRepo, 'capture-odw.mjs')
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  ok: true,
+  seenEnv: {
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR ?? null,
+    PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK ?? null,
+  },
+}))
+`)
+  chmodSync(fakeOdw, 0o755)
+
+  const output = runCli(
+    [
+      '--dry-run',
+      '--repo-root',
+      targetRepo,
+      '--base',
+      'HEAD',
+      '--runs-root',
+      runsRoot,
+      '--timeout',
+      '20',
+      '--odw-bin',
+      fakeOdw,
+    ],
+    { env: { XDG_CONFIG_HOME: xdgConfig } },
+  )
+  const result = JSON.parse(output)
+
+  assert.equal(result.ok, true)
+  assert.equal(result.seenEnv.PI_SKIP_VERSION_CHECK, '1')
+  assert.match(result.seenEnv.PI_CODING_AGENT_DIR, /adapters\/pi$/u)
+  assert.ok(result.seenEnv.PI_CODING_AGENT_DIR.startsWith(repoRoot), 'PI_CODING_AGENT_DIR points at the package root adapters/pi')
+})
+
 test('CLI reads AGENTS.md from the resolved commit when the named ref moves', () => {
   const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-agents-moving-ref-'))
   const toolDir = mkdtempSync(join(tmpdir(), 'dakar-moving-git-'))

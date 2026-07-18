@@ -11,7 +11,11 @@ import assert from 'node:assert/strict'
 import fc from 'fast-check'
 
 import { DEFAULT_REVIEW_MODELS } from '../src/workflows/dakar-review/model-routing.ts'
-import { buildTaskGraph, chunk, distributeTaskSlots } from '../src/workflows/dakar-review/task-graph.ts'
+import { buildFlexFinderPlan, buildTaskGraph, chunk, distributeTaskSlots } from '../src/workflows/dakar-review/task-graph.ts'
+
+function flexConfig(overrides = {}) {
+  return { maxLunaFlexCalls: 4, transactionMaxFiles: 5, lunaRole: 'luna', maxFindings: 20, ...overrides }
+}
 
 function plannerConfig(overrides = {}) {
   return {
@@ -73,6 +77,52 @@ test('buildTaskGraph fails closed when maxTasks cannot fit every group', () => {
   // Four distinct groups plus a mandatory review summary cannot fit maxTasks=4;
   // the planner must abort rather than silently truncate the plan.
   assert.throws(() => buildTaskGraph({ changedFiles }, config), /maxTasks=4 is too small/u)
+})
+
+test('buildFlexFinderPlan bounds packs, drops the review summary, and routes to Luna', () => {
+  const changedFiles = ['src/a.js', 'src/b.js', 'tests/a.test.js', 'docs/guide.md']
+  const { packs, truncatedFiles } = buildFlexFinderPlan({ changedFiles }, flexConfig())
+
+  assert.ok(packs.length <= 4, 'never more than maxLunaFlexCalls packs')
+  assert.equal(truncatedFiles.length, 0)
+  assert.equal(packs.every((pack) => pack.files.length <= 5), true)
+  assert.equal(packs.some((pack) => pack.kind === 'review-summary'), false)
+  assert.equal(packs.every((pack) => pack.adapter === 'pi-luna-flex'), true)
+  assert.equal(packs.every((pack) => pack.model === 'gpt-5.6-luna'), true)
+  assert.equal(packs.every((pack) => pack.role === 'luna'), true)
+  assert.equal(packs.every((pack) => pack.serviceTier === 'flex'), true)
+  assert.equal(packs.every((pack) => pack.reasoningEffort === 'low'), true)
+  // Every changed file is covered by exactly one pack in the untruncated case.
+  const covered = packs.flatMap((pack) => pack.files)
+  assert.deepEqual([...covered].sort(), [...changedFiles].sort())
+})
+
+test('buildFlexFinderPlan packs are homogeneous by kind when file counts allow', () => {
+  const changedFiles = ['src/a.js', 'src/b.js', 'tests/a.test.js', 'tests/b.test.js', 'docs/guide.md']
+  const { packs } = buildFlexFinderPlan({ changedFiles }, flexConfig({ transactionMaxFiles: 2 }))
+
+  for (const pack of packs) {
+    const kinds = new Set(pack.files.map((file) => (file.startsWith('docs/') || file.endsWith('.md') ? 'docs' : file.includes('test') ? 'tests' : 'source')))
+    assert.equal(kinds.size, 1, `pack ${pack.taskId} must be homogeneous, saw ${[...kinds]}`)
+  }
+})
+
+test('buildFlexFinderPlan truncates files beyond the Luna coverage bound', () => {
+  const changedFiles = Array.from({ length: 26 }, (_, index) => `src/module-${String(index).padStart(2, '0')}.js`)
+  const { packs, truncatedFiles } = buildFlexFinderPlan({ changedFiles }, flexConfig())
+
+  assert.equal(packs.length, 4)
+  assert.equal(packs.reduce((sum, pack) => sum + pack.files.length, 0), 20)
+  assert.equal(truncatedFiles.length, 6)
+  // The 4x5 coverage window packs the first 20 files; the last 6 are truncated.
+  assert.deepEqual(truncatedFiles, changedFiles.slice(20))
+})
+
+test('buildFlexFinderPlan routes to the escalation lane when asked', () => {
+  const { packs } = buildFlexFinderPlan({ changedFiles: ['src/a.js'] }, flexConfig({ lunaRole: 'luna-medium' }))
+  assert.equal(packs[0].adapter, 'pi-luna-flex-medium')
+  assert.equal(packs[0].reasoningEffort, 'medium')
+  assert.equal(packs[0].role, 'luna-medium')
 })
 
 test('distributeTaskSlots gives every group at least one slot within budget', () => {
