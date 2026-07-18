@@ -126,6 +126,33 @@ only when no repository-local CodeRabbit YAML exists. It is useful for agents
 that should apply one house review policy across repositories without copying a
 `.coderabbit.yaml` into every checkout.
 
+### How much of the CodeRabbit format is honoured
+
+Dakar treats the resolved file as policy context for the review agents, not
+as a parsed configuration. The host discovers the path with the precedence
+above and injects it into every finder and audit prompt; the agents are
+instructed to prioritize explicit policy violations and cite policy rules as
+evidence. No key is parsed, validated, or enforced host-side yet, so a
+malformed file is not detected (only a missing explicit `--config` path
+fails closed).
+
+| Support level | What it covers |
+| - | - |
+| Host-enforced | Path discovery and precedence; fail-closed handling of a missing explicit `--config` path. Review limits, budget, and ranges come from Dakar's own CLI and workflow arguments, never from this file. |
+| Model-mediated | Natural-language policy keys the agents can read and honour: `tone_instructions`, `language`, `reviews.profile`, `reviews.path_instructions`, and the `pre_merge_checks.custom_checks` bodies. Adherence is interpretive, not guaranteed, and instructions are not sliced per changed path. |
+| Ignored | CodeRabbit platform features: `early_access`, `chat.integrations`, `knowledge_base`, `issue_enrichment`, `code_generation`, pull-request surface options (`auto_title_instructions`, `high_level_summary_*`, walkthrough and labelling options, `request_changes_workflow`, `abort_on_close`, `auto_review`, `estimate_code_review_effort`), and `tools` integrations (github-checks, languagetool, clippy, presidio). |
+
+_Table: CodeRabbit configuration support levels in the current route._
+
+Host-enforced interpretation of `path_instructions` (sliced per evidence
+pack) and `pre_merge_checks` (run as deterministic gates before semantic
+review) are planned work; see roadmap items 2.3, 6.2, and 7.5.2, and the
+deterministic host boundary in
+[ADR 002](adr-002-deterministic-tiered-review-cost.md). Note that a root
+`AGENTS.md` is loaded through its own dedicated path (described below)
+independently of any `knowledge_base.code_guidelines` patterns in the
+CodeRabbit file.
+
 ODW normally runs agents in copied workspaces. Those copies may not contain
 the repository's `.git` directory, so live review runs should pass `repoRoot`
 as an absolute path. Finder and verifier prompts use `git -C <repoRoot>` for
