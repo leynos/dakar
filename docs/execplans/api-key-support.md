@@ -1022,6 +1022,18 @@ M7 live ledger (running record; spend total updated per run):
   standard-rate Codex probe era and the failed-adapter run) are
   counted in the probe spend already recorded. Running M7 spend:
   roughly USD 0.06 including all probes and failed attempts.
+- `ddlint` 294 (small, 2026-07-18): complete, `verdict: pass`,
+  0 findings, 1 discarded. Full pipeline exercised: two parallel Luna
+  packs (~12 s) and the Terra issue-set audit (~11 s), three ledger
+  entries. Estimated USD 0.1214; reported USD 0.0818 (21 input /
+  1,986 output / 97,747 cacheRead / 81,782 cacheWrite) — under the
+  USD 0.11 stretch. Hand assessment: strong. The finder proposed
+  requiring an approved-SHA allow-list; the audit rejected it as
+  `not_applicable`, correctly reasoning that the contract test
+  enforces the mechanically testable pinned-full-SHA invariant and an
+  allow-list would defeat the PR's purpose (Dependabot SHA
+  ownership) — the adversarial issue-set audit doing precisely its
+  ADR 002 job. Running M7 spend: roughly USD 0.14.
 
 ## Interfaces and dependencies
 
