@@ -55,7 +55,7 @@ invocation therefore also needs a `prepared` object built the same way; it is
 shown here for illustration only, and `dakar-review` is the supported path:
 
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
            "repoRoot":"/path/to/dakar","prepared":{"...":"see prepare output"}}'
 ```
@@ -103,7 +103,7 @@ checkout being reviewed.
   `deterministic-flex-v1` route the audit call always runs on the fixed
   Terra Flex lane (`gpt-5.6-terra`, medium reasoning); these flags no
   longer change which model or adapter performs the audit.
-- `--timeout <seconds>` sets the ODW wait timeout. The default is `900`.
+- `--timeout <seconds>` sets the ODW wait timeout. The default is `3600`.
   Operators overriding this should keep it above the review's
   `worstCaseReviewSeconds` (2,020 s at default limits; see the dry-run
   example below), the worst-case wall clock the retry schedule can take.
@@ -262,7 +262,7 @@ The equivalent direct ODW invocation, once a matching `prepared` object has
 been produced by `scripts/review-state.mjs prepare`, is:
 
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
            "repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state",
            "prepared":{"...":"see prepare output"}}'
@@ -476,7 +476,7 @@ The following optional limits are supported:
 Example:
 
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 900 \
+odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
   --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
            "repoRoot":"/path/to/dakar","prepared":{"...":"see prepare output"},
            "maxTasks":4,"maxFindings":5}'

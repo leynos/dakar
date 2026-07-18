@@ -13,9 +13,9 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
 
@@ -59,9 +59,48 @@ export function verifyPinnedHead(actualSha, entry) {
 }
 
 /**
+ * Assert that `target` is contained within `base`, throwing otherwise.
+ *
+ * Uses `path.relative` rather than a lexical prefix so sibling directories
+ * sharing a name prefix (`out` versus `out-evil`) cannot slip through, and
+ * rejects any relative path that begins with `..` or is itself absolute.
+ *
+ * @param {string} base - the directory the target must stay within.
+ * @param {string} target - the path being checked for containment.
+ * @returns {void}
+ */
+function assertContained(base, target) {
+  const rel = relative(base, target)
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`state root escapes output directory: expected within ${base}, got ${target}`)
+  }
+}
+
+/**
+ * Resolve symlinks on the deepest existing ancestor of a path, then re-attach
+ * the still-missing suffix. This exposes a symlinked ancestor's real location
+ * without requiring the full path to exist yet.
+ *
+ * @param {string} target - an absolute path that may not fully exist.
+ * @returns {string} the path with its existing prefix realpath-resolved.
+ */
+function realpathOfExisting(target) {
+  let existing = target
+  while (!existsSync(existing)) {
+    const parent = dirname(existing)
+    if (parent === existing) return target
+    existing = parent
+  }
+  const realExisting = realpathSync(existing)
+  const suffix = relative(existing, target)
+  return suffix === '' ? realExisting : resolve(realExisting, suffix)
+}
+
+/**
  * Assert that a candidate scratch path resolves strictly inside an output
  * directory, then create it. Fails closed on any traversal or absolute path
- * that would place state outside the caller's own scratch tree.
+ * that would place state outside the caller's own scratch tree, and on any
+ * symlinked ancestor that would physically redirect writes outside it.
  *
  * @param {string} outDir - the output directory the candidate must stay within.
  * @param {string} candidate - the proposed state-root path.
@@ -70,10 +109,11 @@ export function verifyPinnedHead(actualSha, entry) {
 export function guardStateRoot(outDir, candidate) {
   const resolvedOut = resolve(outDir)
   const resolvedCandidate = resolve(candidate)
-  const withinBoundary = resolvedCandidate === resolvedOut || resolvedCandidate.startsWith(resolvedOut + '/')
-  if (!withinBoundary) {
-    throw new Error(`state root escapes output directory: expected within ${resolvedOut}, got ${resolvedCandidate}`)
-  }
+  // First a lexical containment check on the resolved paths.
+  assertContained(resolvedOut, resolvedCandidate)
+  // Then re-check on the realpaths of both, so a symlinked scratch ancestor
+  // cannot redirect state writes to a sibling tree that only looks contained.
+  assertContained(realpathOfExisting(resolvedOut), realpathOfExisting(resolvedCandidate))
   mkdirSync(resolvedCandidate, { recursive: true })
   return resolvedCandidate
 }

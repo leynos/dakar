@@ -111,11 +111,13 @@ test('dry-run reports the Flex retry schedule and worst-case timeout budget', ()
   assert.ok(result.worstCaseReviewSeconds < 3600, 'the worst case must fit the outer --timeout 3600')
 })
 
-test('dry-run honours a custom audit cap and routing policy', () => {
+test('dry-run honours a custom audit cap and clamps an unknown routing policy', () => {
+  // Only 'deterministic-flex-v1' is a live routing policy, so an unknown value
+  // clamps to it rather than being echoed back into the dry-run contract.
   const result = runDryRun({ maxAuditCandidates: 7, routingPolicy: 'legacy' })
 
   assert.equal(result.limits.maxAuditCandidates, 7)
-  assert.equal(result.routingPolicy, 'legacy')
+  assert.equal(result.routingPolicy, 'deterministic-flex-v1')
 })
 
 test('dry-run ignores a supplied prepared review and does not echo it', () => {

@@ -116,6 +116,70 @@ process.stdout.write(JSON.stringify({ ok: true, configPath, config }))
   return { targetRepo, runsRoot, xdgConfig, fakeOdw }
 }
 
+// Builds a committed repository with a base commit and a distinct head commit so
+// the host-side prepare step yields a non-skip review range whose headCommit,
+// reviewBase, commitCount, and changedFiles a faithful fake ODW can echo back.
+function setUpRecordRepo() {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-'))
+  const targetRepo = join(tempRoot, 'repo')
+  mkdirSync(targetRepo, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  writeFileSync(join(targetRepo, 'a.txt'), 'a\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'a.txt'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base'])
+  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(targetRepo, 'b.txt'), 'b\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'b.txt'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'head'])
+  const head = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  return { tempRoot, targetRepo, base, head }
+}
+
+// A faithful fake ODW that echoes the prepared snapshot into both the result and
+// recordInput, as the real workflow does. `recordInputOverride` is spread onto
+// recordInput last (so a test can tamper with a single field), and `bodyPrefix`
+// is inlined before the result is emitted (so a fake can append DAKAR_USAGE_LOG
+// lines first).
+function writePreparedEchoOdw(path, { recordInputOverride = '{}', bodyPrefix = '' } = {}) {
+  writeFileSync(
+    path,
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+const values = process.argv.slice(2)
+const input = JSON.parse(values[values.indexOf('--args') + 1])
+const prepared = input.prepared
+${bodyPrefix}
+const result = {
+  ok: true,
+  verdict: 'pass',
+  reviewBase: prepared.reviewBase,
+  headCommit: prepared.headCommit,
+  commitCount: prepared.commitCount,
+  changedFiles: prepared.changedFiles,
+  findings: [],
+  reportMarkdown: '# Dakar review\\n\\nNo blocking findings were accepted.',
+  metrics: { taskCount: 2 },
+  recordInput: {
+    reviewId: 'head-' + prepared.headCommit,
+    baseCommit: prepared.reviewBase,
+    headCommit: prepared.headCommit,
+    commitCount: prepared.commitCount,
+    changedFiles: prepared.changedFiles,
+    models: ['gpt-5.5/high'],
+    findingsTotal: 0,
+    summary: 'No blocking findings were accepted.',
+    metrics: { taskCount: 2 },
+    ...${recordInputOverride},
+  },
+}
+process.stdout.write(JSON.stringify(result))
+`,
+  )
+  chmodSync(path, 0o755)
+}
+
 test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout', () => {
   const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpConfigCaptureRepo()
   const packagedConfig = join(repoRoot, 'odw.config.json')
@@ -465,44 +529,18 @@ test('CLI surfaces git failures while loading trusted instructions', () => {
 })
 
 test('CLI records a successful workflow result via appendReview through the trusted state root', () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-primary-'))
-  const workflowStateFile = join(tempRoot, 'workflow-claimed', 'reviews.toml')
-  const fakeOdw = join(tempRoot, 'odw')
+  const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
+  const fakeOdw = join(tempRoot, 'odw.mjs')
   // A successful workflow result no longer records itself; it emits recordInput
-  // and leaves recording to the CLI, which derives the state path from the
-  // trusted repo-root/state-root, never from any workflow-supplied path.
-  const fakeResult = {
-    ok: true,
-    verdict: 'pass',
-    reviewBase: 'a'.repeat(40),
-    headCommit: 'b'.repeat(40),
-    commitCount: 1,
-    changedFiles: ['src/example.js'],
-    findings: [],
-    reportMarkdown: '# Dakar review\n\nNo blocking findings were accepted.',
-    metrics: { modelAssignments: [{ model: 'gpt-5.5/high' }] },
-    recordInput: {
-      stateFile: workflowStateFile,
-      reviewId: 'head-bbbb',
-      baseCommit: 'a'.repeat(40),
-      headCommit: 'b'.repeat(40),
-      commitCount: 1,
-      changedFiles: ['src/example.js'],
-      models: ['gpt-5.5/high'],
-      findingsTotal: 0,
-      summary: 'No blocking findings were accepted.',
-      metrics: { taskCount: 2 },
-    },
-  }
-  writeFileSync(
-    fakeOdw,
-    `#!/bin/sh\nprintf 'running fake-run ...\\n%s\\n' '${JSON.stringify(fakeResult).replace(/'/g, "'\"'\"'")}'\n`,
-  )
-  chmodSync(fakeOdw, 0o755)
+  // echoing the prepared snapshot, and the CLI records it, deriving the state
+  // path from the trusted repo-root/state-root, never a workflow-supplied path.
+  writePreparedEchoOdw(fakeOdw)
 
   const output = runCli([
     '--repo-root',
-    repoRoot,
+    targetRepo,
+    '--base',
+    base,
     '--state-root',
     join(tempRoot, 'trusted-state'),
     '--odw-bin',
@@ -516,14 +554,141 @@ test('CLI records a successful workflow result via appendReview through the trus
   assert.equal(result.ok, true)
   assert.equal(result.recorded.ok, true)
   assert.equal(result.recorded.recordedBy, 'dakar-review')
-  // The CLI derives the path from the trusted roots, never the workflow claim.
+  // The CLI derives the path from the trusted roots.
   assert.ok(result.stateFile.startsWith(`${join(tempRoot, 'trusted-state')}/`))
-  assert.notEqual(result.stateFile, workflowStateFile)
-  assert.match(stateText, /head_commit = "bbbb/u)
+  // The recorded head is the prepared head, validated against the snapshot.
+  assert.ok(stateText.includes(`head_commit = "${head}"`))
   assert.match(stateText, /taskCount/u)
   // The retired recovery marker must not reappear on the primary path.
   assert.doesNotMatch(stateText, /recordRecoveredByCli/u)
   assert.equal(result.recorded.recoveredBy, undefined)
+})
+
+test('CLI fails closed with a record stage when a successful result lacks recordInput', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const stateRoot = join(tempRoot, 'trusted-state')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  // An ok result with no recordInput must never be treated as a complete review;
+  // the CLI refuses to record and exits non-zero.
+  writeFileSync(
+    fakeOdw,
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], reportMarkdown: 'x', metrics: {} }))
+`,
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  const output = JSON.parse(result.stdout)
+
+  assert.equal(result.status, 1)
+  assert.equal(output.ok, false)
+  assert.equal(output.stage, 'record')
+  assert.match(output.error, /lacked recordInput/u)
+  assert.equal(output.recorded.ok, false)
+  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
+})
+
+test('CLI refuses to record when recordInput contradicts the prepared snapshot', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const stateRoot = join(tempRoot, 'trusted-state')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  // recordInput carries a valid-shaped but different headCommit; the CLI must
+  // refuse to record it, keep recordInput for retry, and append nothing.
+  writePreparedEchoOdw(fakeOdw, { recordInputOverride: `{ headCommit: 'c'.repeat(40) }` })
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  const output = JSON.parse(result.stdout)
+
+  assert.equal(result.status, 1)
+  assert.equal(output.ok, false)
+  assert.equal(output.stage, 'record')
+  assert.match(output.error, /headCommit/u)
+  assert.ok(output.recordInput, 'recordInput is preserved for manual retry')
+  assert.equal(output.recordInput.headCommit, 'c'.repeat(40))
+  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
+})
+
+test('CLI attaches reported usage before recording so reviews.toml carries the tokens', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const stateRoot = join(tempRoot, 'trusted-state')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  // The fake writes two usage lines to the CLI-provided DAKAR_USAGE_LOG before
+  // emitting its result; the CLI must attach them before recording so the tokens
+  // land in the persisted metrics_json, not just the printed result.
+  writePreparedEchoOdw(fakeOdw, {
+    bodyPrefix: `const usageLog = process.env.DAKAR_USAGE_LOG
+appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-luna', usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 12000 } }) + '\\n')
+appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-terra', usage: { input: 40000, output: 2000, cacheRead: 8000, cacheWrite: 0 } }) + '\\n')`,
+  })
+
+  const output = JSON.parse(
+    runCli(['--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')]),
+  )
+
+  assert.equal(output.ok, true)
+  assert.equal(Array.isArray(output.metrics.reportedUsage), true)
+  assert.equal(output.metrics.reportedUsage.length, 2)
+  assert.deepEqual(output.metrics.reportedTokens, { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 })
+  const stateText = readFileSync(output.stateFile, 'utf8')
+  assert.match(stateText, /reportedTokens/u)
+  assert.match(stateText, /41000/u)
+})
+
+test('CLI defaults the ODW wait timeout to 3600 seconds when --timeout is omitted', () => {
+  const { targetRepo, runsRoot, xdgConfig } = setUpArgsCaptureRepo()
+  const fakeOdw = join(targetRepo, 'argv-odw.mjs')
+  writeFileSync(
+    fakeOdw,
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ ok: true, dryRun: true, receivedArgv: process.argv.slice(2) }))
+`,
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = JSON.parse(
+    runCli(['--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw], {
+      env: { XDG_CONFIG_HOME: xdgConfig },
+    }),
+  )
+  const argv = result.receivedArgv
+  const timeoutIndex = argv.indexOf('--timeout')
+
+  assert.notEqual(timeoutIndex, -1, 'the ODW run carries a --timeout flag')
+  assert.equal(argv[timeoutIndex + 1], '3600', 'the default wait timeout exceeds worstCaseReviewSeconds')
+})
+
+test('CLI warns about a missing OPENAI_API_KEY even for an unknown routing policy', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  // An unknown routing policy clamps to deterministic-flex-v1, which still needs
+  // the pi Flex key, so the missing-key warning must not be suppressed.
+  writePreparedEchoOdw(fakeOdw)
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      '--repo-root', targetRepo,
+      '--base', base,
+      '--state-root', join(tempRoot, 'state'),
+      '--odw-bin', fakeOdw,
+      '--runs-root', join(tempRoot, 'runs'),
+      '--routing-policy', 'bogus',
+    ],
+    { cwd: repoRoot, encoding: 'utf8', env: { ...process.env, XDG_CONFIG_HOME: xdgConfig, OPENAI_API_KEY: '' }, stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+
+  assert.match(result.stderr, /OPENAI_API_KEY is not set/u)
 })
 
 test('CLI fails closed with a record stage when appendReview rejects the review', () => {
@@ -675,6 +840,40 @@ test('CLI skips the review without invoking ODW when nothing is unreviewed', () 
   assert.equal(existsSync(marker), false)
   // A skipped review records nothing: no reviews.toml under the trusted state root.
   assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
+})
+
+test('CLI skip result honours --format markdown by emitting the JSON fallback', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-skip-md-'))
+  const targetRepo = join(tempRoot, 'repo')
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  mkdirSync(targetRepo, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
+  const fakeOdw = join(tempRoot, 'odw')
+  writeFileSync(fakeOdw, `#!/bin/sh\nexit 1\n`)
+  chmodSync(fakeOdw, 0o755)
+
+  // The skip result carries no reportMarkdown, so markdown must fall back to the
+  // JSON serialization printWorkflowOutput emits; the output stays parseable.
+  const output = runCli(
+    [
+      '--repo-root', targetRepo,
+      '--base', 'HEAD',
+      '--head', 'HEAD',
+      '--state-root', join(tempRoot, 'state'),
+      '--odw-bin', fakeOdw,
+      '--runs-root', join(tempRoot, 'runs'),
+      '--format', 'markdown',
+    ],
+    { env: { XDG_CONFIG_HOME: xdgConfig } },
+  )
+  const result = JSON.parse(output)
+
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.match(result.reason, /No unreviewed commits/u)
 })
 
 test('CLI fails with a prepare envelope without invoking ODW when refs are invalid', () => {

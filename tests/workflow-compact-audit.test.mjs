@@ -21,15 +21,26 @@ function candidate(overrides = {}) {
   }
 }
 
-test('compactForAudit orders candidates by severity then stable path/line/id', () => {
+test('compactForAudit orders by severity rank, then path, then line, then candidateId', () => {
+  // Two shared severities (high, medium) held by several candidates that differ
+  // by path, line, and candidateId, so the full deterministic tiebreak chain
+  // (compactForAudit sorts by bySeverity: rank, path, line, id) is exercised
+  // rather than only severity-stable order.
   const input = [
-    candidate({ candidateId: 'c-low', severity: 'low', path: 'src/z.js', line: 5, title: 'low' }),
-    candidate({ candidateId: 'c-crit', severity: 'critical', path: 'src/b.js', line: 2, title: 'crit' }),
-    candidate({ candidateId: 'c-high', severity: 'high', path: 'src/a.js', line: 1, title: 'high' }),
+    candidate({ candidateId: 'h-b-2', severity: 'high', path: 'src/b.js', line: 2, title: 'h-b-2' }),
+    candidate({ candidateId: 'm-a-9', severity: 'medium', path: 'src/a.js', line: 9, title: 'm-a-9' }),
+    candidate({ candidateId: 'h-a-5', severity: 'high', path: 'src/a.js', line: 5, title: 'h-a-5' }),
+    candidate({ candidateId: 'h-a-1-y', severity: 'high', path: 'src/a.js', line: 1, title: 'h-a-1-y' }),
+    candidate({ candidateId: 'h-a-1-x', severity: 'high', path: 'src/a.js', line: 1, title: 'h-a-1-x' }),
+    candidate({ candidateId: 'm-a-3', severity: 'medium', path: 'src/a.js', line: 3, title: 'm-a-3' }),
   ]
   const { auditCandidates, overCap } = compactForAudit(input, 30)
 
-  assert.deepEqual(auditCandidates.map((c) => c.title), ['crit', 'high', 'low'])
+  // high before medium; within high: path a < b, then line 1 < 5, then id x < y.
+  assert.deepEqual(
+    auditCandidates.map((c) => c.candidateId),
+    ['h-a-1-x', 'h-a-1-y', 'h-a-5', 'h-b-2', 'm-a-3', 'm-a-9'],
+  )
   assert.deepEqual(overCap, [])
 })
 

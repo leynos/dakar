@@ -9,7 +9,7 @@
  * corpus.
  */
 
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -53,8 +53,25 @@ test('guardStateRoot accepts a candidate strictly inside the output directory', 
 test('guardStateRoot rejects a relative traversal that escapes the output directory', () => {
   const outDir = mkdtempSync(join(tmpdir(), 'dakar-harness-out-'))
   const escaping = join(outDir, '..', 'escape')
+  // The traversal target exists on disk, so a naive realpath step would not save
+  // a lexical check that failed to reject it.
+  mkdirSync(resolve(escaping), { recursive: true })
 
   assert.throws(() => guardStateRoot(outDir, escaping), /escapes output directory/u)
+})
+
+test('guardStateRoot rejects a candidate redirected outside via a symlinked ancestor', () => {
+  const tmpA = mkdtempSync(join(tmpdir(), 'dakar-harness-a-'))
+  const tmpB = mkdtempSync(join(tmpdir(), 'dakar-harness-b-'))
+  const outDir = join(tmpA, 'out')
+  const elsewhere = join(tmpB, 'elsewhere')
+  mkdirSync(outDir, { recursive: true })
+  mkdirSync(elsewhere, { recursive: true })
+  // <out>/state is a symlink that redirects into a sibling tree; a candidate
+  // under it is lexically inside <out> but physically escapes it.
+  symlinkSync(elsewhere, join(outDir, 'state'))
+
+  assert.throws(() => guardStateRoot(outDir, join(outDir, 'state', 'comenq-140')), /escapes output directory/u)
 })
 
 test('guardStateRoot rejects an absolute path elsewhere on the filesystem', () => {

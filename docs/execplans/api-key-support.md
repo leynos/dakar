@@ -354,6 +354,39 @@ the conflict in `Decision Log`, and escalate.
     with `--max-luna-calls` (effective pack cap is the smaller), with
     truncation accounting and documentation updated. 237/237 tests;
     `make check` green via scrutineer.
+  - [x] (2026-07-19 00:20Z) Round-2 review verified and dispositioned
+    per the operator's process: a wyvern team verified every finding
+    against the current code, a scribe applied the eight valid
+    documentation findings, and thirteen verified code items were
+    fixed red-first (skip-path format seam; fail-closed record
+    validation against the CLI's prepared snapshot; reported usage
+    attached before recording so `reviews.toml` carries it; ODW wait
+    default raised to 3,600 s above the enforced worst case;
+    `guardStateRoot` hardened with `path.relative` containment plus
+    realpath symlink checks and a symlink-escape test; `routingPolicy`
+    clamped to the sole live policy so bogus values cannot suppress
+    the missing-key warning; per-review jitter seeds
+    (`<head>:<callId>`); the audit's changed-files context bounded to
+    candidate paths with a truncation marker; compact-audit ordering
+    test strengthened; mock predicates guarded; `recordInput.models`
+    derived from the ledger of completed calls; the exchange snapshot
+    relabelled as a deliberate conservative haircut; and a fast-check
+    property suite over admission, backoff, and compaction
+    invariants). Skipped with evidence: multiplying the audit
+    reservation by `flexAttempts` (would refuse every default-budget
+    review — 0.094 x 3 = 0.281 USD against a 0.127 USD budget — and
+    contradicts ADR 002 scheduling rule 6 on unbilled
+    resource-unavailable attempts plus the recorded M5 no-re-charge
+    decision); making partial-coverage reviews non-recordable
+    (contradicts the recorded M5/M7 downgrade-and-continue design;
+    all-failed and all-refused coverage already fails closed; a
+    future `requireFullCoverage` knob is the right home); presenting
+    the route as non-default (recorded operator decision collapsed
+    the staged cutover); tracing spans (no tracing substrate exists —
+    stderr telemetry, the ledger, and ODW events are the designed
+    observability); and the 59% docstring-coverage claim (the gate
+    reports 123/123 at 100%, `/tmp/check-dakar-r2.out:95`). 250/250
+    tests; full `make check` green via scrutineer.
 
 ## Surprises & discoveries
 

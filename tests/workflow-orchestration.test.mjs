@@ -18,10 +18,10 @@ function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts
   const finderAttempts = new Map()
   let auditAttempts = 0
   return [
-    { match: (label) => label === failedLabel, respond: () => { throw new FixtureFailure('fixture failure') } },
+    { match: (label) => failedLabel !== undefined && label === failedLabel, respond: () => { throw new FixtureFailure('fixture failure') } },
     // ODW's real agent() resolves to null on a terminal adapter failure rather
     // than throwing (observed live, M7); this responder simulates that shape.
-    { match: (label) => label === nullLabel, respond: () => null },
+    { match: (label) => nullLabel !== undefined && label === nullLabel, respond: () => null },
     {
       match: (label) => /^luna-flex-\d+$/u.test(label),
       respond: (prompt, options) => {
@@ -376,9 +376,11 @@ test('a Luna pack failing twice then succeeding retries on the deterministic sch
   assert.equal(sleepDelays.length, 2)
   assert.ok(sleepDelays[0] >= 30000 && sleepDelays[0] <= 40000, `first backoff ${sleepDelays[0]}ms`)
   assert.ok(sleepDelays[1] >= 60000 && sleepDelays[1] <= 70000, `second backoff ${sleepDelays[1]}ms`)
-  // Exactly the deterministic jitter derived from the call id and attempt.
-  assert.equal(sleepDelays[0], (30 + deterministicJitter('luna-flex-1', 2, 10)) * 1000)
-  assert.equal(sleepDelays[1], (60 + deterministicJitter('luna-flex-1', 3, 10)) * 1000)
+  // Exactly the deterministic jitter derived from the per-review call id (head
+  // commit prefix) and attempt.
+  const head = 'b'.repeat(40)
+  assert.equal(sleepDelays[0], (30 + deterministicJitter(`${head}:luna-flex-1`, 2, 10)) * 1000)
+  assert.equal(sleepDelays[1], (60 + deterministicJitter(`${head}:luna-flex-1`, 3, 10)) * 1000)
   assert.equal(result.findings.length, 1)
 })
 
@@ -487,8 +489,23 @@ test('an audit failing twice then succeeding recovers with the retry sleeps reco
   const auditCalls = agentCalls.filter((call) => call.label === 'audit')
   assert.equal(auditCalls.length, 3)
   assert.equal(sleepDelays.length, 2)
-  assert.equal(sleepDelays[0], (30 + deterministicJitter('audit', 2, 10)) * 1000)
-  assert.equal(sleepDelays[1], (60 + deterministicJitter('audit', 3, 10)) * 1000)
+  const head = 'b'.repeat(40)
+  assert.equal(sleepDelays[0], (30 + deterministicJitter(`${head}:audit`, 2, 10)) * 1000)
+  assert.equal(sleepDelays[1], (60 + deterministicJitter(`${head}:audit`, 3, 10)) * 1000)
+})
+
+test('recordInput.models is derived from the ledger of completed calls', async () => {
+  // An ordinary review runs one Luna finder and the Terra audit, so both models
+  // are recorded in first-appearance order.
+  const ordinary = await runWorkflow()
+  assert.equal(ordinary.result.ok, true)
+  assert.deepEqual(ordinary.result.recordInput.models, ['gpt-5.6-luna', 'gpt-5.6-terra'])
+
+  // A zero-candidate review skips the audit, so only the Luna finder's model is
+  // recorded — never the configured REVIEW_MODELS.
+  const auditSkipped = await runWorkflow({ finderTitles: [] })
+  assert.equal(auditSkipped.result.ok, true)
+  assert.deepEqual(auditSkipped.result.recordInput.models, ['gpt-5.6-luna'])
 })
 
 test('retries share one admission: spentUsd and ledger totals are unchanged by attempts', async () => {

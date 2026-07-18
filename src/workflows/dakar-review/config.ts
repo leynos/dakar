@@ -97,6 +97,22 @@ function boundedNumber(value: unknown, fallback: number, min: number, max: numbe
   return Number.isFinite(parsed) && parsed >= min ? Math.min(parsed, max) : fallback
 }
 
+/** The sole live routing policy; every other value clamps to it. */
+const LIVE_ROUTING_POLICY = 'deterministic-flex-v1'
+
+/** The set of live routing policies an untrusted value may resolve to. */
+const LIVE_ROUTING_POLICIES: ReadonlySet<string> = new Set([LIVE_ROUTING_POLICY])
+
+/**
+ * Clamps an untrusted routing policy to a live policy.
+ *
+ * @param value - Untrusted routing-policy candidate from workflow arguments.
+ * @returns The candidate when it names a live policy, otherwise the default.
+ */
+function liveRoutingPolicy(value: unknown): string {
+  return typeof value === 'string' && LIVE_ROUTING_POLICIES.has(value) ? value : LIVE_ROUTING_POLICY
+}
+
 /**
  * Selects a non-blank string or a trusted fallback.
  *
@@ -206,9 +222,12 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     prepared: isObject(args.prepared) ? (args.prepared as PreparedReview) : undefined,
     repoRoot: nonBlankString(args.repoRoot, '.'),
     reviewModels,
-    // String passthrough recorded in metrics; the sole live value is
-    // 'deterministic-flex-v1' once M4 lands the Flex lanes.
-    routingPolicy: nonBlankString(args.routingPolicy, 'deterministic-flex-v1'),
+    // Recorded in metrics and used (via the CLI) to gate the OPENAI_API_KEY
+    // warning. Only 'deterministic-flex-v1' is a live policy, so any other value
+    // clamps to it rather than passing through: an unknown policy must never be
+    // recorded in metrics nor suppress the CLI's missing-key warning gate. This
+    // module's style is clamp-with-default, so this never throws.
+    routingPolicy: liveRoutingPolicy(args.routingPolicy),
     stateRoot: nonBlankString(args.stateRoot, ''),
     synthesisAdapter: adapterForReasoning(synthesisReasoning),
     synthesisModelBase,

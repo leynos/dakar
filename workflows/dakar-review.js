@@ -234,6 +234,11 @@ function boundedNumber(value, fallback, min, max) {
   const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
   return Number.isFinite(parsed) && parsed >= min ? Math.min(parsed, max) : fallback;
 }
+var LIVE_ROUTING_POLICY = "deterministic-flex-v1";
+var LIVE_ROUTING_POLICIES = /* @__PURE__ */ new Set([LIVE_ROUTING_POLICY]);
+function liveRoutingPolicy(value) {
+  return typeof value === "string" && LIVE_ROUTING_POLICIES.has(value) ? value : LIVE_ROUTING_POLICY;
+}
 function nonBlankString(value, fallback) {
   return typeof value === "string" && value.trim() !== "" ? value : fallback;
 }
@@ -300,9 +305,12 @@ function resolveWorkflowConfig(value) {
     prepared: isObject(args2.prepared) ? args2.prepared : void 0,
     repoRoot: nonBlankString(args2.repoRoot, "."),
     reviewModels,
-    // String passthrough recorded in metrics; the sole live value is
-    // 'deterministic-flex-v1' once M4 lands the Flex lanes.
-    routingPolicy: nonBlankString(args2.routingPolicy, "deterministic-flex-v1"),
+    // Recorded in metrics and used (via the CLI) to gate the OPENAI_API_KEY
+    // warning. Only 'deterministic-flex-v1' is a live policy, so any other value
+    // clamps to it rather than passing through: an unknown policy must never be
+    // recorded in metrics nor suppress the CLI's missing-key warning gate. This
+    // module's style is clamp-with-default, so this never throws.
+    routingPolicy: liveRoutingPolicy(args2.routingPolicy),
     stateRoot: nonBlankString(args2.stateRoot, ""),
     synthesisAdapter: adapterForReasoning(synthesisReasoning),
     synthesisModelBase,
@@ -339,6 +347,9 @@ function estimateWorstCaseUsd(table, call) {
 }
 var DEFAULT_PRICING_TABLE = {
   version: "2026-07-18",
+  // Deliberately conservative (haircut) GBP->USD conversion snapshot, chosen
+  // below the prevailing spot rate so GBP budgets under-admit rather than
+  // over-admit. Versioned data, revised with the rest of this table.
   usdPerGbp: 1.27,
   rates: {
     "gpt-5.6-luna:flex": {
@@ -451,7 +462,19 @@ ${JSON.stringify(candidate, null, 2)}`,
   ].join("\n");
 }
 function auditPrompt(candidates, prepared, context, remainingBudgetNote) {
-  const changedFiles = (prepared.changedFiles || []).join(", ") || "(no changed files)";
+  const AUDIT_PATH_LIST_CAP = 40;
+  const candidatePaths = [];
+  const seenPaths = /* @__PURE__ */ new Set();
+  for (const candidate of candidates) {
+    const path = candidate.path;
+    if (typeof path !== "string" || path === "" || seenPaths.has(path)) continue;
+    seenPaths.add(path);
+    candidatePaths.push(path);
+  }
+  const listedPaths = candidatePaths.slice(0, AUDIT_PATH_LIST_CAP);
+  const totalChangedFiles = (prepared.changedFiles || []).length;
+  const omittedCount = totalChangedFiles - listedPaths.length;
+  const changedFiles = `${listedPaths.join(", ") || "(no changed files)"} (${totalChangedFiles} changed files in range${omittedCount > 0 ? `; ${omittedCount} not listed` : ""})`;
   return [
     "You are the adversarial issue-set auditor for Dakar code review.",
     "You receive every surviving candidate finding for one review at once and issue one consolidated audit.",
@@ -930,7 +953,10 @@ async function workflowMain() {
   const reviewOutcomes = await parallel(
     admittedPacks.map((task) => async () => ({
       task,
-      outcome: await callWithFlexRetry(RETRY_CONFIG, task.taskId, () => agent(taskPrompt(task, prepared, promptContext), {
+      // Scope the jitter seed per review (head commit) so concurrent reviews of
+      // different heads decorrelate; the ledger callId and agent label stay the
+      // bare task id.
+      outcome: await callWithFlexRetry(RETRY_CONFIG, `${prepared.headCommit}:${task.taskId}`, () => agent(taskPrompt(task, prepared, promptContext), {
         label: task.taskId,
         phase: "Review",
         adapter: task.adapter,
@@ -1033,7 +1059,7 @@ async function workflowMain() {
       pricingTableVersion: PRICING_TABLE.version,
       attempts: 1
     });
-    const auditOutcome = await callWithFlexRetry(RETRY_CONFIG, "audit", () => agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+    const auditOutcome = await callWithFlexRetry(RETRY_CONFIG, `${prepared.headCommit}:audit`, () => agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
       label: "audit",
       phase: "Audit",
       adapter: TERRA_LANE.adapter,
@@ -1204,13 +1230,22 @@ async function workflowMain() {
     diffStat: prepared.diffStat,
     warnings: prepared.warnings || []
   };
+  const completedCallIds = new Set(taskResults.map(({ task }) => task.taskId));
+  const recordedModels = [];
+  const seenRecordedModels = /* @__PURE__ */ new Set();
+  for (const entry of ledger) {
+    if (entry.callId !== "audit" && !completedCallIds.has(entry.callId)) continue;
+    if (seenRecordedModels.has(entry.model)) continue;
+    seenRecordedModels.add(entry.model);
+    recordedModels.push(entry.model);
+  }
   const recordInput = {
     reviewId: `head-${prepared.headCommit}`,
     baseCommit: prepared.reviewBase,
     headCommit: prepared.headCommit,
     commitCount: prepared.commitCount,
     changedFiles: prepared.changedFiles,
-    models: REVIEW_MODELS.map(modelName),
+    models: recordedModels,
     findingsTotal: authoritativeFindings.length,
     summary: authoritativeSummary,
     metrics

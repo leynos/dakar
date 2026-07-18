@@ -151,8 +151,13 @@ test('maxAuditCandidates defaults, floors, caps at 100, and rejects invalid inpu
   assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 'nope' }).maxAuditCandidates, 30)
 })
 
-test('routingPolicy passes through non-blank strings and falls back otherwise', () => {
-  assert.equal(resolveWorkflowConfig({ routingPolicy: 'legacy' }).routingPolicy, 'legacy')
+test('routingPolicy clamps every non-live value to the sole live policy', () => {
+  // Only 'deterministic-flex-v1' is a live routing policy; any other value —
+  // including a non-blank but unknown string — clamps to it so an unknown
+  // policy is never recorded in metrics nor used to suppress warnings.
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 'deterministic-flex-v1' }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 'legacy' }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 'bogus' }).routingPolicy, 'deterministic-flex-v1')
   assert.equal(resolveWorkflowConfig({ routingPolicy: '   ' }).routingPolicy, 'deterministic-flex-v1')
   assert.equal(resolveWorkflowConfig({ routingPolicy: 42 }).routingPolicy, 'deterministic-flex-v1')
   assert.equal(resolveWorkflowConfig({}).routingPolicy, 'deterministic-flex-v1')

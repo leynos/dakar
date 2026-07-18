@@ -58,6 +58,9 @@ export function estimateWorstCaseUsd(
 /** Seeds the verified 2026-07-18 rates and exchange snapshot for Dakar's models. */
 export const DEFAULT_PRICING_TABLE: PricingTable = {
   version: '2026-07-18',
+  // Deliberately conservative (haircut) GBP->USD conversion snapshot, chosen
+  // below the prevailing spot rate so GBP budgets under-admit rather than
+  // over-admit. Versioned data, revised with the rest of this table.
   usdPerGbp: 1.27,
   rates: {
     'gpt-5.6-luna:flex': {

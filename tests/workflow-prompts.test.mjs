@@ -94,6 +94,36 @@ test('auditPrompt embeds compacted candidate JSON, policy path, AGENTS block, an
   assert.ok(prompt.indexOf('Audit duties:') < prompt.indexOf('Candidate findings JSON:'))
 })
 
+test('auditPrompt lists candidate paths, annotates the changed-file total, and marks the omitted count', () => {
+  const changedFiles = Array.from({ length: 45 }, (_, index) => `src/file-${index}.ts`)
+  const prepared = { reviewBase: 'base-sha', headCommit: 'head-sha', changedFiles }
+  const candidates = [
+    auditCandidate({ candidateId: 'source-1:src/file-1.ts:2:a', path: 'src/file-1.ts' }),
+    auditCandidate({ candidateId: 'source-1:src/file-2.ts:3:b', path: 'src/file-2.ts' }),
+  ]
+  const prompt = auditPrompt(candidates, prepared, CONTEXT, 'note')
+  const line = prompt.split('\nChanged files: ')[1].split('\n')[0]
+
+  assert.match(line, /src\/file-1\.ts/u)
+  assert.match(line, /src\/file-2\.ts/u)
+  // Only candidate-referenced paths are listed, not every changed file.
+  assert.doesNotMatch(line, /src\/file-3\.ts/u)
+  // The marker carries the total changed-file count and the unlisted count.
+  assert.match(line, /\(45 changed files in range; 43 not listed\)/u)
+})
+
+test('auditPrompt caps the listed candidate paths at 40 and still counts the total', () => {
+  const changedFiles = Array.from({ length: 60 }, (_, index) => `src/file-${index}.ts`)
+  const prepared = { reviewBase: 'base-sha', headCommit: 'head-sha', changedFiles }
+  const candidates = changedFiles.map((path, index) => auditCandidate({ candidateId: `source-1:${path}:${index}:x`, path }))
+  const prompt = auditPrompt(candidates, prepared, CONTEXT, 'note')
+  const line = prompt.split('\nChanged files: ')[1].split('\n')[0]
+  const listed = line.split(' (')[0].split(', ')
+
+  assert.equal(listed.length, 40, 'at most 40 candidate paths are listed')
+  assert.match(line, /\(60 changed files in range; 20 not listed\)/u)
+})
+
 test('dynamic verifier data follows stable instructions and uses resolved policy', () => {
   const prepared = { reviewBase: 'base-sha', headCommit: 'head-sha', changedFiles: ['src/a.ts'] }
   const candidate = {

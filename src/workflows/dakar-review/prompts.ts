@@ -108,7 +108,23 @@ export function auditPrompt(
   context: PromptContext,
   remainingBudgetNote: string,
 ): string {
-  const changedFiles = (prepared.changedFiles || []).join(', ') || '(no changed files)'
+  // Bound the changed-file context to the paths the candidates actually cite,
+  // deduplicated in first-appearance order and capped, so a wide review does not
+  // blow the audit prompt's size. The total changed-file count is always stated,
+  // with the number of unlisted files when the listing is a strict subset.
+  const AUDIT_PATH_LIST_CAP = 40
+  const candidatePaths: string[] = []
+  const seenPaths = new Set<string>()
+  for (const candidate of candidates) {
+    const path = candidate.path
+    if (typeof path !== 'string' || path === '' || seenPaths.has(path)) continue
+    seenPaths.add(path)
+    candidatePaths.push(path)
+  }
+  const listedPaths = candidatePaths.slice(0, AUDIT_PATH_LIST_CAP)
+  const totalChangedFiles = (prepared.changedFiles || []).length
+  const omittedCount = totalChangedFiles - listedPaths.length
+  const changedFiles = `${listedPaths.join(', ') || '(no changed files)'} (${totalChangedFiles} changed files in range${omittedCount > 0 ? `; ${omittedCount} not listed` : ''})`
   return [
     'You are the adversarial issue-set auditor for Dakar code review.',
     'You receive every surviving candidate finding for one review at once and issue one consolidated audit.',

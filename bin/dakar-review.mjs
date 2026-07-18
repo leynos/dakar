@@ -348,7 +348,7 @@ function buildOdwRunArgs(options, workflowArgs, wait) {
     options.odwConfigPath || odwConfigPath,
   ]
   if (wait) {
-    odwArgs.push('--wait', '--timeout', String(options.timeout || 900))
+    odwArgs.push('--wait', '--timeout', String(options.timeout || 3600))
   }
   odwArgs.push('--args', JSON.stringify(workflowArgs))
   if (options.runsRoot) {
@@ -390,24 +390,86 @@ function printWorkflowOutput(output, format) {
 }
 
 /**
+ * Compare two changed-file arrays element by element.
+ *
+ * @param {unknown} left - candidate changed-file list.
+ * @param {unknown} right - trusted changed-file list.
+ * @returns {boolean} whether both are arrays of identical length and order.
+ */
+function changedFilesEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+  return left.every((value, index) => value === right[index])
+}
+
+/**
+ * Validate a workflow-supplied recordInput against the CLI's own prepared
+ * review snapshot before it is appended to history. This closes the seam where
+ * a compromised or buggy workflow could record a head, base, commit count, or
+ * file set the CLI never prepared.
+ *
+ * @param {object} recordInput - the workflow-supplied snapshot to append.
+ * @param {object} [prepared] - the CLI's trusted prepared review range.
+ * @returns {string | null} a message naming the mismatched field, or null when consistent.
+ */
+function snapshotMismatch(recordInput, prepared) {
+  if (!prepared || typeof prepared !== 'object') return null
+  const scalarChecks = [
+    ['headCommit', recordInput.headCommit, prepared.headCommit],
+    ['baseCommit', recordInput.baseCommit, prepared.reviewBase],
+    ['commitCount', recordInput.commitCount, prepared.commitCount],
+  ]
+  for (const [field, actual, expected] of scalarChecks) {
+    if (actual !== expected) {
+      return `recordInput.${field} (${JSON.stringify(actual)}) does not match the prepared review snapshot (${JSON.stringify(expected)}); refusing to record`
+    }
+  }
+  if (!changedFilesEqual(recordInput.changedFiles, prepared.changedFiles)) {
+    return 'recordInput.changedFiles does not match the prepared review snapshot; refusing to record'
+  }
+  return null
+}
+
+/**
  * Record a successful review in Dakar's history via the trusted state helper.
  *
  * This is the primary recording path: the workflow no longer records itself, so
  * after a successful, non-skipped, non-dry-run result the CLI appends the
  * completed head through {@link appendReview}. The state file is always derived
  * from the trusted `{repoRoot, stateRoot}` location, never from any
- * workflow-supplied path. On success the result gains a `recorded` stamp with
- * `recordedBy: "dakar-review"`; on failure the result is marked `stage:
- * "record"` with `recordInput` preserved for manual retry so the caller exits
- * non-zero. Dry-run, skipped, already-failed, and recordInput-less results are
+ * workflow-supplied path. The result is validated fail-closed first: an absent
+ * recordInput, or a recordInput contradicting the CLI's prepared snapshot, is
+ * refused with `stage: "record"` and never recorded. On success the result
+ * gains a `recorded` stamp with `recordedBy: "dakar-review"`; on failure it is
+ * marked `stage: "record"` with `recordInput` preserved for manual retry so the
+ * caller exits non-zero. Dry-run, skipped, and already-failed results are
  * returned untouched.
  *
  * @param {object} output - the ODW workflow result to record in place.
  * @param {object} trustedLocation - trusted `repo-root`/`state-root` used to derive the state file.
+ * @param {object} [prepared] - the CLI's trusted prepared review range for snapshot validation.
  * @returns {object} the (possibly updated) workflow result.
  */
-function recordReview(output, trustedLocation) {
-  if (!output || output.dryRun || output.skipped || output.ok !== true || !output.recordInput) {
+function recordReview(output, trustedLocation, prepared) {
+  if (!output || output.dryRun || output.skipped || output.ok !== true) {
+    return output
+  }
+  // Fail closed: an ok result with no recordInput must never be treated as a
+  // complete review, so refuse rather than silently return it unrecorded.
+  if (!output.recordInput) {
+    const error = 'workflow result lacked recordInput; refusing to treat an unrecorded review as complete'
+    output.ok = false
+    output.stage = 'record'
+    output.error = error
+    output.recorded = { ok: false, error, recordedBy: 'dakar-review' }
+    return output
+  }
+  const mismatch = snapshotMismatch(output.recordInput, prepared)
+  if (mismatch) {
+    output.ok = false
+    output.stage = 'record'
+    output.error = mismatch
+    output.recorded = { ok: false, error: mismatch, recordedBy: 'dakar-review' }
+    // recordInput is left in place so the review can be recorded manually later.
     return output
   }
   try {
@@ -427,6 +489,35 @@ function recordReview(output, trustedLocation) {
     // recordInput is left in place so the review can be recorded manually later.
   }
   return output
+}
+
+/**
+ * Attach reported usage, fold it into recordInput, then record the review.
+ *
+ * The reported-usage lines are attached (and their token totals folded into
+ * `recordInput.metrics`) BEFORE recording, so the persisted `reviews.toml`
+ * carries the provider-reported usage rather than only the printed result. The
+ * snapshot is then validated and appended through the trusted state root.
+ *
+ * @param {object} output - the parsed ODW workflow result.
+ * @param {object} workflowArgs - the CLI's workflow arguments, carrying repoRoot, stateRoot, and prepared.
+ * @returns {object} the annotated and (on success) recorded workflow result.
+ */
+function finalizeWorkflowResult(output, workflowArgs) {
+  attachReportedUsage(output)
+  // A dry run never records: there is no prepared snapshot to validate against
+  // and no completed head to append.
+  if (workflowArgs.dryRun) return output
+  if (output && typeof output === 'object' && output.recordInput) {
+    const metrics = (output.recordInput.metrics = output.recordInput.metrics || {})
+    if (output.metrics?.reportedUsage !== undefined) metrics.reportedUsage = output.metrics.reportedUsage
+    if (output.metrics?.reportedTokens !== undefined) metrics.reportedTokens = output.metrics.reportedTokens
+  }
+  return recordReview(
+    output,
+    { 'repo-root': workflowArgs.repoRoot, 'state-root': workflowArgs.stateRoot },
+    workflowArgs.prepared,
+  )
 }
 
 /**
@@ -454,10 +545,7 @@ function runOdwQuiet(options, workflowArgs) {
     return { status: result.status || 1 }
   }
 
-  return { output: recordReview(extractJson(result.stdout), {
-    'repo-root': workflowArgs.repoRoot,
-    'state-root': workflowArgs.stateRoot,
-  }) }
+  return { output: finalizeWorkflowResult(extractJson(result.stdout), workflowArgs) }
 }
 
 /**
@@ -501,7 +589,7 @@ function followOdwLogs(odwBin, args, timeoutMs) {
  * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
  * @returns {Promise<object>} the parsed and (on success) recorded workflow result.
  */
-async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 900) * 1000) {
+async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1000) {
   const odwBin = options.odwBin || 'odw'
   const deadline = Date.now() + timeoutMs
   let lastError = ''
@@ -513,10 +601,7 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
       env: odwEnv(),
     })
     if (result.status === 0) {
-      return recordReview(extractJson(result.stdout), {
-        'repo-root': workflowArgs.repoRoot,
-        'state-root': workflowArgs.stateRoot,
-      })
+      return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs)
     }
     lastError = result.stderr.trim() || result.stdout.trim()
     if (Date.now() >= deadline) {
@@ -525,7 +610,7 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
     await sleep(Math.min(1000, Math.max(0, deadline - Date.now())))
   }
 
-  throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 900}s`)
+  throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`)
 }
 
 /**
@@ -561,7 +646,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
     process.stderr.write(`${result.stderr.trim()}\n`)
   }
   const runId = extractRunId(result.stdout)
-  const timeoutMs = (options.timeout || 900) * 1000
+  const timeoutMs = (options.timeout || 3600) * 1000
   const resultDeadline = Date.now() + timeoutMs
   process.stderr.write(`dakar-review: following ODW run ${runId}\n`)
   const logStatus = await followOdwLogs(odwBin, buildRunScopedArgs('logs', options, runId, ['--follow']), timeoutMs)
@@ -572,7 +657,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
           ok: false,
           stage: 'odw-logs',
           runId,
-          error: `timed out following ODW run after ${options.timeout || 900}s`,
+          error: `timed out following ODW run after ${options.timeout || 3600}s`,
         },
         null,
         2,
@@ -615,7 +700,7 @@ Options:
   --max-findings <n>          Maximum accepted findings
   --synthesis-model <model>   Synthesis model (default: gpt-5.5)
   --synthesis-reasoning <r>   Synthesis reasoning: low, medium, or high
-  --timeout <seconds>         ODW wait timeout (default: 900)
+  --timeout <seconds>         ODW wait timeout (default: 3600)
   --runs-root <path>          ODW runs directory
   --format <json|markdown>    Output format (default: json)
   --odw-bin <path>            ODW executable (default: odw)
@@ -716,14 +801,18 @@ async function run(argv) {
       return preparation.status
     }
     if (preparation.skip) {
-      process.stdout.write(`${JSON.stringify(preparation.skip, null, 2)}\n`)
+      // Route the skip result through the shared printer so it honours --format;
+      // a skip has no reportMarkdown, so markdown falls back to the JSON dump.
+      printWorkflowOutput(preparation.skip, format)
       return 0
     }
     workflowArgs.prepared = preparation.prepared
-    // The default deterministic-flex-v1 route dispatches through the pi Flex
-    // adapters, which resolve the API key from OPENAI_API_KEY. Warn rather than
-    // fail so a dry-run-shaped smoke test or a mocked ODW binary still runs.
-    if ((workflowArgs.routingPolicy || 'deterministic-flex-v1') === 'deterministic-flex-v1' && !process.env.OPENAI_API_KEY) {
+    // Every routing policy clamps to the live deterministic-flex-v1 lane
+    // (config.ts), which dispatches through the pi Flex adapters that resolve the
+    // API key from OPENAI_API_KEY. An unknown policy must not suppress this
+    // warning, so the gate keys off the key alone. Warn rather than fail so a
+    // mocked ODW binary still runs.
+    if (!process.env.OPENAI_API_KEY) {
       process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
     }
   }
@@ -745,7 +834,9 @@ async function run(argv) {
   if (outcome.status !== undefined) {
     return outcome.status
   }
-  const output = attachReportedUsage(outcome.output)
+  // Reported usage is attached and folded into recordInput before recording by
+  // finalizeWorkflowResult; nothing further to enrich here.
+  const output = outcome.output
   printWorkflowOutput(output, format)
   return output.ok === false ? 1 : 0
 }
