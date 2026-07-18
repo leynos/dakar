@@ -318,6 +318,22 @@ the conflict in `Decision Log`, and escalate.
     flag and the raise-the-budget note for large gate reviews. 15
     focused tests red then green; 230/230 full suite; `make check`
     green via scrutineer. Roadmap 7.6.1 ticked.
+  - [x] (2026-07-18 21:20Z) df12-build side implemented on branch
+    `dakar-host-review`: `reviewTool` config (default `dakar`, invalid
+    values throw), per-tool attempt dispatch inside the shared
+    retry/backoff envelope, ephemeral per-attempt state roots,
+    severity mapping onto the critical/major blocking rule, the
+    `OPENAI_API_KEY` preflight, and the deferral-marker extension —
+    with `run-task.ts` and the `CoderabbitReview` contract untouched
+    as designed. Dogfood evidence: `dakar-review --budget-gbp 0.3`
+    reviewed the branch itself (13 files, three finder packs admitted,
+    no refusals, ~USD 0.19 reported) and returned
+    `changes-requested` with three genuinely useful findings — a real
+    fail-open defect (a findings-free `changes-requested` would have
+    produced zero blocking items and passed the gate; now fails
+    closed, red-first), a stale users-guide default, and a vacuous
+    bounded-detail assertion. All three fixed before the pull
+    request; the gate reviewed the change that ships the gate.
 
 ## Surprises & discoveries
 
