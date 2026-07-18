@@ -429,6 +429,58 @@ test('CLI fails closed with a record stage when appendReview rejects the review'
   assert.equal(output.recordInput.headCommit, 'not-a-real-commit')
 })
 
+test('CLI leaves reviews.toml untouched and exits non-zero for a deferred result', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-deferred-'))
+  const stateRoot = join(tempRoot, 'trusted-state')
+  const fakeOdw = join(tempRoot, 'odw')
+  // A deferred workflow result carries ok:false, stage:'deferred', and crucially
+  // no recordInput, so the recordReview guard cannot append history. The CLI must
+  // print the deferred JSON on stdout and exit non-zero.
+  const fakeResult = {
+    ok: false,
+    stage: 'deferred',
+    deferred: true,
+    reason: 'flex capacity exhausted for the required audit',
+    attempts: 3,
+    reviewBase: 'a'.repeat(40),
+    headCommit: 'b'.repeat(40),
+    commitCount: 1,
+    changedFiles: ['src/example.js'],
+    metrics: { ledger: [] },
+  }
+  writeFileSync(
+    fakeOdw,
+    `#!/bin/sh\nprintf 'running fake-run ...\\n%s\\n' '${JSON.stringify(fakeResult).replace(/'/g, "'\"'\"'")}'\n`,
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      '--repo-root',
+      repoRoot,
+      '--state-root',
+      stateRoot,
+      '--odw-bin',
+      fakeOdw,
+      '--runs-root',
+      join(tempRoot, 'runs'),
+    ],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  const output = JSON.parse(result.stdout)
+
+  assert.equal(result.status, 1)
+  assert.equal(output.ok, false)
+  assert.equal(output.stage, 'deferred')
+  assert.equal(output.deferred, true)
+  assert.equal(output.recordInput, undefined)
+  assert.equal(output.recorded, undefined, 'no recording is attempted for a deferred review')
+  // No reviews.toml under the trusted state root: the head stays unrecorded.
+  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
+})
+
 test('CLI skips the review without invoking ODW when nothing is unreviewed', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-skip-'))
   const targetRepo = join(tempRoot, 'repo')

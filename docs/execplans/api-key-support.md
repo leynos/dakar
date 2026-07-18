@@ -258,7 +258,20 @@ the conflict in `Decision Log`, and escalate.
   warning). Red evidence `/tmp/m4-red-evidence.txt`; green at 180/180;
   full `make check` green via scrutineer twice. Roadmap 7.1.3, 7.3.2,
   and 7.3.3 ticked (7.1.2 waits on reported-usage capture in M7).
-- [ ] M5: Flex retry, backoff, deferral policy, and timeout budget.
+- [x] (2026-07-18 23:10Z) M5: Flex retry, backoff, deferral, and the
+  timeout budget. New pure `retry.ts` (FNV-1a deterministic jitter,
+  exponential backoff capped at `flexMaxBackoffSeconds`, conservative
+  retryable classification, `worstCaseReviewSeconds`); Luna packs retry
+  under their original admission (no re-charge) and downgrade with a
+  recorded reason on exhaustion instead of killing the review; an
+  exhausted Terra audit returns the structured deferred result
+  (`ok: false`, `stage: "deferred"`, no `recordInput`) so the CLI can
+  never record the head; five bounded knobs (`flexAttempts` 3,
+  backoff 30→120 s, jitter 10 s, `perCallTimeoutSeconds` 300);
+  `worstCaseReviewSeconds` for the defaults = 2,020 s, asserted below
+  the harness outer `--timeout 3600`. Red evidence
+  `/tmp/m5-red-evidence.txt`; green at 197/197; full `make check`
+  green via scrutineer. Roadmap 7.3.4 ticked.
 - [ ] M6: contract, dry-run, and documentation updates; full gates.
 - [ ] M7: live cost validation on the estate corpus.
 

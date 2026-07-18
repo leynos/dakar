@@ -279,6 +279,14 @@ function resolveWorkflowConfig(value) {
     budgetGbp: boundedNumber(args2.budgetGbp, 0.1, 0.01, 10),
     configArg: nonBlankString(args2.config, ""),
     dryRun: args2.dryRun === true,
+    // ADR 002 Flex retry and timeout budget (M5). This slice reduces the ADR's
+    // default flexAttempts from 6 to 3 so the worst-case review wall clock fits
+    // the harness's outer --timeout; all four knobs are bounded so untrusted
+    // arguments cannot widen the retry envelope.
+    flexAttempts: positiveLimit(args2.flexAttempts, 3, 6),
+    flexInitialBackoffSeconds: positiveLimit(args2.flexInitialBackoffSeconds, 30, 300),
+    flexJitterSeconds: boundedInteger(args2.flexJitterSeconds, 10, 0, 60),
+    flexMaxBackoffSeconds: positiveLimit(args2.flexMaxBackoffSeconds, 120, 900),
     headRef: nonBlankString(args2.head, "HEAD"),
     lunaReasoning: args2.lunaReasoning === "medium" ? "medium" : "low",
     maxAuditCandidates: positiveLimit(args2.maxAuditCandidates, 30, 100),
@@ -286,6 +294,7 @@ function resolveWorkflowConfig(value) {
     maxFindings: positiveLimit(args2.maxFindings, 20, 200),
     maxLunaFlexCalls: positiveLimit(args2.maxLunaFlexCalls, 4, 16),
     maxTasks: positiveLimit(args2.maxTasks, 8, 64),
+    perCallTimeoutSeconds: boundedInteger(args2.perCallTimeoutSeconds, 300, 30, 900),
     // Unvalidated passthrough: the CLI prepares the review range host-side and
     // main.ts validates these fields fail-closed before any downstream use.
     prepared: isObject(args2.prepared) ? args2.prepared : void 0,
@@ -475,6 +484,40 @@ ${JSON.stringify(candidates, null, 2)}`,
   ].join("\n");
 }
 
+// src/workflows/dakar-review/retry.ts
+var FNV_OFFSET_BASIS = 2166136261;
+var FNV_PRIME = 16777619;
+function deterministicJitter(callId, attempt, jitterSeconds) {
+  if (jitterSeconds <= 0) return 0;
+  const input = `${callId}:${attempt}`;
+  let hash = FNV_OFFSET_BASIS;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, FNV_PRIME) >>> 0;
+  }
+  return hash % (jitterSeconds + 1);
+}
+function backoffSeconds(config, callId, attempt) {
+  if (attempt < 2) return 0;
+  const base = Math.min(config.flexInitialBackoffSeconds * 2 ** (attempt - 2), config.flexMaxBackoffSeconds);
+  return base + deterministicJitter(callId, attempt, config.flexJitterSeconds);
+}
+function isRetryableFlexError(_error) {
+  return true;
+}
+function worstCaseChainSeconds(config, perCallTimeoutSeconds) {
+  let total = config.flexAttempts * perCallTimeoutSeconds;
+  for (let attempt = 2; attempt <= config.flexAttempts; attempt += 1) {
+    const base = Math.min(config.flexInitialBackoffSeconds * 2 ** (attempt - 2), config.flexMaxBackoffSeconds);
+    total += base + config.flexJitterSeconds;
+  }
+  return total;
+}
+function worstCaseReviewSeconds(config, perCallTimeoutSeconds) {
+  const chain = worstCaseChainSeconds(config, perCallTimeoutSeconds);
+  return chain + chain;
+}
+
 // src/workflows/dakar-review/schemas.ts
 var CANDIDATE_SCHEMA = {
   type: "object",
@@ -655,6 +698,21 @@ function defaultTaskGraph(config) {
 }
 
 // src/workflows/dakar-review/main.ts
+async function callWithFlexRetry(retryConfig, callId, invoke) {
+  let lastError;
+  for (let attempt = 1; attempt <= retryConfig.flexAttempts; attempt += 1) {
+    if (attempt >= 2) {
+      await sleep(backoffSeconds(retryConfig, callId, attempt) * 1e3);
+    }
+    try {
+      return { ok: true, value: await invoke(), attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableFlexError(error)) throw error;
+    }
+  }
+  return { ok: false, attempts: retryConfig.flexAttempts, error: lastError };
+}
 async function workflowMain() {
   const config = resolveWorkflowConfig(args);
   const {
@@ -664,8 +722,13 @@ async function workflowMain() {
     budgetGbp: BUDGET_GBP,
     configArg: CONFIG_ARG,
     dryRun: DRY_RUN,
+    flexAttempts: FLEX_ATTEMPTS,
+    flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
+    flexJitterSeconds: FLEX_JITTER_SECONDS,
+    flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
     headRef: HEAD_REF,
     lunaReasoning: LUNA_REASONING,
+    perCallTimeoutSeconds: PER_CALL_TIMEOUT_SECONDS,
     maxAuditCandidates: MAX_AUDIT_CANDIDATES,
     maxCandidates: MAX_CANDIDATES,
     maxFindings: MAX_FINDINGS,
@@ -686,6 +749,13 @@ async function workflowMain() {
     workflowVersion: WORKFLOW_VERSION
   } = config;
   const TASK_GRAPH_CONFIG = { maxFindings: MAX_FINDINGS, maxTasks: MAX_TASKS, reviewModels: REVIEW_MODELS };
+  const RETRY_CONFIG = Object.freeze({
+    flexAttempts: FLEX_ATTEMPTS,
+    flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
+    flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
+    flexJitterSeconds: FLEX_JITTER_SECONDS
+  });
+  const WORST_CASE_REVIEW_SECONDS = worstCaseReviewSeconds(RETRY_CONFIG, PER_CALL_TIMEOUT_SECONDS);
   const PRICING_TABLE = DEFAULT_PRICING_TABLE;
   const LUNA_LANE = flexLaneRole(LUNA_REASONING === "medium" ? "luna-medium" : "luna");
   const TERRA_LANE = flexLaneRole("terra");
@@ -741,6 +811,16 @@ async function workflowMain() {
         terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
         adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS
       },
+      // ADR 002 Flex retry schedule and the worst-case wall clock it implies; a
+      // test asserts the default budget fits the harness's outer --timeout.
+      flexRetry: {
+        flexAttempts: FLEX_ATTEMPTS,
+        flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
+        flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
+        flexJitterSeconds: FLEX_JITTER_SECONDS,
+        perCallTimeoutSeconds: PER_CALL_TIMEOUT_SECONDS
+      },
+      worstCaseReviewSeconds: WORST_CASE_REVIEW_SECONDS,
       defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
       candidateSchema: CANDIDATE_SCHEMA,
       verdictSchema: VERDICT_SCHEMA,
@@ -840,33 +920,36 @@ async function workflowMain() {
     admittedPacks.push(pack);
   }
   phase("Review");
-  const reviewAttempts = await parallel(
+  const reviewOutcomes = await parallel(
     admittedPacks.map((task) => async () => ({
       task,
-      result: await agent(taskPrompt(task, prepared, promptContext), {
+      outcome: await callWithFlexRetry(RETRY_CONFIG, task.taskId, () => agent(taskPrompt(task, prepared, promptContext), {
         label: task.taskId,
         phase: "Review",
         adapter: task.adapter,
         model: task.model,
         schema: CANDIDATE_SCHEMA
-      })
+      }))
     }))
   );
-  const failedTaskIds = reviewAttempts.map((value, index) => value === null || value.result === null ? admittedPacks[index]?.taskId : void 0).filter((taskId) => typeof taskId === "string");
-  const taskResults = reviewAttempts.filter(
-    (value) => value !== null && value.result !== null
-  );
-  if (failedTaskIds.length > 0) {
-    return {
-      ok: false,
-      stage: "review",
-      error: "one or more scheduled review tasks failed; refusing to record incomplete coverage",
-      config: CODE_RABBIT_CONFIG,
-      prepared,
-      taskGraph,
-      failedTaskIds
-    };
+  const lunaDowngrades = [];
+  const taskResults = [];
+  for (const entry of reviewOutcomes) {
+    if (entry === null) continue;
+    const { task, outcome } = entry;
+    const ledgerEntry = ledger.find((item) => item.callId === task.taskId);
+    if (ledgerEntry) ledgerEntry.attempts = outcome.attempts;
+    if (outcome.ok && outcome.value !== null && outcome.value !== void 0) {
+      taskResults.push({ task, result: outcome.value });
+    } else {
+      lunaDowngrades.push({
+        taskId: task.taskId,
+        reason: outcome.ok ? "Finder pack returned no usable candidate result; downgraded to partial coverage." : "Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.",
+        attempts: outcome.attempts
+      });
+    }
   }
+  const failedTaskIds = lunaDowngrades.map((downgrade) => downgrade.taskId);
   const candidates = normalizeCandidates(taskResults, prepared.changedFiles, MAX_CANDIDATES);
   const auditCandidatePool = [
     ...new Map(candidatesForVerification(candidates).map((candidate) => [candidate.candidateId, candidate])).values()
@@ -909,13 +992,44 @@ async function workflowMain() {
       pricingTableVersion: PRICING_TABLE.version,
       attempts: 1
     });
-    auditResult = await agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+    const auditOutcome = await callWithFlexRetry(RETRY_CONFIG, "audit", () => agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
       label: "audit",
       phase: "Audit",
       adapter: TERRA_LANE.adapter,
       model: TERRA_LANE.model,
       schema: AUDIT_SCHEMA
-    });
+    }));
+    const auditLedgerEntry = ledger.find((item) => item.callId === "audit");
+    if (auditLedgerEntry) auditLedgerEntry.attempts = auditOutcome.attempts;
+    if (!auditOutcome.ok || auditOutcome.value === null || auditOutcome.value === void 0) {
+      return {
+        ok: false,
+        stage: "deferred",
+        deferred: true,
+        reason: "flex capacity exhausted for the required audit",
+        attempts: auditOutcome.attempts,
+        config: CODE_RABBIT_CONFIG,
+        headCommit: prepared.headCommit,
+        reviewBase: prepared.reviewBase,
+        commitCount: prepared.commitCount,
+        changedFiles: prepared.changedFiles,
+        candidates: auditCandidates,
+        lunaDowngrades,
+        admissionRefusals,
+        metrics: {
+          routingPolicy: ROUTING_POLICY,
+          budgetUsd: BUDGET_USD,
+          reservedAuditUsd: RESERVED_AUDIT_USD,
+          spentUsd: admissionState.spentUsd,
+          pricingTableVersion: PRICING_TABLE.version,
+          ledger,
+          ledgerTotalEstimatedUsd: ledger.reduce((sum, item) => sum + item.estimatedWorstCaseUsd, 0),
+          lunaDowngradeCount: lunaDowngrades.length,
+          admissionRefusalCount: admissionRefusals.length
+        }
+      };
+    }
+    auditResult = auditOutcome.value;
   }
   const rawVerdicts = auditResult && Array.isArray(auditResult.verdicts) ? auditResult.verdicts : [];
   const auditById = new Map(auditCandidates.map((candidate) => [candidate.candidateId, candidate]));
@@ -1019,6 +1133,7 @@ async function workflowMain() {
     completedTaskCount: taskResults.length,
     failedTaskCount: failedTaskIds.length,
     failedTaskIds,
+    lunaDowngradeCount: lunaDowngrades.length,
     candidateFindings: candidates.length,
     auditCandidateCount: auditCandidates.length,
     overAuditCapCount: overCap.length,
@@ -1075,6 +1190,7 @@ async function workflowMain() {
     findings: authoritativeFindings,
     discarded,
     admissionRefusals,
+    lunaDowngrades,
     summary: authoritativeSummary,
     reportMarkdown: authoritativeReport,
     metrics,

@@ -4,17 +4,29 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { buildAgentMock, extractAuditCandidates, extractTaskFiles, FixtureFailure } from './helpers/mock-agents.mjs'
+import { deterministicJitter } from '../src/workflows/dakar-review/retry.ts'
 
 // Finder packs (labels `luna-flex-<n>`) emit one candidate per assigned file by
 // default; tests override `finderTitles` to craft multi-candidate packs. The
 // audit responder accepts every compacted candidate unless `auditVerdicts`
 // overrides it.
-function defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFails }) {
+function defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFails, finderFailures = 0, auditFailures = 0 }) {
+  // Per-label transient failure counters give each finder pack and the audit
+  // their own "fail N attempts then succeed" state, so the retry helper's
+  // deterministic schedule can be exercised without a shared counter leaking
+  // across labels.
+  const finderAttempts = new Map()
+  let auditAttempts = 0
   return [
     { match: (label) => label === failedLabel, respond: () => { throw new FixtureFailure('fixture failure') } },
     {
       match: (label) => /^luna-flex-\d+$/u.test(label),
       respond: (prompt, options) => {
+        const seen = finderAttempts.get(options.label) ?? 0
+        if (seen < finderFailures) {
+          finderAttempts.set(options.label, seen + 1)
+          throw new FixtureFailure(`finder transient failure ${seen + 1} for ${options.label}`)
+        }
         const files = extractTaskFiles(prompt)
         const path = files[0] ?? 'src/a.js'
         const titles = finderTitles ?? ['Bug']
@@ -32,6 +44,10 @@ function defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFail
       match: 'audit',
       respond: (prompt) => {
         if (auditFails) throw new FixtureFailure('audit fixture failure')
+        if (auditAttempts < auditFailures) {
+          auditAttempts += 1
+          throw new FixtureFailure(`audit transient failure ${auditAttempts}`)
+        }
         const candidates = extractAuditCandidates(prompt)
         const verdicts = auditVerdicts
           ? auditVerdicts(candidates)
@@ -45,7 +61,7 @@ function defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFail
 
 async function runWorkflow({
   failedLabel, changedFiles = ['src/a.js'], config = '/distinct/policy.yaml', commitLength = 40,
-  finderTitles, auditVerdicts, auditFails, knobs = {},
+  finderTitles, auditVerdicts, auditFails, finderFailures, auditFailures, knobs = {},
 } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
@@ -61,7 +77,7 @@ async function runWorkflow({
   const base = 'a'.repeat(commitLength)
   const prepared = { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
     commitCount: 1, changedFiles, diffStat: '1 file changed', warnings: [] }
-  const agent = buildAgentMock(defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFails }),
+  const agent = buildAgentMock(defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFails, finderFailures, auditFailures }),
     { prompts, agentLabels, agentCalls })
   const swallowFixtureFailure = (error) => {
     if (error instanceof FixtureFailure) return null
@@ -304,9 +320,100 @@ test('metrics are computed host-side and record the routing policy', async () =>
   assert.equal(result.metrics.routingPolicy, 'deterministic-flex-v1')
 })
 
-test('a failed admitted finder pack reports incomplete coverage', async () => {
-  const { result } = await runWorkflow({ failedLabel: 'luna-flex-1' })
+test('a Luna pack failing twice then succeeding retries on the deterministic schedule', async () => {
+  const { agentCalls, result, sleepDelays } = await runWorkflow({ finderFailures: 2 })
+
+  assert.equal(result.ok, true)
+  // One admitted pack, three attempts against the same label.
+  const finderCalls = agentCalls.filter((call) => call.label === 'luna-flex-1')
+  assert.equal(finderCalls.length, 3)
+  const luna = result.metrics.ledger.find((entry) => entry.lane === 'luna-flex')
+  assert.equal(luna.attempts, 3, 'the ledger records the attempt count')
+  // Sleep precedes attempts 2 and 3 only: 30 s + jitter, then 60 s + jitter.
+  assert.equal(sleepDelays.length, 2)
+  assert.ok(sleepDelays[0] >= 30000 && sleepDelays[0] <= 40000, `first backoff ${sleepDelays[0]}ms`)
+  assert.ok(sleepDelays[1] >= 60000 && sleepDelays[1] <= 70000, `second backoff ${sleepDelays[1]}ms`)
+  // Exactly the deterministic jitter derived from the call id and attempt.
+  assert.equal(sleepDelays[0], (30 + deterministicJitter('luna-flex-1', 2, 10)) * 1000)
+  assert.equal(sleepDelays[1], (60 + deterministicJitter('luna-flex-1', 3, 10)) * 1000)
+  assert.equal(result.findings.length, 1)
+})
+
+test('a Luna pack exhausting its attempts is downgraded while the review completes', async () => {
+  const { result, sleepDelays } = await runWorkflow({ failedLabel: 'luna-flex-1' })
+
+  assert.equal(result.ok, true, 'a downgraded pack no longer fails the review')
+  assert.equal(result.lunaDowngrades.length, 1)
+  assert.equal(result.lunaDowngrades[0].taskId, 'luna-flex-1')
+  assert.equal(result.lunaDowngrades[0].attempts, 3)
+  assert.match(result.lunaDowngrades[0].reason, /exhaust/iu)
+  assert.equal(result.metrics.lunaDowngradeCount, 1)
+  // failedTaskIds stays for compatibility, listing the downgraded pack ids.
+  assert.deepEqual(result.metrics.failedTaskIds, ['luna-flex-1'])
+  // Three attempts means two backoff sleeps even on the exhaustion path.
+  assert.equal(sleepDelays.length, 2)
+  // The audit still runs against whatever survived (here nothing, so it is
+  // skipped as a zero-candidate review) and the review remains recordable.
+  assert.ok(result.recordInput, 'a review with a downgraded pack is still recordable')
+})
+
+test('a surviving pack is still audited after a sibling pack is downgraded', async () => {
+  const { agentLabels, result } = await runWorkflow({
+    changedFiles: ['src/a.js', 'src/b.js'],
+    // One pack per file; the first pack always fails, the second succeeds.
+    failedLabel: 'luna-flex-1',
+    knobs: { transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000, budgetGbp: 0.12 },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.lunaDowngrades.length, 1)
+  assert.equal(result.lunaDowngrades[0].taskId, 'luna-flex-1')
+  assert.ok(agentLabels.includes('audit'), 'the audit still runs over the surviving candidates')
+  assert.equal(result.findings.length, 1, 'the surviving pack contributes its finding')
+})
+
+test('an audit exhausting its attempts defers without recording the head', async () => {
+  const { agentCalls, result, sleepDelays } = await runWorkflow({ auditFails: true })
+
   assert.equal(result.ok, false)
-  assert.equal(result.stage, 'review')
-  assert.deepEqual(result.failedTaskIds, ['luna-flex-1'])
+  assert.equal(result.stage, 'deferred')
+  assert.equal(result.deferred, true)
+  assert.match(result.reason, /flex capacity exhausted for the required audit/u)
+  assert.equal(result.attempts, 3)
+  // No recordInput: the CLI's guard requires ok === true && recordInput, so the
+  // reviewed head must not be recorded as complete.
+  assert.equal(result.recordInput, undefined)
+  // Context fields the deferred result must carry for an operator or retry.
+  assert.equal(result.headCommit, 'b'.repeat(40))
+  assert.equal(result.reviewBase, 'a'.repeat(40))
+  assert.ok(Array.isArray(result.metrics.ledger))
+  // Three audit attempts, two backoff sleeps recorded.
+  const auditCalls = agentCalls.filter((call) => call.label === 'audit')
+  assert.equal(auditCalls.length, 3)
+  assert.equal(sleepDelays.length, 2)
+  const auditEntry = result.metrics.ledger.find((entry) => entry.lane === 'terra-flex')
+  assert.equal(auditEntry.attempts, 3)
+})
+
+test('an audit failing twice then succeeding recovers with the retry sleeps recorded', async () => {
+  const { agentCalls, result, sleepDelays } = await runWorkflow({ auditFailures: 2 })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.findings.length, 1)
+  const auditCalls = agentCalls.filter((call) => call.label === 'audit')
+  assert.equal(auditCalls.length, 3)
+  assert.equal(sleepDelays.length, 2)
+  assert.equal(sleepDelays[0], (30 + deterministicJitter('audit', 2, 10)) * 1000)
+  assert.equal(sleepDelays[1], (60 + deterministicJitter('audit', 3, 10)) * 1000)
+})
+
+test('retries share one admission: spentUsd and ledger totals are unchanged by attempts', async () => {
+  const single = await runWorkflow()
+  const retried = await runWorkflow({ finderFailures: 2, auditFailures: 2 })
+
+  assert.equal(retried.result.ok, true)
+  assert.equal(retried.result.metrics.spentUsd, single.result.metrics.spentUsd)
+  assert.equal(retried.result.metrics.ledgerTotalEstimatedUsd, single.result.metrics.ledgerTotalEstimatedUsd)
+  // The ledger still holds exactly the two admitted calls, not one entry per attempt.
+  assert.equal(retried.result.metrics.ledger.length, 2)
 })

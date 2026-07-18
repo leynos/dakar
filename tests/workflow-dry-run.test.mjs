@@ -96,6 +96,21 @@ test('dry-run reports the Flex lanes, budget, and reserved audit estimate', () =
   assert.equal(result.flexLimits.adapterOverheadTokens, 13000)
 })
 
+test('dry-run reports the Flex retry schedule and worst-case timeout budget', () => {
+  const result = runDryRun()
+
+  assert.deepEqual(result.flexRetry, {
+    flexAttempts: 3,
+    flexInitialBackoffSeconds: 30,
+    flexMaxBackoffSeconds: 120,
+    flexJitterSeconds: 10,
+    perCallTimeoutSeconds: 300,
+  })
+  // Pack chain plus audit chain: 2 * (3 * 300 + (30 + 10) + (60 + 10)) = 2020.
+  assert.equal(result.worstCaseReviewSeconds, 2020)
+  assert.ok(result.worstCaseReviewSeconds < 3600, 'the worst case must fit the outer --timeout 3600')
+})
+
 test('dry-run honours a custom audit cap and routing policy', () => {
   const result = runDryRun({ maxAuditCandidates: 7, routingPolicy: 'legacy' })
 

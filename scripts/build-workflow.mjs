@@ -21,6 +21,7 @@ const RUNTIME_MODULES = [
   'model-routing.ts',
   'pricing.ts',
   'prompts.ts',
+  'retry.ts',
   'schemas.ts',
   'shell.ts',
   'task-graph.ts',

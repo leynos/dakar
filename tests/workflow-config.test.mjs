@@ -42,6 +42,48 @@ test('resolveWorkflowConfig supplies the ADR 002 Flex knob defaults', () => {
   assert.equal(config.lunaReasoning, 'low')
 })
 
+test('resolveWorkflowConfig supplies the M5 Flex retry and timeout defaults', () => {
+  const config = resolveWorkflowConfig(undefined)
+
+  assert.equal(config.flexAttempts, 3)
+  assert.equal(config.flexInitialBackoffSeconds, 30)
+  assert.equal(config.flexMaxBackoffSeconds, 120)
+  assert.equal(config.flexJitterSeconds, 10)
+  assert.equal(config.perCallTimeoutSeconds, 300)
+})
+
+test('Flex retry knobs clamp to their bounds and reject invalid input', () => {
+  const low = resolveWorkflowConfig({
+    flexAttempts: 0,
+    flexInitialBackoffSeconds: 0,
+    flexMaxBackoffSeconds: 0,
+    flexJitterSeconds: -1,
+    perCallTimeoutSeconds: 1,
+  })
+  assert.equal(low.flexAttempts, 3)
+  assert.equal(low.flexInitialBackoffSeconds, 30)
+  assert.equal(low.flexMaxBackoffSeconds, 120)
+  assert.equal(low.flexJitterSeconds, 10)
+  assert.equal(low.perCallTimeoutSeconds, 300)
+
+  const high = resolveWorkflowConfig({
+    flexAttempts: 999,
+    flexInitialBackoffSeconds: 999,
+    flexMaxBackoffSeconds: 9999,
+    flexJitterSeconds: 999,
+    perCallTimeoutSeconds: 9999,
+  })
+  assert.equal(high.flexAttempts, 6)
+  assert.equal(high.flexInitialBackoffSeconds, 300)
+  assert.equal(high.flexMaxBackoffSeconds, 900)
+  assert.equal(high.flexJitterSeconds, 60)
+  assert.equal(high.perCallTimeoutSeconds, 900)
+
+  // Zero jitter is a valid inclusive-floor value; the others floor at one.
+  assert.equal(resolveWorkflowConfig({ flexJitterSeconds: 0 }).flexJitterSeconds, 0)
+  assert.equal(resolveWorkflowConfig({ flexAttempts: 5 }).flexAttempts, 5)
+})
+
 test('Flex knobs clamp to their bounds and reject invalid input', () => {
   const low = resolveWorkflowConfig({
     budgetGbp: 0.001,

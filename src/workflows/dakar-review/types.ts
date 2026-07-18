@@ -29,6 +29,10 @@ export interface WorkflowArgs {
   budgetGbp?: unknown
   config?: string
   dryRun?: boolean
+  flexAttempts?: unknown
+  flexInitialBackoffSeconds?: unknown
+  flexJitterSeconds?: unknown
+  flexMaxBackoffSeconds?: unknown
   head?: string
   lunaReasoning?: unknown
   maxAuditCandidates?: unknown
@@ -37,6 +41,7 @@ export interface WorkflowArgs {
   maxLunaFlexCalls?: unknown
   maxTasks?: unknown
   models?: unknown
+  perCallTimeoutSeconds?: unknown
   prepared?: PreparedReview
   repoRoot?: string
   routingPolicy?: unknown
@@ -173,6 +178,13 @@ export interface AdmissionRefusal {
   kind: 'luna-transaction' | 'terra-audit'
   reason: string
   worstCaseUsd: number
+}
+
+/** Records one finder pack that exhausted its Flex retries and was downgraded. */
+export interface LunaDowngrade {
+  taskId: string
+  reason: string
+  attempts: number
 }
 
 /** Records one priced, admitted call for the budget audit trail. */

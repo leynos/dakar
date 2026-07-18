@@ -417,7 +417,7 @@ failure policy".
   - Success: no ordinary review launches more than `maxLunaFlexCalls`
     transactions, each within the configured file and token bounds, and the
     audit reservation precedes any Luna dispatch.
-- [ ] 7.3.4. Handle Flex resource unavailability with bounded backoff and
+- [x] 7.3.4. Handle Flex resource unavailability with bounded backoff and
   deferral.
   - Requires 7.3.2.
   - Success: HTTP 429 `resource_unavailable` retries with backoff and jitter,

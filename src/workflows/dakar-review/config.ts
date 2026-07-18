@@ -11,8 +11,13 @@ export interface WorkflowConfig {
   readonly budgetGbp: number
   readonly configArg: string
   readonly dryRun: boolean
+  readonly flexAttempts: number
+  readonly flexInitialBackoffSeconds: number
+  readonly flexJitterSeconds: number
+  readonly flexMaxBackoffSeconds: number
   readonly headRef: string
   readonly lunaReasoning: 'low' | 'medium'
+  readonly perCallTimeoutSeconds: number
   readonly maxAuditCandidates: number
   readonly maxCandidates: number
   readonly maxFindings: number
@@ -180,6 +185,14 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     budgetGbp: boundedNumber(args.budgetGbp, 0.1, 0.01, 10),
     configArg: nonBlankString(args.config, ''),
     dryRun: args.dryRun === true,
+    // ADR 002 Flex retry and timeout budget (M5). This slice reduces the ADR's
+    // default flexAttempts from 6 to 3 so the worst-case review wall clock fits
+    // the harness's outer --timeout; all four knobs are bounded so untrusted
+    // arguments cannot widen the retry envelope.
+    flexAttempts: positiveLimit(args.flexAttempts, 3, 6),
+    flexInitialBackoffSeconds: positiveLimit(args.flexInitialBackoffSeconds, 30, 300),
+    flexJitterSeconds: boundedInteger(args.flexJitterSeconds, 10, 0, 60),
+    flexMaxBackoffSeconds: positiveLimit(args.flexMaxBackoffSeconds, 120, 900),
     headRef: nonBlankString(args.head, 'HEAD'),
     lunaReasoning: args.lunaReasoning === 'medium' ? 'medium' : 'low',
     maxAuditCandidates: positiveLimit(args.maxAuditCandidates, 30, 100),
@@ -187,6 +200,7 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     maxFindings: positiveLimit(args.maxFindings, 20, 200),
     maxLunaFlexCalls: positiveLimit(args.maxLunaFlexCalls, 4, 16),
     maxTasks: positiveLimit(args.maxTasks, 8, 64),
+    perCallTimeoutSeconds: boundedInteger(args.perCallTimeoutSeconds, 300, 30, 900),
     // Unvalidated passthrough: the CLI prepares the review range host-side and
     // main.ts validates these fields fail-closed before any downstream use.
     prepared: isObject(args.prepared) ? (args.prepared as PreparedReview) : undefined,

@@ -6,8 +6,6 @@
  * dispatch logic below.
  */
 
-import assert from 'node:assert/strict'
-
 /** Thrown by fixture responders to simulate a rejected agent call. */
 export class FixtureFailure extends Error {}
 
@@ -69,7 +67,10 @@ export function buildAgentMock(responders, { prompts, agentLabels, agentCalls })
     if (agentCalls) {
       agentCalls.push({ label: options.label, adapter: options.adapter, model: options.model, phase: options.phase })
     }
-    assert.equal(prompts.has(options.label), false, `duplicate agent label: ${options.label}`)
+    // The Flex retry helper reissues the same label on each attempt, so a
+    // repeated label is expected. `agentCalls` records attempt order and count;
+    // `prompts` keeps the last prompt seen for a label (a retry reuses the same
+    // durable input, so this loses nothing the assertions need).
     prompts.set(options.label, prompt)
     for (const { match, respond } of responders) {
       const matches = typeof match === 'string' ? match === options.label : match(options.label)

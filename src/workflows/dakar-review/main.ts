@@ -14,8 +14,10 @@ import { resolveWorkflowConfig } from './config.ts'
 import { flexLaneRole, modelName } from './model-routing.ts'
 import { DEFAULT_PRICING_TABLE, estimateWorstCaseUsd } from './pricing.ts'
 import { auditPrompt, taskPrompt } from './prompts.ts'
+import { backoffSeconds, isRetryableFlexError, worstCaseReviewSeconds } from './retry.ts'
 import { AUDIT_SCHEMA, CANDIDATE_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
 import { buildFlexFinderPlan, defaultTaskGraph } from './task-graph.ts'
+import type { FlexRetryConfig } from './retry.ts'
 import type {
   AdmissionRefusal,
   AuditResult,
@@ -24,11 +26,58 @@ import type {
   CandidateResult,
   Discarded,
   LedgerEntry,
+  LunaDowngrade,
   PreparedReview,
   PromptContext,
   ReviewTask,
   Verdict,
 } from './types.ts'
+
+/** Bundles one Flex call's success flag, decoded value, and attempt count. */
+interface FlexCallOutcome<T> {
+  ok: boolean
+  value?: T
+  attempts: number
+  error?: unknown
+}
+
+/**
+ * Runs one Flex-lane call with bounded exponential backoff and positive jitter.
+ *
+ * ADR 002 forbids a fallback to standard processing, so on a retryable failure
+ * this sleeps for the deterministic backoff (owned here) and reissues the same
+ * durable call. The caller owns the `agent()` invocation via `invoke`; this
+ * helper owns only the `sleep()` between attempts and the classification. On
+ * exhaustion it returns `{ ok: false }` with the attempt count rather than
+ * throwing, so the caller can downgrade or defer per policy.
+ *
+ * @param retryConfig - The bounded Flex retry knobs.
+ * @param callId - Stable identifier used to derive deterministic jitter.
+ * @param invoke - The call to run; typically a single `agent()` request.
+ * @returns The outcome carrying the decoded value or the terminal failure.
+ */
+async function callWithFlexRetry<T>(
+  retryConfig: FlexRetryConfig,
+  callId: string,
+  invoke: () => Promise<T>,
+): Promise<FlexCallOutcome<T>> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= retryConfig.flexAttempts; attempt += 1) {
+    // Sleep precedes attempts 2..N; the first attempt runs immediately.
+    if (attempt >= 2) {
+      await sleep(backoffSeconds(retryConfig, callId, attempt) * 1000)
+    }
+    try {
+      return { ok: true, value: await invoke(), attempts: attempt }
+    } catch (error) {
+      lastError = error
+      // A non-retryable failure propagates unchanged; the conservative
+      // classifier retries every opaque adapter failure (see retry.ts).
+      if (!isRetryableFlexError(error)) throw error
+    }
+  }
+  return { ok: false, attempts: retryConfig.flexAttempts, error: lastError }
+}
 
 /**
  * Runs the complete Dakar review workflow through the ambient ODW primitives.
@@ -45,8 +94,13 @@ const {
   budgetGbp: BUDGET_GBP,
   configArg: CONFIG_ARG,
   dryRun: DRY_RUN,
+  flexAttempts: FLEX_ATTEMPTS,
+  flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
+  flexJitterSeconds: FLEX_JITTER_SECONDS,
+  flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
   headRef: HEAD_REF,
   lunaReasoning: LUNA_REASONING,
+  perCallTimeoutSeconds: PER_CALL_TIMEOUT_SECONDS,
   maxAuditCandidates: MAX_AUDIT_CANDIDATES,
   maxCandidates: MAX_CANDIDATES,
   maxFindings: MAX_FINDINGS,
@@ -67,6 +121,15 @@ const {
   workflowVersion: WORKFLOW_VERSION,
 } = config
 const TASK_GRAPH_CONFIG = { maxFindings: MAX_FINDINGS, maxTasks: MAX_TASKS, reviewModels: REVIEW_MODELS }
+// ADR 002 Flex retry schedule (M5): bounded exponential backoff with positive
+// deterministic jitter, applied identically to the finder and audit lanes.
+const RETRY_CONFIG: FlexRetryConfig = Object.freeze({
+  flexAttempts: FLEX_ATTEMPTS,
+  flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
+  flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
+  flexJitterSeconds: FLEX_JITTER_SECONDS,
+})
+const WORST_CASE_REVIEW_SECONDS = worstCaseReviewSeconds(RETRY_CONFIG, PER_CALL_TIMEOUT_SECONDS)
 // The host selects each Flex lane; ADR 002 forbids an agent promoting itself to
 // a costlier model or service tier. `lunaReasoning` chooses the low or the
 // pre-registered medium escalation adapter for the finder lane.
@@ -131,6 +194,16 @@ if (DRY_RUN) {
       terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
       adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS,
     },
+    // ADR 002 Flex retry schedule and the worst-case wall clock it implies; a
+    // test asserts the default budget fits the harness's outer --timeout.
+    flexRetry: {
+      flexAttempts: FLEX_ATTEMPTS,
+      flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
+      flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
+      flexJitterSeconds: FLEX_JITTER_SECONDS,
+      perCallTimeoutSeconds: PER_CALL_TIMEOUT_SECONDS,
+    },
+    worstCaseReviewSeconds: WORST_CASE_REVIEW_SECONDS,
     defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
     candidateSchema: CANDIDATE_SCHEMA,
     verdictSchema: VERDICT_SCHEMA,
@@ -257,35 +330,46 @@ for (const pack of packs) {
 }
 
 phase('Review')
-const reviewAttempts = await parallel(
+// Each admitted pack runs through the Flex retry helper, which reissues the same
+// durable call across attempts under one admission. Attempts do NOT re-admit or
+// re-charge spentUsd; the ledger entry's `attempts` field records the count.
+const reviewOutcomes = await parallel(
     admittedPacks.map((task) => async () => ({
       task,
-      result: await agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext), {
-        label: task.taskId,
-        phase: 'Review',
-        adapter: task.adapter,
-        model: task.model,
-        schema: CANDIDATE_SCHEMA,
-      }),
+      outcome: await callWithFlexRetry<CandidateResult | null>(RETRY_CONFIG, task.taskId, () =>
+        agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext), {
+          label: task.taskId,
+          phase: 'Review',
+          adapter: task.adapter,
+          model: task.model,
+          schema: CANDIDATE_SCHEMA,
+        })),
     })),
   )
-const failedTaskIds = reviewAttempts
-  .map((value, index) => (value === null || value.result === null ? admittedPacks[index]?.taskId : undefined))
-  .filter((taskId): taskId is string => typeof taskId === 'string')
-const taskResults = reviewAttempts.filter(
-  (value): value is BoundCandidateResult => value !== null && value.result !== null,
-)
-if (failedTaskIds.length > 0) {
-  return {
-    ok: false,
-    stage: 'review',
-    error: 'one or more scheduled review tasks failed; refusing to record incomplete coverage',
-    config: CODE_RABBIT_CONFIG,
-    prepared,
-    taskGraph,
-    failedTaskIds,
+// A pack that exhausts its Flex attempts is downgraded rather than failing the
+// review (ADR 002 optional-Luna policy): partial finder coverage with an honest
+// record beats a dead review, and the audit still sees the surviving candidates.
+const lunaDowngrades: LunaDowngrade[] = []
+const taskResults: BoundCandidateResult[] = []
+for (const entry of reviewOutcomes) {
+  if (entry === null) continue // defensive: retryable failures never null a slot
+  const { task, outcome } = entry
+  const ledgerEntry = ledger.find((item) => item.callId === task.taskId)
+  if (ledgerEntry) ledgerEntry.attempts = outcome.attempts
+  if (outcome.ok && outcome.value !== null && outcome.value !== undefined) {
+    taskResults.push({ task, result: outcome.value })
+  } else {
+    lunaDowngrades.push({
+      taskId: task.taskId,
+      reason: outcome.ok
+        ? 'Finder pack returned no usable candidate result; downgraded to partial coverage.'
+        : 'Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.',
+      attempts: outcome.attempts,
+    })
   }
 }
+// failedTaskIds stays for compatibility, now listing the downgraded pack ids.
+const failedTaskIds = lunaDowngrades.map((downgrade) => downgrade.taskId)
 const candidates = normalizeCandidates(taskResults, prepared.changedFiles, MAX_CANDIDATES)
 // The verification policy still selects what is eligible (verify-all plus one
 // sampled low finding per non-high task); compaction then orders, deduplicates,
@@ -335,13 +419,49 @@ if (auditCandidates.length > 0) {
     pricingTableVersion: PRICING_TABLE.version,
     attempts: 1,
   })
-  auditResult = await agent<AuditResult>(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
-    label: 'audit',
-    phase: 'Audit',
-    adapter: TERRA_LANE.adapter,
-    model: TERRA_LANE.model,
-    schema: AUDIT_SCHEMA,
-  })
+  // The required audit runs through the same Flex retry helper. On exhaustion the
+  // review DEFERS rather than falling back to standard processing: it returns a
+  // structured deferred result with no recordInput, so the CLI's recordReview
+  // guard (ok === true && recordInput) cannot record the head as complete.
+  const auditOutcome = await callWithFlexRetry<AuditResult>(RETRY_CONFIG, 'audit', () =>
+    agent<AuditResult>(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+      label: 'audit',
+      phase: 'Audit',
+      adapter: TERRA_LANE.adapter,
+      model: TERRA_LANE.model,
+      schema: AUDIT_SCHEMA,
+    }))
+  const auditLedgerEntry = ledger.find((item) => item.callId === 'audit')
+  if (auditLedgerEntry) auditLedgerEntry.attempts = auditOutcome.attempts
+  if (!auditOutcome.ok || auditOutcome.value === null || auditOutcome.value === undefined) {
+    return {
+      ok: false,
+      stage: 'deferred',
+      deferred: true,
+      reason: 'flex capacity exhausted for the required audit',
+      attempts: auditOutcome.attempts,
+      config: CODE_RABBIT_CONFIG,
+      headCommit: prepared.headCommit,
+      reviewBase: prepared.reviewBase,
+      commitCount: prepared.commitCount,
+      changedFiles: prepared.changedFiles,
+      candidates: auditCandidates,
+      lunaDowngrades,
+      admissionRefusals,
+      metrics: {
+        routingPolicy: ROUTING_POLICY,
+        budgetUsd: BUDGET_USD,
+        reservedAuditUsd: RESERVED_AUDIT_USD,
+        spentUsd: admissionState.spentUsd,
+        pricingTableVersion: PRICING_TABLE.version,
+        ledger,
+        ledgerTotalEstimatedUsd: ledger.reduce((sum, item) => sum + item.estimatedWorstCaseUsd, 0),
+        lunaDowngradeCount: lunaDowngrades.length,
+        admissionRefusalCount: admissionRefusals.length,
+      },
+    }
+  }
+  auditResult = auditOutcome.value
 }
 const rawVerdicts: Verdict[] = auditResult && Array.isArray(auditResult.verdicts) ? auditResult.verdicts : []
 
@@ -471,6 +591,7 @@ const metrics = {
   completedTaskCount: taskResults.length,
   failedTaskCount: failedTaskIds.length,
   failedTaskIds,
+  lunaDowngradeCount: lunaDowngrades.length,
   candidateFindings: candidates.length,
   auditCandidateCount: auditCandidates.length,
   overAuditCapCount: overCap.length,
@@ -533,6 +654,7 @@ return {
   findings: authoritativeFindings,
   discarded,
   admissionRefusals,
+  lunaDowngrades,
   summary: authoritativeSummary,
   reportMarkdown: authoritativeReport,
   metrics,
