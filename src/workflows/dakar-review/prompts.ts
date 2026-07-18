@@ -21,41 +21,6 @@ export function agentInstructionsBlock(context: PromptContext): string {
 }
 
 /**
- * Builds the deterministic configuration-resolution agent prompt.
- *
- * @param context - Trusted repository root and current prompt context.
- * @param configArg - Optional explicit configuration path to shell-quote.
- * @returns A bounded prompt invoking the local configuration helper.
- */
-export function resolveConfigPrompt(context: PromptContext, configArg: string): string {
-  const option = configArg ? ` --config ${shellWord(configArg)}` : ''
-  return [
-    'Resolve the Dakar review configuration and return the helper JSON exactly.', '', 'Command:',
-    `node scripts/review-config.mjs resolve --repo-root ${shellWord(context.repoRoot)} --package-root .${option}`,
-    '', 'Do not edit files. If the command fails, explain the failure in schema-compatible JSON with ok=false.',
-  ].join('\n')
-}
-
-/**
- * Builds the deterministic review-range preparation prompt.
- *
- * @param context - Trusted repository root and resolved policy path.
- * @param baseRef - User-selected base ref, quoted before entering the command.
- * @param headRef - User-selected head ref, quoted before entering the command.
- * @param stateRoot - Optional isolated review-history root to quote.
- * @returns A bounded prompt invoking the local state preparation helper.
- */
-export function preparePrompt(context: PromptContext, baseRef: string, headRef: string, stateRoot: string): string {
-  const stateRootOption = stateRoot ? ` --state-root ${shellWord(stateRoot)}` : ''
-  return [
-    'Run the deterministic Dakar state helper and return its JSON result exactly.',
-    `Resolved CodeRabbit YAML: ${context.policyPath}`, '', 'Command:',
-    `node scripts/review-state.mjs prepare --repo-root ${shellWord(context.repoRoot)} --base ${shellWord(baseRef)} --head ${shellWord(headRef)}${stateRootOption}`,
-    '', 'Do not edit files. If the command fails, explain the failure in schema-compatible JSON with ok=false.',
-  ].join('\n')
-}
-
-/**
  * Builds a finder prompt restricted to one scheduled task and reviewed range.
  *
  * @param task - Trusted task specification with assigned files and finding cap.

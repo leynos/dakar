@@ -26,6 +26,18 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   assert.throws(() => config.reviewModels.push({ model: 'leak', reasoning: 'low' }), TypeError)
 })
 
+test('resolveWorkflowConfig passes the prepared review through unvalidated', () => {
+  const prepared = {
+    ok: true, stateFile: '/tmp/reviews.toml', reviewBase: 'a'.repeat(40), headCommit: 'b'.repeat(40),
+    commitCount: 3, changedFiles: ['src/a.ts'],
+  }
+  const config = resolveWorkflowConfig({ prepared })
+
+  assert.deepEqual(config.prepared, prepared)
+  assert.equal(resolveWorkflowConfig({}).prepared, undefined)
+  assert.equal(resolveWorkflowConfig(undefined).prepared, undefined)
+})
+
 test('positive limits floor values, cap extremes, and reject invalid input', () => {
   const config = resolveWorkflowConfig({
     maxCandidates: 2.9,

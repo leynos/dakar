@@ -13,8 +13,6 @@ export const meta = {
   whenToUse:
     'Use on a git branch when a CodeRabbit-compatible YAML file should drive an incremental AI code review and reviews.toml should prevent duplicate commit coverage.',
   phases: [
-    { title: 'Resolve Config' },
-    { title: 'Prepare' },
     { title: 'Plan' },
     { title: 'Review' },
     { title: 'Verify' },

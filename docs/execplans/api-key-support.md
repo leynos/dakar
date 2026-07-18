@@ -189,6 +189,16 @@ the conflict in `Decision Log`, and escalate.
     label→responder registry; prompt parsing isolated in one function);
     pure refactor, no test-body changes, 20/20 focused and 155/155
     full-suite green. `legacy-route-final` tag planted at the M1 commit.
+  - [x] (2026-07-18 19:40Z) Stage b: prepare moved into the CLI; the
+    Resolve Config and Prepare agent phases deleted;
+    `WorkflowArgs.prepared` landed with fail-closed workflow validation;
+    skip short-circuit now pre-empts ODW entirely; `resolvedConfig`
+    dropped from all result shapes; `meta.js` phases now Plan, Review,
+    Verify, Synthesize, Record. Red evidence
+    `/tmp/m2b-red-evidence.txt` (18 orchestration failures with
+    `stage: 'config'`, two CLI failures proving ODW was still invoked);
+    green at 156/156 with typecheck, dry run, and freshness passing;
+    full `make check` green via scrutineer.
 - [ ] M3: issue-set audit replaces per-candidate verification, on the
   existing standard-tier adapters.
 - [ ] M4: Flex adapters, Luna and Terra lane routing, admission wiring.

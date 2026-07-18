@@ -1,7 +1,7 @@
 /** @file Validate workflow arguments and resolve immutable runtime configuration. */
 
 import { adapterForReasoning, baseModel, DEFAULT_REVIEW_MODELS, isReasoning, modelName, reasoningFromModel } from './model-routing.ts'
-import type { AgentInstructions, ModelSpec, Reasoning, UnknownObject } from './types.ts'
+import type { AgentInstructions, ModelSpec, PreparedReview, Reasoning, UnknownObject } from './types.ts'
 
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
@@ -13,6 +13,7 @@ export interface WorkflowConfig {
   readonly maxCandidates: number
   readonly maxFindings: number
   readonly maxTasks: number
+  readonly prepared: PreparedReview | undefined
   readonly repoRoot: string
   readonly reviewModels: readonly Readonly<ModelSpec>[]
   readonly stateRoot: string
@@ -136,6 +137,9 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     maxCandidates: positiveLimit(args.maxCandidates, 30, 1_000),
     maxFindings: positiveLimit(args.maxFindings, 20, 200),
     maxTasks: positiveLimit(args.maxTasks, 8, 64),
+    // Unvalidated passthrough: the CLI prepares the review range host-side and
+    // main.ts validates these fields fail-closed before any downstream use.
+    prepared: isObject(args.prepared) ? (args.prepared as PreparedReview) : undefined,
     repoRoot: nonBlankString(args.repoRoot, '.'),
     reviewModels,
     stateRoot: nonBlankString(args.stateRoot, ''),

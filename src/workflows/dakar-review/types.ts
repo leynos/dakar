@@ -32,6 +32,7 @@ export interface WorkflowArgs {
   maxFindings?: unknown
   maxTasks?: unknown
   models?: unknown
+  prepared?: PreparedReview
   repoRoot?: string
   stateRoot?: string
   synthesisModel?: string
@@ -145,15 +146,6 @@ export interface SynthesisResult {
   reportMarkdown?: string
   summary?: string
   verdict?: string
-}
-
-/** Captures configuration resolution status, provenance, and checked paths. */
-export interface ConfigResult {
-  config?: string
-  checked?: string[]
-  error?: string
-  ok: boolean
-  source?: 'explicit' | 'repository' | 'user' | 'example'
 }
 
 /** Captures the review-history helper's success or diagnostic output. */

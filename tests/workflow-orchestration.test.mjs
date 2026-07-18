@@ -5,16 +5,10 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { buildAgentMock, extractCandidateJson, FixtureFailure } from './helpers/mock-agents.mjs'
 
-function defaultResponders({ failedLabel, recordFailures, collidingCandidates, prepareStateFile, head, base,
+function defaultResponders({ failedLabel, recordFailures, collidingCandidates, head,
   candidateTitles, summaryCandidateTitles, verdictTransform, synthesisMetrics, recordResult, recordResults }) {
   return [
     { match: (label) => label === failedLabel, respond: () => { throw new FixtureFailure('fixture failure') } },
-    { match: 'config-resolve', respond: () => ({ ok: true, config: '/distinct/policy.yaml' }) },
-    {
-      match: 'state-prepare',
-      respond: () => ({ ok: true, stateFile: prepareStateFile, reviewBase: base, headCommit: head,
-        commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }),
-    },
     {
       match: 'source-1',
       respond: () => {
@@ -56,7 +50,7 @@ function defaultResponders({ failedLabel, recordFailures, collidingCandidates, p
   ]
 }
 
-async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '', commitLength = 40, recordResult, recordResults, candidateTitles, summaryCandidateTitles = [], maxFindings, verdictTransform, synthesisMetrics = {} } = {}) {
+async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '', commitLength = 40, config = '/distinct/policy.yaml', recordResult, recordResults, candidateTitles, summaryCandidateTitles = [], maxFindings, verdictTransform, synthesisMetrics = {} } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -68,7 +62,9 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
   const sleepDelays = []
   const head = 'b'.repeat(commitLength)
   const base = 'a'.repeat(commitLength)
-  const agent = buildAgentMock(defaultResponders({ failedLabel, recordFailures, collidingCandidates, prepareStateFile, head, base,
+  const prepared = { ok: true, stateFile: prepareStateFile, reviewBase: base, headCommit: head,
+    commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }
+  const agent = buildAgentMock(defaultResponders({ failedLabel, recordFailures, collidingCandidates, head,
     candidateTitles, summaryCandidateTitles, verdictTransform, synthesisMetrics, recordResult, recordResults }), { prompts, agentLabels })
   const swallowFixtureFailure = (error) => {
     if (error instanceof FixtureFailure) return null
@@ -85,7 +81,7 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
     }
   }))
   const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message),
-    { stateRoot, ...(maxFindings === undefined ? {} : { maxFindings }) },
+    { config, stateRoot, prepared, ...(maxFindings === undefined ? {} : { maxFindings }) },
     { total: null, spent: () => 0, remaining: () => 0 }, async () => null,
     () => ({ ok: true, meta: null, errors: [], warnings: [] }), async (milliseconds) => { sleepDelays.push(milliseconds) })
   return { agentLabels, logs, phases, prompts, result, sleepDelays }
@@ -95,22 +91,18 @@ test('generated workflow threads the resolved policy path through every downstre
   const { agentLabels, phases, prompts, result } = await runWorkflow()
   assert.equal(result.ok, true)
   assert.deepEqual(agentLabels, [
-    'config-resolve', 'state-prepare', 'source-1', 'review-summary-1',
+    'source-1', 'review-summary-1',
     'verify-source-1:src/a.js:2:bug-1', 'synthesis', 'state-record-1',
   ])
-  assert.deepEqual(phases, ['Resolve Config', 'Prepare', 'Plan', 'Review', 'Verify', 'Synthesize', 'Record'])
+  assert.deepEqual(phases, ['Plan', 'Review', 'Verify', 'Synthesize', 'Record'])
   assert.equal(result.recordAttempts, 1)
   for (const [label, prompt] of prompts) {
-    if (label !== 'config-resolve') {
-      assert.match(prompt, /\/distinct\/policy\.yaml/u, `${label} should receive the resolved policy path`)
-      assert.doesNotMatch(prompt, /CodeRabbit YAML: auto/u)
-    }
+    assert.match(prompt, /\/distinct\/policy\.yaml/u, `${label} should receive the resolved policy path`)
+    assert.doesNotMatch(prompt, /CodeRabbit YAML: auto/u)
   }
 })
 
 for (const [label, stage] of [
-  ['config-resolve', 'config'],
-  ['state-prepare', 'prepare'],
   ['synthesis', 'synthesize'],
 ]) {
   test(`generated workflow tags a rejected ${stage} agent call`, async () => {

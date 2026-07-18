@@ -1,29 +1,5 @@
 /** @file Define JSON Schemas for every structured ODW agent hand-off. */
 
-/** Validates structured configuration-resolution results from the Config phase. */
-export const CONFIG_SCHEMA = {
-  type: 'object', additionalProperties: false,
-  properties: {
-    ok: { type: 'boolean' }, config: { type: 'string' },
-    source: { type: 'string', enum: ['explicit', 'repository', 'user', 'example'] },
-    checked: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
-  },
-  required: ['ok'],
-}
-
-/** Validates review-range and state metadata returned by the Prepare phase. */
-export const PREPARE_SCHEMA = {
-  type: 'object', additionalProperties: true,
-  properties: {
-    ok: { type: 'boolean' }, stateFile: { type: 'string' }, reviewBase: { type: 'string' },
-    headCommit: { type: 'string' }, commitCount: { type: 'integer' },
-    commits: { type: 'array', items: { type: 'string' } },
-    changedFiles: { type: 'array', items: { type: 'string' } }, diffStat: { type: 'string' },
-    alreadyReviewed: { type: 'boolean' }, warnings: { type: 'array', items: { type: 'string' } },
-  },
-  required: ['ok'],
-}
-
 /** Validates bounded candidate findings returned by each Review task. */
 export const CANDIDATE_SCHEMA = {
   type: 'object', additionalProperties: false,

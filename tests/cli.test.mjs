@@ -7,7 +7,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -363,6 +363,82 @@ test('CLI marks recovery in metrics when the workflow supplied recordInput', () 
   assert.match(stateText, /head_commit = "cccc/u)
   assert.match(stateText, /recordRecoveredByCli/u)
   assert.match(stateText, /taskCount/u)
+})
+
+test('CLI skips the review without invoking ODW when nothing is unreviewed', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-skip-'))
+  const targetRepo = join(tempRoot, 'repo')
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  mkdirSync(targetRepo, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
+  const marker = join(tempRoot, 'odw-invoked')
+  const fakeOdw = join(tempRoot, 'odw')
+  writeFileSync(fakeOdw, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
+  chmodSync(fakeOdw, 0o755)
+
+  const output = runCli(
+    [
+      '--repo-root', targetRepo,
+      '--base', 'HEAD',
+      '--head', 'HEAD',
+      '--state-root', join(tempRoot, 'state'),
+      '--odw-bin', fakeOdw,
+      '--runs-root', join(tempRoot, 'runs'),
+    ],
+    { env: { XDG_CONFIG_HOME: xdgConfig } },
+  )
+  const result = JSON.parse(output)
+
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.match(result.reason, /No unreviewed commits/u)
+  assert.equal(result.resolvedConfig, undefined)
+  assert.equal(typeof result.headCommit, 'string')
+  assert.ok(result.headCommit.length > 0)
+  assert.equal(existsSync(marker), false)
+})
+
+test('CLI fails with a prepare envelope without invoking ODW when refs are invalid', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-prepare-fail-'))
+  const targetRepo = join(tempRoot, 'repo')
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  mkdirSync(targetRepo, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
+  const marker = join(tempRoot, 'odw-invoked')
+  const fakeOdw = join(tempRoot, 'odw')
+  writeFileSync(fakeOdw, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      '--repo-root', targetRepo,
+      '--base', 'HEAD',
+      '--head', 'definitely-missing-ref',
+      '--state-root', join(tempRoot, 'state'),
+      '--odw-bin', fakeOdw,
+      '--runs-root', join(tempRoot, 'runs'),
+    ],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /"stage":\s*"prepare"/u)
+  assert.match(result.stderr, /"ok":\s*false/u)
+  assert.equal(existsSync(marker), false)
 })
 
 test('package installs a callable CLI with Bun global install', (t) => {

@@ -11,20 +11,17 @@ import {
 import { resolveWorkflowConfig } from './config.ts'
 import { modelName } from './model-routing.ts'
 import {
-  preparePrompt,
   recordPrompt as makeRecordPrompt,
-  resolveConfigPrompt,
   synthesisPrompt,
   taskPrompt,
   verificationPrompt,
 } from './prompts.ts'
-import { CANDIDATE_SCHEMA, CONFIG_SCHEMA, PREPARE_SCHEMA, RECORD_SCHEMA, SYNTHESIS_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
+import { CANDIDATE_SCHEMA, RECORD_SCHEMA, SYNTHESIS_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
 import { buildTaskGraph, defaultTaskGraph } from './task-graph.ts'
 import type {
   BoundCandidateResult,
   Candidate,
   CandidateResult,
-  ConfigResult,
   Discarded,
   PreparedReview,
   PromptContext,
@@ -51,6 +48,7 @@ const {
   maxCandidates: MAX_CANDIDATES,
   maxFindings: MAX_FINDINGS,
   maxTasks: MAX_TASKS,
+  prepared: PREPARED,
   repoRoot: REPO_ROOT,
   reviewModels: REVIEW_MODELS,
   stateRoot: STATE_ROOT,
@@ -61,12 +59,14 @@ const {
   workflowVersion: WORKFLOW_VERSION,
 } = config
 const TASK_GRAPH_CONFIG = { maxFindings: MAX_FINDINGS, maxTasks: MAX_TASKS, reviewModels: REVIEW_MODELS }
-let CODE_RABBIT_CONFIG = CONFIG_ARG || 'auto'
-const initialPromptContext: PromptContext = {
+// Configuration is resolved host-side by the CLI and supplied verbatim; the
+// workflow no longer re-resolves it through an agent call.
+const CODE_RABBIT_CONFIG = CONFIG_ARG || 'auto'
+const promptContext: PromptContext = Object.freeze({
   agentInstructions: AGENT_INSTRUCTIONS,
   policyPath: CODE_RABBIT_CONFIG,
   repoRoot: REPO_ROOT,
-}
+})
 
 if (DRY_RUN) {
   return {
@@ -94,60 +94,12 @@ if (DRY_RUN) {
   }
 }
 
-phase('Resolve Config')
-let resolvedConfig: ConfigResult
-try {
-  resolvedConfig = await agent<ConfigResult>(
-    resolveConfigPrompt(initialPromptContext, CONFIG_ARG),
-    {
-      label: 'config-resolve',
-      phase: 'Resolve Config',
-      adapter: SYNTHESIS_ADAPTER,
-      model: SYNTHESIS_MODEL_BASE,
-      schema: CONFIG_SCHEMA,
-    },
-  )
-} catch (error) {
-  return { ok: false, stage: 'config', error: error instanceof Error ? error.message : String(error) }
-}
-
+// The deterministic review range is prepared host-side by the CLI and passed
+// in as args.prepared. The workflow validates it fail-closed before use; the
+// CLI normally pre-empts the skip guard below, which is retained belt-and-braces.
+const prepared: PreparedReview = PREPARED || {}
 if (
-  !resolvedConfig ||
-  resolvedConfig.ok === false ||
-  typeof resolvedConfig.config !== 'string' ||
-  resolvedConfig.config.trim() === ''
-) {
-  return { ok: false, stage: 'config', resolvedConfig }
-}
-CODE_RABBIT_CONFIG = resolvedConfig.config
-const promptContext: PromptContext = Object.freeze({
-  agentInstructions: AGENT_INSTRUCTIONS,
-  policyPath: CODE_RABBIT_CONFIG,
-  repoRoot: REPO_ROOT,
-})
-
-phase('Prepare')
-let prepared: PreparedReview
-try {
-  prepared = await agent<PreparedReview>(
-    preparePrompt(promptContext, BASE_REF, HEAD_REF, STATE_ROOT),
-    {
-      label: 'state-prepare',
-      phase: 'Prepare',
-      adapter: SYNTHESIS_ADAPTER,
-      model: SYNTHESIS_MODEL_BASE,
-      schema: PREPARE_SCHEMA,
-    },
-  )
-} catch (error) {
-  return { ok: false, stage: 'prepare', error: error instanceof Error ? error.message : String(error) }
-}
-
-if (!prepared || prepared.ok === false) {
-  return { ok: false, stage: 'prepare', config: CODE_RABBIT_CONFIG, resolvedConfig, prepared }
-}
-
-if (
+  prepared.ok === false ||
   typeof prepared.headCommit !== 'string' ||
   !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.headCommit) ||
   typeof prepared.reviewBase !== 'string' ||
@@ -163,7 +115,6 @@ if (
     stage: 'prepare',
     error: 'prepare step did not return the required review range fields',
     config: CODE_RABBIT_CONFIG,
-    resolvedConfig,
     prepared,
   }
 }
@@ -174,7 +125,6 @@ if (prepared.alreadyReviewed || prepared.commitCount === 0) {
     skipped: true,
     reason: 'No unreviewed commits remain for this branch.',
     config: CODE_RABBIT_CONFIG,
-    resolvedConfig,
     stateFile: prepared.stateFile,
     headCommit: prepared.headCommit,
   }
@@ -190,7 +140,6 @@ try {
     stage: 'plan',
     error: error instanceof Error ? error.message : String(error),
     config: CODE_RABBIT_CONFIG,
-    resolvedConfig,
     prepared,
   }
 }
@@ -220,7 +169,6 @@ if (failedTaskIds.length > 0) {
     stage: 'review',
     error: 'one or more scheduled review tasks failed; refusing to record incomplete coverage',
     config: CODE_RABBIT_CONFIG,
-    resolvedConfig,
     prepared,
     taskGraph,
     failedTaskIds,
@@ -280,7 +228,6 @@ if (!verdictsComplete) {
     stage: 'verify',
     error: 'verification did not return exactly one verdict for every scheduled candidate',
     config: CODE_RABBIT_CONFIG,
-    resolvedConfig,
     prepared,
     taskGraph,
     candidates: verificationCandidates,
@@ -359,7 +306,6 @@ if (!synthesis || !Array.isArray(synthesis.findings) || !synthesis.metrics) {
     verdict: authoritativeFindings.length > 0 ? 'changes-requested' : 'pass',
     workflowVersion: WORKFLOW_VERSION,
     config: CODE_RABBIT_CONFIG,
-    resolvedConfig,
     stateFile: prepared.stateFile,
     reviewBase: prepared.reviewBase,
     headCommit: prepared.headCommit,
@@ -445,7 +391,6 @@ return {
   workflowVersion: WORKFLOW_VERSION,
   verdict: finalVerdict,
   config: CODE_RABBIT_CONFIG,
-  resolvedConfig,
   stateFile: recorded?.stateFile,
   reviewBase: prepared.reviewBase,
   headCommit: prepared.headCommit,

@@ -19,8 +19,6 @@ export const meta = {
   whenToUse:
     'Use on a git branch when a CodeRabbit-compatible YAML file should drive an incremental AI code review and reviews.toml should prevent duplicate commit coverage.',
   phases: [
-    { title: 'Resolve Config' },
-    { title: 'Prepare' },
     { title: 'Plan' },
     { title: 'Review' },
     { title: 'Verify' },
@@ -229,6 +227,9 @@ function resolveWorkflowConfig(value) {
     maxCandidates: positiveLimit(args2.maxCandidates, 30, 1e3),
     maxFindings: positiveLimit(args2.maxFindings, 20, 200),
     maxTasks: positiveLimit(args2.maxTasks, 8, 64),
+    // Unvalidated passthrough: the CLI prepares the review range host-side and
+    // main.ts validates these fields fail-closed before any downstream use.
+    prepared: isObject(args2.prepared) ? args2.prepared : void 0,
     repoRoot: nonBlankString(args2.repoRoot, "."),
     reviewModels,
     stateRoot: nonBlankString(args2.stateRoot, ""),
@@ -256,29 +257,6 @@ function agentInstructionsBlock(context) {
     "Treat these as repository-local instructions when they do not conflict with the Dakar workflow schema, output, and safety rules:",
     instructions.content
   ].filter(Boolean).join("\n");
-}
-function resolveConfigPrompt(context, configArg) {
-  const option = configArg ? ` --config ${shellWord(configArg)}` : "";
-  return [
-    "Resolve the Dakar review configuration and return the helper JSON exactly.",
-    "",
-    "Command:",
-    `node scripts/review-config.mjs resolve --repo-root ${shellWord(context.repoRoot)} --package-root .${option}`,
-    "",
-    "Do not edit files. If the command fails, explain the failure in schema-compatible JSON with ok=false."
-  ].join("\n");
-}
-function preparePrompt(context, baseRef, headRef, stateRoot) {
-  const stateRootOption = stateRoot ? ` --state-root ${shellWord(stateRoot)}` : "";
-  return [
-    "Run the deterministic Dakar state helper and return its JSON result exactly.",
-    `Resolved CodeRabbit YAML: ${context.policyPath}`,
-    "",
-    "Command:",
-    `node scripts/review-state.mjs prepare --repo-root ${shellWord(context.repoRoot)} --base ${shellWord(baseRef)} --head ${shellWord(headRef)}${stateRootOption}`,
-    "",
-    "Do not edit files. If the command fails, explain the failure in schema-compatible JSON with ok=false."
-  ].join("\n");
 }
 function taskPrompt(task, prepared, context) {
   const files = task.files.join(", ") || "(no changed files)";
@@ -385,35 +363,6 @@ function recordPrompt(recordInput, context, stateRoot) {
 }
 
 // src/workflows/dakar-review/schemas.ts
-var CONFIG_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    ok: { type: "boolean" },
-    config: { type: "string" },
-    source: { type: "string", enum: ["explicit", "repository", "user", "example"] },
-    checked: { type: "array", items: { type: "string" } },
-    error: { type: "string" }
-  },
-  required: ["ok"]
-};
-var PREPARE_SCHEMA = {
-  type: "object",
-  additionalProperties: true,
-  properties: {
-    ok: { type: "boolean" },
-    stateFile: { type: "string" },
-    reviewBase: { type: "string" },
-    headCommit: { type: "string" },
-    commitCount: { type: "integer" },
-    commits: { type: "array", items: { type: "string" } },
-    changedFiles: { type: "array", items: { type: "string" } },
-    diffStat: { type: "string" },
-    alreadyReviewed: { type: "boolean" },
-    warnings: { type: "array", items: { type: "string" } }
-  },
-  required: ["ok"]
-};
 var CANDIDATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -593,6 +542,7 @@ async function workflowMain() {
     maxCandidates: MAX_CANDIDATES,
     maxFindings: MAX_FINDINGS,
     maxTasks: MAX_TASKS,
+    prepared: PREPARED,
     repoRoot: REPO_ROOT,
     reviewModels: REVIEW_MODELS,
     stateRoot: STATE_ROOT,
@@ -603,12 +553,12 @@ async function workflowMain() {
     workflowVersion: WORKFLOW_VERSION
   } = config;
   const TASK_GRAPH_CONFIG = { maxFindings: MAX_FINDINGS, maxTasks: MAX_TASKS, reviewModels: REVIEW_MODELS };
-  let CODE_RABBIT_CONFIG = CONFIG_ARG || "auto";
-  const initialPromptContext = {
+  const CODE_RABBIT_CONFIG = CONFIG_ARG || "auto";
+  const promptContext = Object.freeze({
     agentInstructions: AGENT_INSTRUCTIONS,
     policyPath: CODE_RABBIT_CONFIG,
     repoRoot: REPO_ROOT
-  };
+  });
   if (DRY_RUN) {
     return {
       ok: true,
@@ -634,57 +584,13 @@ async function workflowMain() {
       agentInstructionsIncluded: Boolean(AGENT_INSTRUCTIONS && AGENT_INSTRUCTIONS.content)
     };
   }
-  phase("Resolve Config");
-  let resolvedConfig;
-  try {
-    resolvedConfig = await agent(
-      resolveConfigPrompt(initialPromptContext, CONFIG_ARG),
-      {
-        label: "config-resolve",
-        phase: "Resolve Config",
-        adapter: SYNTHESIS_ADAPTER,
-        model: SYNTHESIS_MODEL_BASE,
-        schema: CONFIG_SCHEMA
-      }
-    );
-  } catch (error) {
-    return { ok: false, stage: "config", error: error instanceof Error ? error.message : String(error) };
-  }
-  if (!resolvedConfig || resolvedConfig.ok === false || typeof resolvedConfig.config !== "string" || resolvedConfig.config.trim() === "") {
-    return { ok: false, stage: "config", resolvedConfig };
-  }
-  CODE_RABBIT_CONFIG = resolvedConfig.config;
-  const promptContext = Object.freeze({
-    agentInstructions: AGENT_INSTRUCTIONS,
-    policyPath: CODE_RABBIT_CONFIG,
-    repoRoot: REPO_ROOT
-  });
-  phase("Prepare");
-  let prepared;
-  try {
-    prepared = await agent(
-      preparePrompt(promptContext, BASE_REF, HEAD_REF, STATE_ROOT),
-      {
-        label: "state-prepare",
-        phase: "Prepare",
-        adapter: SYNTHESIS_ADAPTER,
-        model: SYNTHESIS_MODEL_BASE,
-        schema: PREPARE_SCHEMA
-      }
-    );
-  } catch (error) {
-    return { ok: false, stage: "prepare", error: error instanceof Error ? error.message : String(error) };
-  }
-  if (!prepared || prepared.ok === false) {
-    return { ok: false, stage: "prepare", config: CODE_RABBIT_CONFIG, resolvedConfig, prepared };
-  }
-  if (typeof prepared.headCommit !== "string" || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.headCommit) || typeof prepared.reviewBase !== "string" || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.reviewBase) || typeof prepared.stateFile !== "string" || prepared.stateFile.length === 0 || !Number.isInteger(prepared.commitCount) || Number(prepared.commitCount) < 0 || !Array.isArray(prepared.changedFiles)) {
+  const prepared = PREPARED || {};
+  if (prepared.ok === false || typeof prepared.headCommit !== "string" || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.headCommit) || typeof prepared.reviewBase !== "string" || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.reviewBase) || typeof prepared.stateFile !== "string" || prepared.stateFile.length === 0 || !Number.isInteger(prepared.commitCount) || Number(prepared.commitCount) < 0 || !Array.isArray(prepared.changedFiles)) {
     return {
       ok: false,
       stage: "prepare",
       error: "prepare step did not return the required review range fields",
       config: CODE_RABBIT_CONFIG,
-      resolvedConfig,
       prepared
     };
   }
@@ -694,7 +600,6 @@ async function workflowMain() {
       skipped: true,
       reason: "No unreviewed commits remain for this branch.",
       config: CODE_RABBIT_CONFIG,
-      resolvedConfig,
       stateFile: prepared.stateFile,
       headCommit: prepared.headCommit
     };
@@ -709,7 +614,6 @@ async function workflowMain() {
       stage: "plan",
       error: error instanceof Error ? error.message : String(error),
       config: CODE_RABBIT_CONFIG,
-      resolvedConfig,
       prepared
     };
   }
@@ -736,7 +640,6 @@ async function workflowMain() {
       stage: "review",
       error: "one or more scheduled review tasks failed; refusing to record incomplete coverage",
       config: CODE_RABBIT_CONFIG,
-      resolvedConfig,
       prepared,
       taskGraph,
       failedTaskIds
@@ -778,7 +681,6 @@ async function workflowMain() {
       stage: "verify",
       error: "verification did not return exactly one verdict for every scheduled candidate",
       config: CODE_RABBIT_CONFIG,
-      resolvedConfig,
       prepared,
       taskGraph,
       candidates: verificationCandidates,
@@ -850,7 +752,6 @@ async function workflowMain() {
       verdict: authoritativeFindings.length > 0 ? "changes-requested" : "pass",
       workflowVersion: WORKFLOW_VERSION,
       config: CODE_RABBIT_CONFIG,
-      resolvedConfig,
       stateFile: prepared.stateFile,
       reviewBase: prepared.reviewBase,
       headCommit: prepared.headCommit,
@@ -929,7 +830,6 @@ async function workflowMain() {
     workflowVersion: WORKFLOW_VERSION,
     verdict: finalVerdict,
     config: CODE_RABBIT_CONFIG,
-    resolvedConfig,
     stateFile: recorded?.stateFile,
     reviewBase: prepared.reviewBase,
     headCommit: prepared.headCommit,

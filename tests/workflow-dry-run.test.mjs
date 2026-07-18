@@ -67,6 +67,16 @@ test('dry-run exposes routed workflow contract', () => {
   assert.equal(result.synthesisSchema.properties.reportMarkdown.type, 'string')
 })
 
+test('dry-run ignores a supplied prepared review and does not echo it', () => {
+  const result = runDryRun({
+    prepared: { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: 'a'.repeat(40), headCommit: 'b'.repeat(40), commitCount: 2, changedFiles: ['src/a.ts'] },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.dryRun, true)
+  assert.equal(result.prepared, undefined)
+})
+
 test('dry-run routes requested reasoning through ODW adapters', () => {
   const result = runDryRun({
     models: [

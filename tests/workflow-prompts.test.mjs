@@ -5,9 +5,7 @@ import test from 'node:test'
 
 import {
   agentInstructionsBlock,
-  preparePrompt,
   recordPrompt,
-  resolveConfigPrompt,
   synthesisPrompt,
   taskPrompt,
   verificationPrompt,
@@ -32,16 +30,6 @@ test('agentInstructionsBlock reports absence and preserves sourced instructions'
   assert.match(block, /Repository AGENTS\.md source: nested\/AGENTS\.md/u)
   assert.match(block, /was truncated/u)
   assert.match(block, /Keep stdout clean\./u)
-})
-
-test('helper prompts shell-quote repository, refs, and optional paths', () => {
-  const configPrompt = resolveConfigPrompt(CONTEXT, "reviewer's config.yaml")
-  assert.match(configPrompt, /--repo-root '\/tmp\/repo with spaces'/u)
-  assert.match(configPrompt, /--config 'reviewer'"'"'s config\.yaml'/u)
-
-  const statePrompt = preparePrompt(CONTEXT, 'origin/main', 'feature branch', '/tmp/state root')
-  assert.match(statePrompt, /--base 'origin\/main' --head 'feature branch'/u)
-  assert.match(statePrompt, /--state-root '\/tmp\/state root'/u)
 })
 
 test('taskPrompt limits review commands to the assigned files', () => {

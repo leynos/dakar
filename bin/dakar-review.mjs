@@ -8,12 +8,11 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { resolveReviewConfig } from '../scripts/review-config.mjs'
-import { appendReview } from '../scripts/review-state.mjs'
+import { appendReview, prepare } from '../scripts/review-state.mjs'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workflowPath = join(packageRoot, 'workflows', 'dakar-review.js')
@@ -561,6 +560,52 @@ Options:
 }
 
 /**
+ * Prepare the deterministic review range host-side before ODW is invoked.
+ *
+ * Runs `prepare` from the review-state helper in-process with the same trusted
+ * repository, refs, and state-root the workflow prompt used to pass. On failure
+ * the structured `stage: 'prepare'` envelope is written to stderr. When nothing
+ * remains unreviewed, a skip result is returned for the caller to emit on stdout
+ * without launching ODW. Otherwise the full prepared review is returned for the
+ * caller to thread through as `workflowArgs.prepared`.
+ *
+ * @param {object} options - parsed CLI options supplying refs and the state root.
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @param {string} resolvedConfig - the host-resolved CodeRabbit YAML path.
+ * @returns {{ prepared?: object, skip?: object, status?: number }} preparation outcome.
+ */
+function prepareReview(options, repoRoot, resolvedConfig) {
+  const prepareArgs = {
+    'repo-root': repoRoot,
+    base: options.base || 'origin/main',
+    head: options.head || 'HEAD',
+  }
+  if (options.stateRoot) {
+    prepareArgs['state-root'] = options.stateRoot
+  }
+  let prepared
+  try {
+    prepared = prepare(prepareArgs)
+  } catch (error) {
+    process.stderr.write(`${JSON.stringify({ ok: false, stage: 'prepare', error: error.message }, null, 2)}\n`)
+    return { status: 1 }
+  }
+  if (prepared.alreadyReviewed || prepared.commitCount === 0) {
+    return {
+      skip: {
+        ok: true,
+        skipped: true,
+        reason: 'No unreviewed commits remain for this branch.',
+        config: resolvedConfig,
+        stateFile: prepared.stateFile,
+        headCommit: prepared.headCommit,
+      },
+    }
+  }
+  return { prepared }
+}
+
+/**
  * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
  *
  * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
@@ -584,6 +629,17 @@ async function run(argv) {
   }
 
   const workflowArgs = buildWorkflowArgs(options, repoRoot)
+  if (!options.dryRun) {
+    const preparation = prepareReview(options, repoRoot, workflowArgs.config)
+    if (preparation.status !== undefined) {
+      return preparation.status
+    }
+    if (preparation.skip) {
+      process.stdout.write(`${JSON.stringify(preparation.skip, null, 2)}\n`)
+      return 0
+    }
+    workflowArgs.prepared = preparation.prepared
+  }
   const outcome = options.telemetry
     ? await runOdwWithTelemetry(options, workflowArgs)
     : runOdwQuiet(options, workflowArgs)
