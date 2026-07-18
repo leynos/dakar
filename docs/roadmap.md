@@ -452,3 +452,23 @@ real branches. See ADR 002 §"Verification".
   - Requires 7.4.2 and 3.3.1.
   - Success: the acceptance criteria in ADR 002 §"Verification" hold before
     the new route becomes the default.
+
+### 7.6. Gate adoption in df12-build
+
+This step answers whether Dakar can serve as the default host review gate in
+the df12-build workshop, replacing the CodeRabbit CLI and its pinned NDJSON
+wire contract. Live df12-build traffic then doubles as the comparison corpus
+7.5.3 needs.
+
+- [ ] 7.6.1. Expose the budget and coverage knobs as `dakar-review` CLI
+  flags.
+  - Requires 7.4.2.
+  - Success: a gate invocation can raise `--budget-gbp` and the pack and
+    audit limits so large task branches are reviewed without admission
+    refusals.
+- [ ] 7.6.2. Add a Dakar review mode to df12-build's host review, defaulting
+  to Dakar with CodeRabbit retained behind configuration.
+  - Requires 7.6.1.
+  - Success: outcome, severity, and findings-sink mappings preserve the
+    existing control-loop contract; deferral maps to the rate-limited
+    backoff path; the df12-build pull request lands with its gates green.

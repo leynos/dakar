@@ -293,6 +293,24 @@ the conflict in `Decision Log`, and escalate.
   the oversize probe. Admission refusals, pack truncation, and the
   reviewed-head invariant all exercised live. Total spend roughly
   USD 0.52. Roadmap 7.1.2, 7.4.1, and 7.4.2 ticked.
+- [ ] M8 (addendum, 2026-07-18): df12-build gate enablement. Operator
+  direction: land a df12-build pull request adopting `dakar-review` as
+  the default host review gate in place of the CodeRabbit CLI (which
+  df12-build currently drives through a pinned NDJSON wire contract
+  because the CLI exits 0 on fatal errors), and extend this branch
+  with the enabling surface. Dakar side: expose the budget and
+  coverage knobs as CLI flags (`--budget-gbp`, `--max-luna-calls`,
+  `--transaction-max-files`, token and audit knobs, `--luna-reasoning`,
+  `--routing-policy`, `--flex-attempts`, `--per-call-timeout`) so a
+  gate can raise the budget for large task branches. df12-build side:
+  a `runDakarHostReview` alongside the CodeRabbit path behind a
+  review-tool config defaulting to `dakar` — outcome mapping
+  (`verdict: pass` → clean, `changes-requested` → findings,
+  `stage: deferred` → backoff-and-retry, other failures → error),
+  severity mapping (Dakar `critical`/`high` block, matching the
+  critical/major CodeRabbit rule), findings-sink parity, and tests
+  mirroring the existing host-review harness. Roadmap step 7.6 tracks
+  this work.
 
 ## Surprises & discoveries
 
