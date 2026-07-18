@@ -1003,6 +1003,26 @@ fail before implementation with `ERR_MODULE_NOT_FOUND` for
 and 155/155 full-suite passes; `make check` green
 (`/tmp/check-dakar-api-key-support.out`, 1,383 lines).
 
+M7 live ledger (running record; spend total updated per run):
+
+- `comenq` 140 (tiny, 2026-07-18): complete, `verdict: pass`,
+  0 findings, 0 discarded. One Luna call, audit correctly skipped
+  (zero candidates). Estimated USD 0.0124; reported USD 0.0214
+  (9 input / 579 output / 44,130 cacheRead / 27,941 cacheWrite
+  tokens). Latency ~12 s for the Luna call. Hand assessment: the PR
+  makes a test fixture deterministic; a clean pass is credible.
+  Observation: reported exceeds estimate because pi's agentic tool
+  loop wrote ~28k cache tokens on the first call against the 13k
+  `adapterOverheadTokens` assumption — the admission estimate is
+  optimistic, not conservative, for first (uncached) calls. Headroom
+  against the USD 0.25 goal remains large; consider raising
+  `adapterOverheadTokens` and restricting pi's tools for finder calls
+  (host-built evidence packs need no file tools) as a later cost
+  optimization. Two earlier billed attempts of this entry (the
+  standard-rate Codex probe era and the failed-adapter run) are
+  counted in the probe spend already recorded. Running M7 spend:
+  roughly USD 0.06 including all probes and failed attempts.
+
 ## Interfaces and dependencies
 
 No new runtime dependencies. No new dev dependencies are anticipated; any
