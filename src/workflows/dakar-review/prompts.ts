@@ -87,25 +87,5 @@ export function verificationPrompt(candidate: Candidate, prepared: PreparedRevie
   ].join('\n')
 }
 
-/**
- * Builds the review-history recording prompt and inert JSON heredoc.
- *
- * @param recordInput - JSON-serializable completed-review record from orchestration.
- * @param context - Resolved policy and repository context for the record phase.
- * @param stateRoot - Optional trusted review-history root to shell-quote.
- * @returns A prompt invoking the local state helper with serialized input.
- * @throws {TypeError} When recordInput cannot be serialized as JSON.
- */
-export function recordPrompt(recordInput: unknown, context: PromptContext, stateRoot: string): string {
-  const stateRootOption = stateRoot ? ` --state-root ${shellWord(stateRoot)}` : ''
-  return [
-    'Record the completed review in Dakar review history by passing this JSON to the helper on stdin.',
-    'Return the helper JSON output exactly.', 'If the command fails, return ok=false with an error, stdout, and stderr.',
-    `Resolved CodeRabbit YAML: ${context.policyPath}`, '', 'Command:',
-    `node scripts/review-state.mjs record --repo-root ${shellWord(context.repoRoot)}${stateRootOption} <<'__DAKAR_REVIEW_RECORD_JSON__'`,
-    JSON.stringify(recordInput, null, 2), '__DAKAR_REVIEW_RECORD_JSON__',
-  ].join('\n')
-}
-
 /** Names discarded audit entries for prompt-facing consumers. */
 export type PromptDiscarded = Discarded

@@ -34,10 +34,6 @@ function renderingResponders() {
       respond: (prompt) => ({ candidateId: extractCandidateJson(prompt).candidateId,
         status: 'accepted', reason: 'confirmed', evidenceChecked: 'git object' }),
     },
-    {
-      match: (label) => label.startsWith('state-record-'),
-      respond: () => ({ ok: true, stateFile: '/trusted/state/dakar/reviews.toml', headCommit: 'b'.repeat(40) }),
-    },
   ]
 }
 

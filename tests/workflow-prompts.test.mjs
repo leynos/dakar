@@ -5,7 +5,6 @@ import test from 'node:test'
 
 import {
   agentInstructionsBlock,
-  recordPrompt,
   taskPrompt,
   verificationPrompt,
 } from '../src/workflows/dakar-review/prompts.ts'
@@ -59,7 +58,7 @@ test('taskPrompt omits the unscoped diff command for an empty task', () => {
   assert.doesNotMatch(prompt, /diff 'base-sha\.\.head-sha' --/u)
 })
 
-test('dynamic verifier and record data follow stable instructions and use resolved policy', () => {
+test('dynamic verifier data follows stable instructions and uses resolved policy', () => {
   const prepared = { reviewBase: 'base-sha', headCommit: 'head-sha', changedFiles: ['src/a.ts'] }
   const candidate = {
     candidateId: 'source-1:key', taskId: 'source-1', taskKind: 'source', sourceModel: 'gpt-5.5/high',
@@ -68,9 +67,4 @@ test('dynamic verifier and record data follow stable instructions and use resolv
   const verify = verificationPrompt(candidate, prepared, CONTEXT)
   assert.ok(verify.indexOf('Verification rules:') < verify.indexOf('Candidate JSON:'))
   assert.match(verify, /CodeRabbit YAML: \.coderabbit\.yaml/u)
-
-  const record = recordPrompt({ headCommit: 'head-sha' }, CONTEXT, '/tmp/state root')
-  assert.ok(record.indexOf('Record the completed review') < record.indexOf('"headCommit"'))
-  assert.match(record, /Resolved CodeRabbit YAML: \.coderabbit\.yaml/u)
-  assert.match(record, /record --repo-root '\/tmp\/repo with spaces' --state-root '\/tmp\/state root'/u)
 })

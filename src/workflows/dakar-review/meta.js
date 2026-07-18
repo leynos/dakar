@@ -2,9 +2,9 @@
  * @file Route Dakar incremental review work through ODW agents.
  *
  * The workflow computes the unreviewed range, fans scoped review tasks out to
- * Codex agents, verifies candidate findings, renders the accepted review
- * deterministically host-side, and records completed heads in Dakar's XDG state
- * history.
+ * Codex agents, verifies candidate findings, and renders the accepted review
+ * deterministically host-side. The installable CLI records completed heads in
+ * Dakar's XDG state history after the workflow returns.
  */
 
 export const meta = {
@@ -17,6 +17,5 @@ export const meta = {
     { title: 'Plan' },
     { title: 'Review' },
     { title: 'Verify' },
-    { title: 'Record' },
   ],
 }

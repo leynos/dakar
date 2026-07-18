@@ -182,8 +182,15 @@ the conflict in `Decision Log`, and escalate.
   `make check` green via scrutineer. Roadmap 7.1.1 ticked; 7.1.2 and
   7.1.3 tick when the ledger and controller are wired into the workflow
   in M4.
-- [ ] M2: deterministic host takeover, in four stages (test-harness mock
-  helper; prepare to CLI; deterministic rendering; record to CLI).
+- [x] (2026-07-18 20:55Z) M2: deterministic host takeover complete — all
+  four agent-wrapped phases (config, prepare, synthesis, record) removed
+  from the workflow; only finder and verify model calls remain. The
+  workflow's phases are Plan, Review, Verify; the CLI owns prepare,
+  skip, and always-on recording via trusted roots
+  (`recorded.recordedBy: "dakar-review"`; `recordRecoveredByCli`
+  retired). Result-shape changes for the M6 doc sweep are catalogued in
+  the stage d subagent report and this plan's stage entries. Roadmap
+  7.2.3 ticked.
   - [x] (2026-07-18 19:05Z) Stage a: orchestration-test mock helper
     extracted to `tests/helpers/mock-agents.mjs` (declarative
     label→responder registry; prompt parsing isolated in one function);
@@ -208,6 +215,17 @@ the conflict in `Decision Log`, and escalate.
     verify-lane naming). Red evidence `/tmp/m2c-red-evidence.txt`;
     green at 157/157; full `make check` green via scrutineer. Roadmap
     7.2.2 ticked.
+  - [x] (2026-07-18 20:55Z) Stage d: the Record agent loop deleted; the
+    CLI always records successful, non-skipped results in-process via
+    `appendReview` with trusted roots, stamping
+    `recorded.recordedBy: "dakar-review"`; append failure yields
+    `ok: false`, `stage: "record"` with `recordInput` preserved and a
+    non-zero exit; skipped and failed reviews record nothing. Workflow
+    results drop `recorded`, `recordAttempts`, and `stateFile`;
+    `meta.js` phases are Plan, Review, Verify. Red evidence
+    `/tmp/m2d-red-evidence.txt` (8 expected failures); green at
+    149/149 (seven record-retry tests removed with the phase); full
+    `make check` green via scrutineer.
 - [ ] M3: issue-set audit replaces per-candidate verification, on the
   existing standard-tier adapters.
 - [ ] M4: Flex adapters, Luna and Terra lane routing, admission wiring.

@@ -10,12 +10,8 @@ import {
 } from './candidates.ts'
 import { resolveWorkflowConfig } from './config.ts'
 import { modelName } from './model-routing.ts'
-import {
-  recordPrompt as makeRecordPrompt,
-  taskPrompt,
-  verificationPrompt,
-} from './prompts.ts'
-import { CANDIDATE_SCHEMA, RECORD_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
+import { taskPrompt, verificationPrompt } from './prompts.ts'
+import { CANDIDATE_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
 import { buildTaskGraph, defaultTaskGraph } from './task-graph.ts'
 import type {
   BoundCandidateResult,
@@ -24,7 +20,6 @@ import type {
   Discarded,
   PreparedReview,
   PromptContext,
-  RecordResult,
   ReviewTask,
   Verdict,
 } from './types.ts'
@@ -49,7 +44,6 @@ const {
   prepared: PREPARED,
   repoRoot: REPO_ROOT,
   reviewModels: REVIEW_MODELS,
-  stateRoot: STATE_ROOT,
   synthesisAdapter: SYNTHESIS_ADAPTER,
   synthesisModelBase: SYNTHESIS_MODEL_BASE,
   synthesisModelName: SYNTHESIS_MODEL_NAME,
@@ -305,7 +299,10 @@ const metrics = {
   warnings: prepared.warnings || [],
 }
 
-phase('Record')
+// Review-history recording is deterministic host code: the CLI records the
+// completed head through the trusted state root after this workflow returns.
+// The workflow supplies recordInput and no longer performs an agent-mediated
+// record phase.
 const recordInput = {
   reviewId: `head-${prepared.headCommit}`,
   baseCommit: prepared.reviewBase,
@@ -317,42 +314,12 @@ const recordInput = {
   summary: authoritativeSummary,
   metrics,
 }
-const recordPrompt = makeRecordPrompt(recordInput, promptContext, STATE_ROOT)
-let recorded: RecordResult | null = null
-let recordAttempts = 0
-const isCompleteRecord = (value: RecordResult | null): value is RecordResult & { stateFile: string; headCommit: string } =>
-  value?.ok === true &&
-  typeof value.stateFile === 'string' &&
-  value.stateFile.trim().length > 0 &&
-  value.headCommit === prepared.headCommit
-for (let attempt = 1; attempt <= 3 && !isCompleteRecord(recorded); attempt += 1) {
-  recordAttempts = attempt
-  if (attempt > 1) {
-    log(`Review-history recording attempt ${attempt} of 3 after an unsuccessful attempt.`)
-    await sleep(100 * (attempt - 1))
-  }
-  try {
-    recorded = await agent<RecordResult>(recordPrompt, {
-      label: `state-record-${attempt}`,
-      phase: 'Record',
-      adapter: SYNTHESIS_ADAPTER,
-      model: SYNTHESIS_MODEL_BASE,
-      schema: RECORD_SCHEMA,
-    })
-  } catch (error) {
-    recorded = { ok: false, error: error instanceof Error ? error.message : String(error) }
-  }
-}
-const recordSucceeded = isCompleteRecord(recorded)
 
 return {
-  ok: recordSucceeded,
-  stage: recordSucceeded ? undefined : 'record',
-  error: recordSucceeded ? undefined : recorded?.error || 'failed to record review history',
+  ok: true,
   workflowVersion: WORKFLOW_VERSION,
   verdict: finalVerdict,
   config: CODE_RABBIT_CONFIG,
-  stateFile: recorded?.stateFile,
   reviewBase: prepared.reviewBase,
   headCommit: prepared.headCommit,
   commitCount: prepared.commitCount,
@@ -366,8 +333,6 @@ return {
   summary: authoritativeSummary,
   reportMarkdown: authoritativeReport,
   metrics,
-  recorded,
-  recordAttempts,
   recordInput,
 }
 

@@ -387,7 +387,7 @@ preserves the workflow contract while eliminating their spend. See ADR 002
   findings.
   - Success: the synthesis agent call is removed; rendering is byte-stable
     for the same consolidated input.
-- [ ] 7.2.3. Record review history in-process with the existing lock and
+- [x] 7.2.3. Record review history in-process with the existing lock and
   validation invariants.
   - Success: the record agent loop is removed; the reviewed-head invariant
     and CLI recovery contract still hold.

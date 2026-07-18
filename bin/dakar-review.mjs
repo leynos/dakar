@@ -4,7 +4,7 @@
  *
  * The command preserves a parseable stdout result for automation while handling
  * repository-local configuration, AGENTS.md context, live ODW telemetry, and
- * deterministic review-history recovery around the workflow runtime.
+ * deterministic review-history recording around the workflow runtime.
  */
 
 import { spawn, spawnSync } from 'node:child_process'
@@ -261,107 +261,41 @@ function printWorkflowOutput(output, format) {
 }
 
 /**
- * Extract a single-line summary sentence from a workflow output object.
+ * Record a successful review in Dakar's history via the trusted state helper.
  *
- * Returns the first non-heading, non-empty line from `reportMarkdown`, or a
- * generic fallback when none is present.
+ * This is the primary recording path: the workflow no longer records itself, so
+ * after a successful, non-skipped, non-dry-run result the CLI appends the
+ * completed head through {@link appendReview}. The state file is always derived
+ * from the trusted `{repoRoot, stateRoot}` location, never from any
+ * workflow-supplied path. On success the result gains a `recorded` stamp with
+ * `recordedBy: "dakar-review"`; on failure the result is marked `stage:
+ * "record"` with `recordInput` preserved for manual retry so the caller exits
+ * non-zero. Dry-run, skipped, already-failed, and recordInput-less results are
+ * returned untouched.
  *
- * @param {object} output - the ODW workflow result object.
- * @returns {string} a one-line summary suitable for embedding in a TOML field.
+ * @param {object} output - the ODW workflow result to record in place.
+ * @param {object} trustedLocation - trusted `repo-root`/`state-root` used to derive the state file.
+ * @returns {object} the (possibly updated) workflow result.
  */
-function summarizeReport(output) {
-  const markdown = String(output.reportMarkdown || '').trim()
-  if (!markdown) {
-    return 'Dakar review completed.'
-  }
-  return markdown
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line && !line.startsWith('#')) || 'Dakar review completed.'
-}
-
-/**
- * Build the record input passed to `appendReview` during CLI recovery.
- *
- * Prefers the workflow-supplied `recordInput` when present and otherwise
- * reconstructs one from the workflow output. Either way, the returned metrics
- * are stamped with `recordRecoveredByCli: true` so the repaired reviews.toml
- * entry is auditable as a CLI recovery.
- *
- * @param {object} output - the ODW workflow result.
- * @returns {object} record input for `appendReview`.
- */
-function recordInputFromOutput(output) {
-  const base = output.recordInput || {
-    stateFile: output.stateFile,
-    reviewId: `${String(output.headCommit || 'unknown').slice(0, 12)}-${Date.now()}-cli`,
-    baseCommit: output.reviewBase,
-    headCommit: output.headCommit,
-    commitCount: output.commitCount || 0,
-    changedFiles: output.changedFiles || [],
-    models: (output.metrics?.modelAssignments || []).map((assignment) => assignment.model).filter(Boolean),
-    findingsTotal: Array.isArray(output.findings) ? output.findings.length : 0,
-    summary: output.summary || summarizeReport(output),
-    metrics: output.metrics || {},
-  }
-  // Always stamp the recovery marker onto the metrics that appendReview()
-  // persists, whether the record input came from the workflow (output.recordInput)
-  // or was reconstructed here. Merging preserves the workflow's existing metrics
-  // fields while ensuring the repaired reviews.toml entry is marked recovered.
-  return {
-    ...base,
-    metrics: {
-      ...(base.metrics || {}),
-      recordRecoveredByCli: true,
-    },
-  }
-}
-
-/**
- * Attempt one deterministic local recovery of a failed record phase.
- *
- * When ODW completed the review but its record phase failed, re-run the
- * review-history append directly through Dakar's state helper. On success the
- * result is marked `recorded.recoveredBy`; on failure it retains `stage:
- * "record"` so the caller still exits non-zero. Non-record failures and dry/
- * skipped runs are returned untouched.
- *
- * @param {object} output - the ODW workflow result to repair in place.
- * @returns {object} the (possibly repaired) workflow result.
- */
-function recoverRecordFailure(output, trustedLocation) {
-  if (
-    !output ||
-    output.dryRun ||
-    output.skipped ||
-    output.recorded?.ok === true ||
-    (output.stage !== 'record' && output.recorded?.ok !== false) ||
-    !output.headCommit ||
-    (output.stage && output.stage !== 'record')
-  ) {
+function recordReview(output, trustedLocation) {
+  if (!output || output.dryRun || output.skipped || output.ok !== true || !output.recordInput) {
     return output
   }
   try {
-    const recorded = appendReview(recordInputFromOutput(output), trustedLocation)
-    output.recorded = { ...recorded, recoveredBy: 'dakar-review' }
-    output.stateFile = recorded.stateFile
-    output.metrics = {
-      ...(output.metrics || {}),
-      recordRecoveredByCli: true,
+    const recorded = appendReview(output.recordInput, trustedLocation)
+    output.recorded = {
+      ok: true,
+      stateFile: recorded.stateFile,
+      headCommit: recorded.headCommit,
+      recordedBy: 'dakar-review',
     }
-    output.ok = true
-    delete output.stage
-    delete output.error
+    output.stateFile = recorded.stateFile
   } catch (error) {
     output.ok = false
     output.stage = 'record'
     output.error = error.message
-    output.recorded = {
-      ...(output.recorded || {}),
-      ok: false,
-      error: error.message,
-      recoveryAttemptedBy: 'dakar-review',
-    }
+    output.recorded = { ok: false, error: error.message, recordedBy: 'dakar-review' }
+    // recordInput is left in place so the review can be recorded manually later.
   }
   return output
 }
@@ -390,7 +324,7 @@ function runOdwQuiet(options, workflowArgs) {
     return { status: result.status || 1 }
   }
 
-  return { output: recoverRecordFailure(extractJson(result.stdout), {
+  return { output: recordReview(extractJson(result.stdout), {
     'repo-root': workflowArgs.repoRoot,
     'state-root': workflowArgs.stateRoot,
   }) }
@@ -435,7 +369,7 @@ function followOdwLogs(odwBin, args, timeoutMs) {
  * @param {object} options - parsed CLI options.
  * @param {string} runId - ODW run identifier to query.
  * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
- * @returns {Promise<object>} the parsed and (if needed) record-recovered workflow result.
+ * @returns {Promise<object>} the parsed and (on success) recorded workflow result.
  */
 async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 900) * 1000) {
   const odwBin = options.odwBin || 'odw'
@@ -448,7 +382,7 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
       maxBuffer: 64 * 1024 * 1024,
     })
     if (result.status === 0) {
-      return recoverRecordFailure(extractJson(result.stdout), {
+      return recordReview(extractJson(result.stdout), {
         'repo-root': workflowArgs.repoRoot,
         'state-root': workflowArgs.stateRoot,
       })

@@ -8,9 +8,9 @@
  * @file Route Dakar incremental review work through ODW agents.
  *
  * The workflow computes the unreviewed range, fans scoped review tasks out to
- * Codex agents, verifies candidate findings, renders the accepted review
- * deterministically host-side, and records completed heads in Dakar's XDG state
- * history.
+ * Codex agents, verifies candidate findings, and renders the accepted review
+ * deterministically host-side. The installable CLI records completed heads in
+ * Dakar's XDG state history after the workflow returns.
  */
 
 export const meta = {
@@ -23,7 +23,6 @@ export const meta = {
     { title: 'Plan' },
     { title: 'Review' },
     { title: 'Verify' },
-    { title: 'Record' },
   ],
 }
 
@@ -324,20 +323,6 @@ ${JSON.stringify(candidate, null, 2)}`,
     `git -C ${shellWord(context.repoRoot)} show ${shellWord(`${prepared.headCommit}:${candidate.path}`)}`
   ].join("\n");
 }
-function recordPrompt(recordInput, context, stateRoot) {
-  const stateRootOption = stateRoot ? ` --state-root ${shellWord(stateRoot)}` : "";
-  return [
-    "Record the completed review in Dakar review history by passing this JSON to the helper on stdin.",
-    "Return the helper JSON output exactly.",
-    "If the command fails, return ok=false with an error, stdout, and stderr.",
-    `Resolved CodeRabbit YAML: ${context.policyPath}`,
-    "",
-    "Command:",
-    `node scripts/review-state.mjs record --repo-root ${shellWord(context.repoRoot)}${stateRootOption} <<'__DAKAR_REVIEW_RECORD_JSON__'`,
-    JSON.stringify(recordInput, null, 2),
-    "__DAKAR_REVIEW_RECORD_JSON__"
-  ].join("\n");
-}
 
 // src/workflows/dakar-review/schemas.ts
 var CANDIDATE_SCHEMA = {
@@ -376,19 +361,6 @@ var VERDICT_SCHEMA = {
     evidenceChecked: { type: "string" }
   },
   required: ["candidateId", "status", "reason", "evidenceChecked"]
-};
-var RECORD_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    ok: { type: "boolean" },
-    stateFile: { type: "string" },
-    headCommit: { type: "string" },
-    error: { type: "string" },
-    stdout: { type: "string" },
-    stderr: { type: "string" }
-  },
-  required: ["ok", "stateFile", "headCommit"]
 };
 
 // src/workflows/dakar-review/task-graph.ts
@@ -492,7 +464,6 @@ async function workflowMain() {
     prepared: PREPARED,
     repoRoot: REPO_ROOT,
     reviewModels: REVIEW_MODELS,
-    stateRoot: STATE_ROOT,
     synthesisAdapter: SYNTHESIS_ADAPTER,
     synthesisModelBase: SYNTHESIS_MODEL_BASE,
     synthesisModelName: SYNTHESIS_MODEL_NAME,
@@ -696,7 +667,6 @@ async function workflowMain() {
     diffStat: prepared.diffStat,
     warnings: prepared.warnings || []
   };
-  phase("Record");
   const recordInput = {
     reviewId: `head-${prepared.headCommit}`,
     baseCommit: prepared.reviewBase,
@@ -708,37 +678,11 @@ async function workflowMain() {
     summary: authoritativeSummary,
     metrics
   };
-  const recordPrompt2 = recordPrompt(recordInput, promptContext, STATE_ROOT);
-  let recorded = null;
-  let recordAttempts = 0;
-  const isCompleteRecord = (value) => value?.ok === true && typeof value.stateFile === "string" && value.stateFile.trim().length > 0 && value.headCommit === prepared.headCommit;
-  for (let attempt = 1; attempt <= 3 && !isCompleteRecord(recorded); attempt += 1) {
-    recordAttempts = attempt;
-    if (attempt > 1) {
-      log(`Review-history recording attempt ${attempt} of 3 after an unsuccessful attempt.`);
-      await sleep(100 * (attempt - 1));
-    }
-    try {
-      recorded = await agent(recordPrompt2, {
-        label: `state-record-${attempt}`,
-        phase: "Record",
-        adapter: SYNTHESIS_ADAPTER,
-        model: SYNTHESIS_MODEL_BASE,
-        schema: RECORD_SCHEMA
-      });
-    } catch (error) {
-      recorded = { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-  }
-  const recordSucceeded = isCompleteRecord(recorded);
   return {
-    ok: recordSucceeded,
-    stage: recordSucceeded ? void 0 : "record",
-    error: recordSucceeded ? void 0 : recorded?.error || "failed to record review history",
+    ok: true,
     workflowVersion: WORKFLOW_VERSION,
     verdict: finalVerdict,
     config: CODE_RABBIT_CONFIG,
-    stateFile: recorded?.stateFile,
     reviewBase: prepared.reviewBase,
     headCommit: prepared.headCommit,
     commitCount: prepared.commitCount,
@@ -752,8 +696,6 @@ async function workflowMain() {
     summary: authoritativeSummary,
     reportMarkdown: authoritativeReport,
     metrics,
-    recorded,
-    recordAttempts,
     recordInput
   };
 }

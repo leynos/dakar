@@ -264,24 +264,35 @@ test('CLI surfaces git failures while loading trusted instructions', () => {
   assert.match(JSON.parse(result.stderr).error, /not a git repository/u)
 })
 
-test('CLI recovers review-history recording when ODW record phase fails', () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-recovery-'))
-  const stateFile = join(tempRoot, 'state', 'reviews.toml')
+test('CLI records a successful workflow result via appendReview through the trusted state root', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-primary-'))
+  const workflowStateFile = join(tempRoot, 'workflow-claimed', 'reviews.toml')
   const fakeOdw = join(tempRoot, 'odw')
+  // A successful workflow result no longer records itself; it emits recordInput
+  // and leaves recording to the CLI, which derives the state path from the
+  // trusted repo-root/state-root, never from any workflow-supplied path.
   const fakeResult = {
-    ok: false,
-    stage: 'record',
-    stateFile,
+    ok: true,
+    verdict: 'pass',
     reviewBase: 'a'.repeat(40),
     headCommit: 'b'.repeat(40),
     commitCount: 1,
     changedFiles: ['src/example.js'],
     findings: [],
-    reportMarkdown: '## Verdict: Pass\n\nNo accepted findings.',
-    metrics: {
-      modelAssignments: [{ model: 'gpt-5.5/high' }],
+    reportMarkdown: '# Dakar review\n\nNo blocking findings were accepted.',
+    metrics: { modelAssignments: [{ model: 'gpt-5.5/high' }] },
+    recordInput: {
+      stateFile: workflowStateFile,
+      reviewId: 'head-bbbb',
+      baseCommit: 'a'.repeat(40),
+      headCommit: 'b'.repeat(40),
+      commitCount: 1,
+      changedFiles: ['src/example.js'],
+      models: ['gpt-5.5/high'],
+      findingsTotal: 0,
+      summary: 'No blocking findings were accepted.',
+      metrics: { taskCount: 2 },
     },
-    recorded: { ok: false },
   }
   writeFileSync(
     fakeOdw,
@@ -304,38 +315,44 @@ test('CLI recovers review-history recording when ODW record phase fails', () => 
 
   assert.equal(result.ok, true)
   assert.equal(result.recorded.ok, true)
-  assert.equal(result.recorded.recoveredBy, 'dakar-review')
+  assert.equal(result.recorded.recordedBy, 'dakar-review')
+  // The CLI derives the path from the trusted roots, never the workflow claim.
   assert.ok(result.stateFile.startsWith(`${join(tempRoot, 'trusted-state')}/`))
-  assert.notEqual(result.stateFile, stateFile)
+  assert.notEqual(result.stateFile, workflowStateFile)
   assert.match(stateText, /head_commit = "bbbb/u)
-  assert.match(stateText, /recordRecoveredByCli/u)
+  assert.match(stateText, /taskCount/u)
+  // The retired recovery marker must not reappear on the primary path.
+  assert.doesNotMatch(stateText, /recordRecoveredByCli/u)
+  assert.equal(result.recorded.recoveredBy, undefined)
 })
 
-test('CLI marks recovery in metrics when the workflow supplied recordInput', () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-recovery-input-'))
-  const stateFile = join(tempRoot, 'state', 'reviews.toml')
+test('CLI fails closed with a record stage when appendReview rejects the review', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-failure-'))
   const fakeOdw = join(tempRoot, 'odw')
-  // The workflow emits its own recordInput (with prior metrics) alongside the
-  // failed record stage. The CLI must merge the recovery marker into those
-  // metrics instead of persisting the stale object verbatim.
+  // recordInput carries an invalid headCommit so appendReview throws; the CLI
+  // must surface stage: 'record', keep recordInput for manual retry, and exit
+  // non-zero without claiming a recorded entry.
   const fakeResult = {
-    ok: false,
-    stage: 'record',
-    stateFile,
-    headCommit: 'c'.repeat(40),
+    ok: true,
+    verdict: 'pass',
+    reviewBase: 'a'.repeat(40),
+    headCommit: 'b'.repeat(40),
+    commitCount: 1,
+    changedFiles: ['src/example.js'],
+    findings: [],
+    reportMarkdown: '# Dakar review\n\nNo blocking findings were accepted.',
+    metrics: {},
     recordInput: {
-      stateFile,
-      reviewId: 'workflow-supplied',
+      reviewId: 'head-bbbb',
       baseCommit: 'a'.repeat(40),
-      headCommit: 'c'.repeat(40),
-      commitCount: 2,
+      headCommit: 'not-a-real-commit',
+      commitCount: 1,
       changedFiles: ['src/example.js'],
       models: ['gpt-5.5/high'],
       findingsTotal: 0,
-      summary: 'workflow record input',
-      metrics: { taskCount: 3, acceptedFindings: 0 },
+      summary: 'No blocking findings were accepted.',
+      metrics: { taskCount: 2 },
     },
-    recorded: { ok: false },
   }
   writeFileSync(
     fakeOdw,
@@ -343,26 +360,29 @@ test('CLI marks recovery in metrics when the workflow supplied recordInput', () 
   )
   chmodSync(fakeOdw, 0o755)
 
-  const output = runCli([
-    '--repo-root',
-    repoRoot,
-    '--state-root',
-    join(tempRoot, 'trusted-state'),
-    '--odw-bin',
-    fakeOdw,
-    '--runs-root',
-    join(tempRoot, 'runs'),
-  ])
-  const result = JSON.parse(output)
-  const stateText = readFileSync(result.stateFile, 'utf8')
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      '--repo-root',
+      repoRoot,
+      '--state-root',
+      join(tempRoot, 'trusted-state'),
+      '--odw-bin',
+      fakeOdw,
+      '--runs-root',
+      join(tempRoot, 'runs'),
+    ],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  const output = JSON.parse(result.stdout)
 
-  assert.equal(result.ok, true)
-  assert.equal(result.recorded.recoveredBy, 'dakar-review')
-  assert.notEqual(result.stateFile, stateFile)
-  // The persisted entry keeps the workflow's own metrics fields and adds the marker.
-  assert.match(stateText, /head_commit = "cccc/u)
-  assert.match(stateText, /recordRecoveredByCli/u)
-  assert.match(stateText, /taskCount/u)
+  assert.equal(result.status, 1)
+  assert.equal(output.ok, false)
+  assert.equal(output.stage, 'record')
+  assert.equal(output.recorded.ok, false)
+  assert.ok(output.recordInput, 'recordInput is preserved for manual retry')
+  assert.equal(output.recordInput.headCommit, 'not-a-real-commit')
 })
 
 test('CLI skips the review without invoking ODW when nothing is unreviewed', () => {
@@ -376,6 +396,7 @@ test('CLI skips the review without invoking ODW when nothing is unreviewed', () 
   execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
   const marker = join(tempRoot, 'odw-invoked')
   const fakeOdw = join(tempRoot, 'odw')
+  const stateRoot = join(tempRoot, 'state')
   writeFileSync(fakeOdw, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
   chmodSync(fakeOdw, 0o755)
 
@@ -384,7 +405,7 @@ test('CLI skips the review without invoking ODW when nothing is unreviewed', () 
       '--repo-root', targetRepo,
       '--base', 'HEAD',
       '--head', 'HEAD',
-      '--state-root', join(tempRoot, 'state'),
+      '--state-root', stateRoot,
       '--odw-bin', fakeOdw,
       '--runs-root', join(tempRoot, 'runs'),
     ],
@@ -398,7 +419,10 @@ test('CLI skips the review without invoking ODW when nothing is unreviewed', () 
   assert.equal(result.resolvedConfig, undefined)
   assert.equal(typeof result.headCommit, 'string')
   assert.ok(result.headCommit.length > 0)
+  assert.equal(result.recorded, undefined)
   assert.equal(existsSync(marker), false)
+  // A skipped review records nothing: no reviews.toml under the trusted state root.
+  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
 })
 
 test('CLI fails with a prepare envelope without invoking ODW when refs are invalid', () => {

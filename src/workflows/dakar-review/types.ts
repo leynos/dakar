@@ -139,16 +139,6 @@ export interface Discarded {
   status: string
 }
 
-/** Captures the review-history helper's success or diagnostic output. */
-export interface RecordResult {
-  error?: string
-  headCommit?: string
-  ok: boolean
-  stateFile?: string
-  stderr?: string
-  stdout?: string
-}
-
 /** Bundles trusted repository, policy, and instruction data for prompt builders. */
 export interface PromptContext {
   agentInstructions: AgentInstructions | null
