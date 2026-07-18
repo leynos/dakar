@@ -17,6 +17,7 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync }
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const corpusPath = join(moduleDir, 'live-corpus.json')
@@ -310,6 +311,12 @@ export function summarize({ entry, resultJson, usages = [], resultPath, stderrPa
   const ok = resultJson?.ok === true
   const stage = resultJson?.stage ?? (ok ? 'complete' : 'unknown')
   const ledger = resultJson?.metrics?.ledger
+  // The CLI-attached usage records (via the DAKAR_USAGE_LOG file channel) are
+  // authoritative; the stderr scan is a fallback for direct pi invocations.
+  const reportedRecords = Array.isArray(resultJson?.metrics?.reportedUsage)
+    ? resultJson.metrics.reportedUsage
+    : usages
+  const usagePayloads = reportedRecords.map((record) => record.usage ?? record)
   return {
     repo: entry.repo,
     pr: entry.pr,
@@ -320,10 +327,40 @@ export function summarize({ entry, resultJson, usages = [], resultPath, stderrPa
     discardedCount: Array.isArray(resultJson?.discarded) ? resultJson.discarded.length : 0,
     ledgerTotalEstimatedUsd: resultJson?.metrics?.ledgerTotalEstimatedUsd ?? null,
     ledgerEntryCount: Array.isArray(ledger) ? ledger.length : 0,
-    reportedTokens: sumUsage(usages),
+    reportedTokens: sumUsage(usagePayloads),
+    reportedUsd: priceReportedUsage(reportedRecords),
     resultPath,
     stderrPath,
   }
+}
+
+/**
+ * Price reported usage records with the committed Flex pricing table.
+ *
+ * Each record carries the model that produced it; unpriceable records (no
+ * model, or a model missing from the table) are skipped rather than guessed,
+ * so the returned figure is a floor, not an estimate. Cache reads price at
+ * the cached-input band and cache writes at the cache-write band, matching
+ * the provider's billing semantics.
+ *
+ * @param {Array<{ model?: string, usage?: Record<string, number> }>} records - reported usage records.
+ * @returns {number | null} the total reported USD, or null when nothing was priceable.
+ */
+export function priceReportedUsage(records) {
+  let total = null
+  for (const record of records) {
+    const usage = record.usage ?? record
+    const band = DEFAULT_PRICING_TABLE.rates[`${record.model}:flex`]
+    if (!band) continue
+    const usd =
+      ((usage.input ?? 0) * band.inputUsdPerMTok +
+        (usage.cacheRead ?? 0) * band.cachedInputUsdPerMTok +
+        (usage.cacheWrite ?? 0) * band.cacheWriteUsdPerMTok +
+        (usage.output ?? 0) * band.outputUsdPerMTok) /
+      1_000_000
+    total = (total ?? 0) + usd
+  }
+  return total
 }
 
 const CLI_FLAGS = new Map([

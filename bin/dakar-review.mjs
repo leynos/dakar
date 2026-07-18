@@ -8,6 +8,8 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
+import { readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -23,14 +25,70 @@ const piAgentDir = join(packageRoot, 'adapters', 'pi')
  * Build the environment for spawned ODW processes.
  *
  * The pi Flex adapters need Dakar's own pi configuration directory (custom
- * `openai-flex` provider catalogue and the service-tier extension) and must
- * skip pi's interactive version check. Both variables inherit through ODW to
- * the adapter subprocesses it spawns.
+ * `openai-flex` provider catalogue and the auto-loaded service-tier
+ * extension under `extensions/`) and must skip pi's interactive version
+ * check. When a usage-log path is given, the extension appends one JSON
+ * line per model call there — the ODW runtime does not forward adapter
+ * stderr, so this file is the only reported-usage channel. All variables
+ * inherit through ODW to the adapter subprocesses it spawns.
  *
+ * @param {string} [usageLogPath] - file the pi extension appends usage lines to.
  * @returns {NodeJS.ProcessEnv} the parent environment plus the pi variables.
  */
-function odwEnv() {
-  return { ...process.env, PI_CODING_AGENT_DIR: piAgentDir, PI_SKIP_VERSION_CHECK: '1' }
+function odwEnv(usageLogPath = usageLogFile) {
+  const env = { ...process.env, PI_CODING_AGENT_DIR: piAgentDir, PI_SKIP_VERSION_CHECK: '1' }
+  if (usageLogPath) env.DAKAR_USAGE_LOG = usageLogPath
+  return env
+}
+
+const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`)
+
+/**
+ * Attach the pi extension's reported usage lines to the workflow output.
+ *
+ * The extension appends one JSON line per model call to `DAKAR_USAGE_LOG`
+ * (`{ model, usage: { input, output, cacheRead, cacheWrite, … } }`). The
+ * lines and their token totals are stamped additively onto
+ * `output.metrics` so both successful and deferred results carry the
+ * provider-reported usage; pricing them stays with the caller (the ledger's
+ * estimates remain separate by design). The log file is removed afterwards.
+ *
+ * @param {object} output - the parsed workflow result to annotate.
+ * @returns {object} the same output, annotated when usage lines exist.
+ */
+function attachReportedUsage(output) {
+  let raw
+  try {
+    raw = readFileSync(usageLogFile, 'utf8')
+  } catch {
+    return output
+  }
+  try {
+    rmSync(usageLogFile, { force: true })
+  } catch {
+    // A leftover temp file is harmless.
+  }
+  const lines = raw
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)]
+      } catch {
+        return []
+      }
+    })
+  if (lines.length === 0 || typeof output !== 'object' || output === null) return output
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  for (const line of lines) {
+    for (const key of Object.keys(totals)) {
+      totals[key] += Number(line.usage?.[key]) || 0
+    }
+  }
+  output.metrics = output.metrics || {}
+  output.metrics.reportedUsage = lines
+  output.metrics.reportedTokens = totals
+  return output
 }
 
 const OPTION_SPECS = new Map([
@@ -604,7 +662,7 @@ async function run(argv) {
   if (outcome.status !== undefined) {
     return outcome.status
   }
-  const output = outcome.output
+  const output = attachReportedUsage(outcome.output)
   printWorkflowOutput(output, format)
   return output.ok === false ? 1 : 0
 }

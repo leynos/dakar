@@ -16,7 +16,9 @@
       ],
       "stdin": "{prompt}",
       "flags": {
-        "model": ["--model"]
+        "model": [
+          "--model"
+        ]
       }
     },
     "codex-medium": {
@@ -35,7 +37,9 @@
       ],
       "stdin": "{prompt}",
       "flags": {
-        "model": ["--model"]
+        "model": [
+          "--model"
+        ]
       }
     },
     "codex-high": {
@@ -54,7 +58,9 @@
       ],
       "stdin": "{prompt}",
       "flags": {
-        "model": ["--model"]
+        "model": [
+          "--model"
+        ]
       }
     },
     "pi-luna-flex": {
@@ -63,8 +69,6 @@
         "pi",
         "-p",
         "--no-session",
-        "-e",
-        "adapters/pi/flex-tier.ts",
         "--provider",
         "openai-flex",
         "--model",
@@ -80,8 +84,6 @@
         "pi",
         "-p",
         "--no-session",
-        "-e",
-        "adapters/pi/flex-tier.ts",
         "--provider",
         "openai-flex",
         "--model",
@@ -97,8 +99,6 @@
         "pi",
         "-p",
         "--no-session",
-        "-e",
-        "adapters/pi/flex-tier.ts",
         "--provider",
         "openai-flex",
         "--model",

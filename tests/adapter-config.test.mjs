@@ -17,7 +17,7 @@ import test from 'node:test'
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const odwConfig = JSON.parse(readFileSync(join(repoRoot, 'odw.config.json'), 'utf8'))
 const models = JSON.parse(readFileSync(join(repoRoot, 'adapters', 'pi', 'models.json'), 'utf8'))
-const extension = readFileSync(join(repoRoot, 'adapters', 'pi', 'flex-tier.ts'), 'utf8')
+const extension = readFileSync(join(repoRoot, 'adapters', 'pi', 'extensions', 'flex-tier.ts'), 'utf8')
 
 function commandOf(name) {
   const adapter = odwConfig.adapters[name]
@@ -46,9 +46,10 @@ test('pi Flex adapters pin print mode, provider, model, and thinking per lane', 
     assert.ok(command.includes('--no-session'), `${name} must disable session persistence`)
     const providerIndex = command.indexOf('--provider')
     assert.equal(command[providerIndex + 1], 'openai-flex', `${name} must pin the openai-flex provider`)
-    const extensionIndex = command.indexOf('-e')
-    assert.ok(extensionIndex !== -1, `${name} must load the flex-tier extension`)
-    assert.match(command[extensionIndex + 1], /flex-tier\.ts$/u, `${name} must reference flex-tier.ts`)
+    // The extension auto-loads from PI_CODING_AGENT_DIR/extensions/ (set
+    // absolutely by the CLI), so a cwd-fragile relative -e flag must NOT
+    // appear in the command (observed live, M7).
+    assert.equal(command.indexOf('-e'), -1, `${name} must not carry a relative -e extension flag`)
     const modelIndex = command.indexOf('--model')
     assert.equal(command[modelIndex + 1], model, `${name} must pin ${model}`)
     const thinkingIndex = command.indexOf('--thinking')
@@ -57,11 +58,15 @@ test('pi Flex adapters pin print mode, provider, model, and thinking per lane', 
   }
 })
 
-test('flex-tier extension injects the Flex service tier and logs usage to stderr', () => {
+test('flex-tier extension injects the Flex service tier and logs usage', () => {
   assert.match(extension, /service_tier:\s*'flex'/u, 'the extension must inject service_tier: flex')
   assert.match(extension, /before_provider_request/u, 'the extension must hook before_provider_request')
   assert.match(extension, /DAKAR-USAGE:/u, 'the extension must emit the DAKAR-USAGE stderr marker')
   assert.match(extension, /console\.error/u, 'the DAKAR-USAGE marker must be written to stderr')
+  // ODW does not forward adapter stderr, so the usage-log file channel is the
+  // reported-usage path the CLI actually consumes (observed live, M7).
+  assert.match(extension, /DAKAR_USAGE_LOG/u, 'the extension must honour the DAKAR_USAGE_LOG file channel')
+  assert.match(extension, /model:\s*event\.message\.model/u, 'usage records must carry the model for pricing')
 })
 
 test('models.json declares both Flex models under the openai-flex provider', () => {

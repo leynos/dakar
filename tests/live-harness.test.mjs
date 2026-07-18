@@ -19,6 +19,7 @@ import {
   extractUsageLines,
   guardStateRoot,
   loadCorpusEntry,
+  priceReportedUsage,
   stateRootFor,
   summarize,
   sumUsage,
@@ -149,9 +150,43 @@ test('summarize shapes an ok result fixture', () => {
     ledgerTotalEstimatedUsd: 0.13275,
     ledgerEntryCount: 2,
     reportedTokens: { input: 100, output: 40, cacheRead: 200, cacheWrite: 0 },
+    // Bare stderr-scanned usages carry no model, so nothing is priceable.
+    reportedUsd: null,
     resultPath: '/scratch/results/frankie-102.json',
     stderrPath: '/scratch/results/frankie-102.stderr.log',
   })
+})
+
+test('CLI-attached reportedUsage records take precedence and price per lane', () => {
+  const entry = { repo: 'leynos/frankie', pr: 102, tier: 'medium' }
+  const resultJson = {
+    ok: true,
+    findings: [],
+    discarded: [],
+    metrics: {
+      ledger: [],
+      ledgerTotalEstimatedUsd: 0.01,
+      reportedUsage: [
+        { model: 'gpt-5.6-luna', usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 12000 } },
+        { model: 'gpt-5.6-terra', usage: { input: 40000, output: 2000, cacheRead: 8000, cacheWrite: 0 } },
+      ],
+    },
+  }
+
+  const summary = summarize({ entry, resultJson, usages: [], resultPath: '/r', stderrPath: '/s' })
+
+  assert.deepEqual(summary.reportedTokens, { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 })
+  // Luna flex: 1000x0.50 + 500x3.00 + 12000x0.625 per 1M = 0.0005+0.0015+0.0075
+  // Terra flex: 40000x1.25 + 2000x7.50 + 8000x0.125 per 1M = 0.05+0.015+0.001
+  assert.ok(Math.abs(summary.reportedUsd - (0.0095 + 0.066)) < 1e-9, `priced ${summary.reportedUsd}`)
+})
+
+test('priceReportedUsage skips unpriceable records rather than guessing', () => {
+  const priced = priceReportedUsage([
+    { model: 'unknown-model', usage: { input: 1000, output: 1000 } },
+    { model: 'gpt-5.6-luna', usage: { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 } },
+  ])
+  assert.ok(Math.abs(priced - 0.003) < 1e-12, `priced ${priced}`)
 })
 
 test('summarize shapes a deferred result fixture', () => {
