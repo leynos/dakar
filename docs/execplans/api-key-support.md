@@ -165,6 +165,10 @@ the conflict in `Decision Log`, and escalate.
   lenses); findings folded into this revision. Corpus base and head SHAs
   pinned.
 - [ ] M0: Flex plumb-through and billing-evidence probe (go/no-go gate).
+  (Completed: direct-API control probe proves Flex applied and usage
+  reported; capture-server evidence proves Codex CLI 0.144.4 drops
+  `service_tier`; ~20k-token Codex harness overhead measured. Remaining:
+  decision on the adapter path — escalated 2026-07-18 with options.)
 - [ ] M1: pricing table, cost ledger types, admission controller (pure
   modules with tests).
 - [ ] M2: deterministic host takeover, in four stages (test-harness mock
@@ -197,6 +201,39 @@ the conflict in `Decision Log`, and escalate.
   Impact: the pricing-table seed data can be committed with confidence;
   `sol` is out of scope but the table schema and the ledger `lane` field
   must not preclude it.
+- Observation (M0, blocking): Codex CLI 0.144.4 does not transmit
+  `service_tier` to the provider at all. A local capture server registered
+  as a Codex model provider shows the `/v1/responses` request body carries
+  `model` and `reasoning.effort` (the `-c model_reasoning_effort` override
+  works) but no `service_tier` key, for every config spelling tried
+  (top-level, provider-scoped, `model_service_tier`). The earlier
+  "successful" Codex probe was therefore billed at standard rates,
+  silently — exactly the failure mode the Ambiguity tolerance names.
+  Evidence: `captured-requests.jsonl` in the scratchpad; four-variant
+  probe transcript, 2026-07-18.
+  Impact: ADR 002's premise that "Codex CLI can select Flex directly" is
+  falsified for the installed version; M0 is a no-go on the Codex path and
+  the plan's designated fallback (direct Responses API adapter) is on the
+  table. Escalated for direction.
+- Observation (M0): each `codex exec` call carries roughly 20,100 input
+  tokens of Codex harness overhead before any evidence pack (probe usage:
+  20,128 input tokens for a one-line prompt), against ADR 002's
+  `transactionMaxInputTokens` of 12,000 for the whole transaction.
+  Evidence: `codex-probe.jsonl` usage block, 2026-07-18.
+  Impact: through Codex, every Luna transaction would cost roughly
+  32k input tokens rather than 12k, materially eroding the cost model
+  (partially mitigated by prompt caching of the stable prefix). A direct
+  API adapter with purpose-built prompts (~1-3k tokens of instruction plus
+  the evidence pack) is cheaper than the ADR's own model, not just
+  equal to it.
+- Observation (M0): the direct Responses API control probe succeeded
+  end to end: `service_tier: "flex"` echoed in the response body (the
+  billing-relevant applied-tier evidence), usage reported (13 input /
+  5 output tokens), single-word answer returned, sub-second latency on
+  this probe.
+  Evidence: `flex-control.json` in the scratchpad, 2026-07-18.
+  Impact: the API key, model name, Flex tier, and usage reporting are all
+  proven on the direct path; only the Codex CLI leg failed.
 
 ## Decision log
 
@@ -292,6 +329,21 @@ the conflict in `Decision Log`, and escalate.
   out of the planning context, and makes M1 delegable after context
   compaction.
   Date/Author: 2026-07-18, planning agent.
+- Escalation: M0 reached its Ambiguity tolerance — Codex CLI 0.144.4
+  provably does not transmit `service_tier`, so the Codex adapter path
+  cannot reach Flex pricing. Options presented to the operator:
+  (a) the plan's designated fallback, a direct Responses API adapter
+  (`scripts/flex-adapter.mjs`, Node built-in `fetch`, no runtime
+  dependency, registered as an ODW adapter command) — proven plumb-through,
+  per-call applied-tier and usage evidence, and ~20k tokens per call
+  cheaper than the Codex path; evidence packs are host-built so finder and
+  audit calls need no agentic file access; (b) upgrade Codex CLI hoping a
+  newer version transmits the key — unverified, touches shared system
+  tooling, and retains the harness overhead; (c) accept standard pricing
+  through Codex — violates ADR 002 and roughly doubles the cost model.
+  Recommendation: (a).
+  Resolution: pending operator direction.
+  Date/Author: 2026-07-18, implementing agent.
 
 ## Outcomes & retrospective
 
