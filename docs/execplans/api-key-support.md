@@ -383,6 +383,33 @@ the conflict in `Decision Log`, and escalate.
   model absent from the selected provider's catalogue makes pi hang
   rather than fail — the adapter must pin `--provider openai-flex` with
   models declared in the Dakar-owned `models.json`.
+- Observation (M7, first live run): three defects surfaced on the very
+  first end-to-end review of `comenq` 140 and were fixed red-first.
+  (1) `adapters/pi/models.json` declared `models` as an object; pi's
+  schema requires an array of `{ id }` entries, so the provider failed
+  to load and the adapter exited with "Unknown provider". (2) ODW's
+  real failure semantics differ from the M5 assumptions: `agent()`
+  resolves to null on a terminal adapter failure rather than throwing,
+  and `parallel()` can resolve an aborted thunk's slot to null without
+  the workflow's retry code completing — so the retry helper never
+  engaged and the failed pack vanished. The helper now treats a null
+  result as a retryable failure, and null slots are attributed to
+  their pack by index. (3) Most seriously, the zero-finding review
+  produced by the failed finder was recorded as a clean
+  `verdict: "pass"` — an adapter outage silently became a reviewed
+  head. A zero-coverage guard now fails such reviews closed
+  (`stage: "review"`, no `recordInput`); the single-pack downgrade
+  test that had enshrined the old behaviour was reversed.
+  Evidence: `comenq-140` run `20260718-190050-a22bea` event log and
+  result JSON in the scratchpad results directory; pi
+  `--list-models` schema warning; `/tmp/m7fix-red-evidence.txt`.
+  Impact: the SHA-pin guard also fired on the first attempt (the open
+  PR had rebased); the harness now fetches pinned heads by SHA first.
+  Live validation is doing exactly its job. Also observed: pi writes
+  runtime state (`auth.json`, `models-store.json`) into
+  `PI_CODING_AGENT_DIR`, now gitignored; the failed run's ledger
+  correctly carried its estimate, and the isolated scratch state root
+  contained the only (now poisoned and wiped) `reviews.toml`.
 
 ## Decision log
 

@@ -705,7 +705,12 @@ async function callWithFlexRetry(retryConfig, callId, invoke) {
       await sleep(backoffSeconds(retryConfig, callId, attempt) * 1e3);
     }
     try {
-      return { ok: true, value: await invoke(), attempts: attempt };
+      const value = await invoke();
+      if (value === null || value === void 0) {
+        lastError = new Error("agent call returned no result");
+        continue;
+      }
+      return { ok: true, value, attempts: attempt };
     } catch (error) {
       lastError = error;
       if (!isRetryableFlexError(error)) throw error;
@@ -934,8 +939,19 @@ async function workflowMain() {
   );
   const lunaDowngrades = [];
   const taskResults = [];
-  for (const entry of reviewOutcomes) {
-    if (entry === null) continue;
+  for (let index = 0; index < reviewOutcomes.length; index += 1) {
+    const entry = reviewOutcomes[index];
+    if (entry === null || entry === void 0) {
+      const abortedTask = admittedPacks[index];
+      if (abortedTask) {
+        lunaDowngrades.push({
+          taskId: abortedTask.taskId,
+          reason: "Finder pack was aborted by the runtime after a terminal agent failure; downgraded to partial coverage.",
+          attempts: ledger.find((item) => item.callId === abortedTask.taskId)?.attempts ?? 1
+        });
+      }
+      continue;
+    }
     const { task, outcome } = entry;
     const ledgerEntry = ledger.find((item) => item.callId === task.taskId);
     if (ledgerEntry) ledgerEntry.attempts = outcome.attempts;
@@ -944,12 +960,35 @@ async function workflowMain() {
     } else {
       lunaDowngrades.push({
         taskId: task.taskId,
-        reason: outcome.ok ? "Finder pack returned no usable candidate result; downgraded to partial coverage." : "Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.",
+        reason: "Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.",
         attempts: outcome.attempts
       });
     }
   }
   const failedTaskIds = lunaDowngrades.map((downgrade) => downgrade.taskId);
+  if (admittedPacks.length > 0 && taskResults.length === 0) {
+    return {
+      ok: false,
+      stage: "review",
+      error: "every admitted finder pack failed; refusing to treat zero coverage as a clean review",
+      config: CODE_RABBIT_CONFIG,
+      headCommit: prepared.headCommit,
+      reviewBase: prepared.reviewBase,
+      commitCount: prepared.commitCount,
+      changedFiles: prepared.changedFiles,
+      lunaDowngrades,
+      admissionRefusals,
+      metrics: {
+        workflowVersion: WORKFLOW_VERSION,
+        routingPolicy: ROUTING_POLICY,
+        lunaDowngradeCount: lunaDowngrades.length,
+        failedTaskIds,
+        ledger,
+        ledgerTotalEstimatedUsd: ledger.reduce((total, item) => total + item.estimatedWorstCaseUsd, 0),
+        spentUsd: admissionState.spentUsd
+      }
+    };
+  }
   const candidates = normalizeCandidates(taskResults, prepared.changedFiles, MAX_CANDIDATES);
   const auditCandidatePool = [
     ...new Map(candidatesForVerification(candidates).map((candidate) => [candidate.candidateId, candidate])).values()

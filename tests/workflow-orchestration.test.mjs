@@ -10,7 +10,7 @@ import { deterministicJitter } from '../src/workflows/dakar-review/retry.ts'
 // default; tests override `finderTitles` to craft multi-candidate packs. The
 // audit responder accepts every compacted candidate unless `auditVerdicts`
 // overrides it.
-function defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFails, finderFailures = 0, auditFailures = 0 }) {
+function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures = 0, auditFailures = 0 }) {
   // Per-label transient failure counters give each finder pack and the audit
   // their own "fail N attempts then succeed" state, so the retry helper's
   // deterministic schedule can be exercised without a shared counter leaking
@@ -19,6 +19,9 @@ function defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFail
   let auditAttempts = 0
   return [
     { match: (label) => label === failedLabel, respond: () => { throw new FixtureFailure('fixture failure') } },
+    // ODW's real agent() resolves to null on a terminal adapter failure rather
+    // than throwing (observed live, M7); this responder simulates that shape.
+    { match: (label) => label === nullLabel, respond: () => null },
     {
       match: (label) => /^luna-flex-\d+$/u.test(label),
       respond: (prompt, options) => {
@@ -43,6 +46,7 @@ function defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFail
     {
       match: 'audit',
       respond: (prompt) => {
+        if (auditNulls) return null
         if (auditFails) throw new FixtureFailure('audit fixture failure')
         if (auditAttempts < auditFailures) {
           auditAttempts += 1
@@ -60,8 +64,9 @@ function defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFail
 }
 
 async function runWorkflow({
-  failedLabel, changedFiles = ['src/a.js'], config = '/distinct/policy.yaml', commitLength = 40,
-  finderTitles, auditVerdicts, auditFails, finderFailures, auditFailures, knobs = {},
+  failedLabel, nullLabel, changedFiles = ['src/a.js'], config = '/distinct/policy.yaml', commitLength = 40,
+  finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures,
+  nullParallelSlots = [], knobs = {},
 } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
@@ -77,13 +82,19 @@ async function runWorkflow({
   const base = 'a'.repeat(commitLength)
   const prepared = { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
     commitCount: 1, changedFiles, diffStat: '1 file changed', warnings: [] }
-  const agent = buildAgentMock(defaultResponders({ failedLabel, finderTitles, auditVerdicts, auditFails, finderFailures, auditFailures }),
+  const agent = buildAgentMock(defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures }),
     { prompts, agentLabels, agentCalls })
   const swallowFixtureFailure = (error) => {
     if (error instanceof FixtureFailure) return null
     throw error
   }
-  const parallel = (thunks) => Promise.all(thunks.map((thunk) => Promise.resolve().then(thunk).catch(swallowFixtureFailure)))
+  // `nullParallelSlots` simulates ODW aborting a thunk and resolving its slot
+  // to null without the thunk's own code (including the retry helper) running
+  // to completion — the semantics observed live in M7.
+  const parallel = (thunks) => Promise.all(thunks.map((thunk, index) =>
+    nullParallelSlots.includes(index)
+      ? Promise.resolve(null)
+      : Promise.resolve().then(thunk).catch(swallowFixtureFailure)))
   const pipeline = (items, ...stages) => Promise.all(items.map(async (item, index) => {
     try {
       let value = item
@@ -339,22 +350,63 @@ test('a Luna pack failing twice then succeeding retries on the deterministic sch
   assert.equal(result.findings.length, 1)
 })
 
-test('a Luna pack exhausting its attempts is downgraded while the review completes', async () => {
+test('a review whose only finder pack fails is refused, not recorded as a pass', async () => {
+  // Live evidence (M7, comenq 140): an adapter failure must never turn into a
+  // clean zero-finding review that records the head as reviewed.
   const { result, sleepDelays } = await runWorkflow({ failedLabel: 'luna-flex-1' })
 
-  assert.equal(result.ok, true, 'a downgraded pack no longer fails the review')
+  assert.equal(result.ok, false, 'zero finder coverage must fail closed')
+  assert.equal(result.stage, 'review')
+  assert.match(result.error, /zero coverage|every admitted finder pack failed/iu)
+  assert.equal(result.recordInput, undefined, 'a zero-coverage review must not be recordable')
   assert.equal(result.lunaDowngrades.length, 1)
   assert.equal(result.lunaDowngrades[0].taskId, 'luna-flex-1')
   assert.equal(result.lunaDowngrades[0].attempts, 3)
   assert.match(result.lunaDowngrades[0].reason, /exhaust/iu)
-  assert.equal(result.metrics.lunaDowngradeCount, 1)
-  // failedTaskIds stays for compatibility, listing the downgraded pack ids.
-  assert.deepEqual(result.metrics.failedTaskIds, ['luna-flex-1'])
   // Three attempts means two backoff sleeps even on the exhaustion path.
   assert.equal(sleepDelays.length, 2)
-  // The audit still runs against whatever survived (here nothing, so it is
-  // skipped as a zero-candidate review) and the review remains recordable.
-  assert.ok(result.recordInput, 'a review with a downgraded pack is still recordable')
+})
+
+test('a finder pack resolving null is retried and then downgraded', async () => {
+  // ODW's agent() resolves to null on terminal adapter failure; a null result
+  // must consume retry attempts rather than masquerade as a completed call.
+  const { agentCalls, result } = await runWorkflow({
+    changedFiles: ['src/a.js', 'src/b.js'],
+    nullLabel: 'luna-flex-1',
+    knobs: { transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000, budgetGbp: 0.12 },
+  })
+
+  assert.equal(result.ok, true, 'the surviving sibling keeps the review alive')
+  const nullCalls = agentCalls.filter((call) => call.label === 'luna-flex-1')
+  assert.equal(nullCalls.length, 3, 'a null result consumes retry attempts')
+  assert.equal(result.lunaDowngrades.length, 1)
+  assert.equal(result.lunaDowngrades[0].taskId, 'luna-flex-1')
+  assert.equal(result.findings.length, 1, 'the surviving pack contributes its finding')
+})
+
+test('a parallel slot nulled by the runtime is attributed to its pack', async () => {
+  // ODW may abort a thunk and resolve its slot to null without the workflow's
+  // own retry code completing; the pack must still be accounted for.
+  const { result } = await runWorkflow({
+    changedFiles: ['src/a.js', 'src/b.js'],
+    nullParallelSlots: [0],
+    knobs: { transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000, budgetGbp: 0.12 },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.lunaDowngrades.length, 1)
+  assert.equal(result.lunaDowngrades[0].taskId, 'luna-flex-1', 'the nulled slot maps to its pack by index')
+  assert.equal(result.findings.length, 1)
+})
+
+test('an audit resolving null defers without recording the head', async () => {
+  const { agentCalls, result } = await runWorkflow({ auditNulls: true })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.stage, 'deferred')
+  assert.equal(result.recordInput, undefined)
+  const auditCalls = agentCalls.filter((call) => call.label === 'audit')
+  assert.equal(auditCalls.length, 3, 'a null audit result consumes retry attempts')
 })
 
 test('a surviving pack is still audited after a sibling pack is downgraded', async () => {
