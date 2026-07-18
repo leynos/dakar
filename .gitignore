@@ -14,3 +14,8 @@ __pycache__/
 
 # Memtrace local index
 .memdb/
+
+# pi runtime state written beside the adapter config
+adapters/pi/auth.json
+adapters/pi/models-store.json
+adapters/pi/sessions/
