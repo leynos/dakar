@@ -3,8 +3,8 @@
 This is the index for Dakar's documentation set. Start here to find the right
 document for a task, then follow the inline links.
 
-- [Documentation contents](contents.md) — this index; confirm you are at the
-  top of the documentation set.
+- [Documentation contents](contents.md) — this index; readers can confirm
+  they are at the top of the documentation set.
 
 ## Guides
 
@@ -54,3 +54,6 @@ document for a task, then follow the inline links.
     — plan for the routed finder-and-verifier pass.
   - [Compile the review workflow from typed modules](execplans/compile-dakar-review-workflow.md)
     — plan for moving the workflow to a compiled TypeScript source boundary.
+  - [Implement the ADR 002 deterministic-tiered review route](execplans/api-key-support.md)
+    — completed plan for the deterministic-flex route, its live validation,
+    and the df12-build gate enablement.

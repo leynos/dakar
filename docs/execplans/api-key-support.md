@@ -990,7 +990,7 @@ with genuinely useful findings — findings an implementation agent could
 act on, judged by hand — at a reported ledger total below USD 0.25.
 Record whether any run beat USD 0.11 (typical-case stretch; see Purpose).
 If reviews complete but findings are vacuous, switch Luna finders to
-`codex-luna-flex-medium`, rerun once, and record both ledgers.
+`pi-luna-flex-medium`, rerun once, and record both ledgers.
 
 ## Concrete steps
 
@@ -1332,7 +1332,7 @@ pinned; skip-shape and dry-run deviations from ADR 001 recorded as
 decisions; timeout budget made explicit with `flexAttempts` reduced to 3
 for the slice; corpus SHAs pinned with fail-closed checks; harness
 state-root guard made code-level; ledger gained `reportedUsd` and the
-`standard` lane; escalation adapter `codex-luna-flex-medium`
+`standard` lane; escalation adapter `pi-luna-flex-medium`
 pre-registered; living-document updates added to every milestone's exit
 criteria. Remaining work is unchanged in intent: prove plumbing, build
 the cost machinery, take over deterministic phases, land the audit, then

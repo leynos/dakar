@@ -67,6 +67,14 @@ model or service tier.
 
 The normal pipeline becomes:
 
+For screen readers: the flowchart resolves the range and runs deterministic
+gates; a blocking failure stops the review, otherwise the workflow builds
+bounded evidence packs, runs Luna Flex transactional finder calls, and
+normalizes and compacts the candidates deterministically. If candidates
+remain, one Terra Flex issue-set audit runs; if none remain, the audit is
+skipped. Both paths converge on deterministic SARIF and report rendering,
+then deterministic state and cost-ledger persistence.
+
 ```mermaid
 flowchart TD
   A[Resolve range and policy deterministically] --> B[Run deterministic gates]
@@ -74,15 +82,16 @@ flowchart TD
   B -->|green| D[Build bounded evidence packs]
   D --> E[Luna Flex transactional finder calls]
   E --> F[Normalize fingerprint and compact deterministically]
-  F -->|small and unambiguous| G[Luna Flex bounded audit]
-  F -->|cross-cutting or ambiguous| H[Terra Flex issue-set audit]
-  G --> I[Render SARIF and report deterministically]
-  H --> I
-  I --> J[Persist state and cost ledger deterministically]
+  F -->|candidates remain| G[Terra Flex issue-set audit]
+  F -->|no candidates| H[Render SARIF and report deterministically]
+  G --> H
+  H --> I[Persist state and cost ledger deterministically]
 ```
 
 Figure 1: Dakar spends model budget only after deterministic preparation and
-uses one issue-set audit instead of unbounded per-candidate verification.
+uses one issue-set audit instead of unbounded per-candidate verification. The
+diagram was aligned with the implemented single-audit route, which has no
+Luna-audit branch, on 2026-07-18.
 
 The decision removes the following model calls from the normal path:
 
@@ -485,7 +494,9 @@ Positive consequences:
 - Failed Flex capacity does not silently convert into a budget breach.
 - Review provenance and cost become auditable at the call and finding level.
 - A no-action review remains a valid and inexpensive outcome.
-- Codex CLI can select Flex directly, avoiding a bespoke API-wrapper subsystem.
+- The pi coding agent selects Flex through a supported extension hook,
+  avoiding a bespoke API-wrapper subsystem; the original premise that Codex
+  CLI could do so was falsified — see the adapter-contract amendment.
 
 Negative consequences:
 
@@ -582,7 +593,8 @@ Implement the decision in independently testable steps:
    agent calls into host code.
 3. Parse configured deterministic checks and import their structured results.
 4. Add explicit Luna Flex and Terra Flex Codex CLI adapters using
-   `-c 'service_tier="flex"'`.
+   `-c 'service_tier="flex"'` (as amended: implemented with `pi-luna-flex`
+   and `pi-terra-flex` adapters; Codex CLI cannot transmit `service_tier`).
 5. Add the bounded Flex work queue, concurrency controls, idempotency keys,
    backoff, and jitter.
 6. Replace per-candidate verifier fan-out with deterministic compaction followed
@@ -607,8 +619,9 @@ An implementation branch for this decision must include tests proving that:
   model;
 - a small bounded review routes to Luna Flex;
 - a cross-cutting or multi-candidate review routes to Terra Flex;
-- Codex effective configuration contains `service_tier = "flex"` for both model
-  lanes;
+- the provider request carries `service_tier = "flex"` for both model lanes
+  (verified at the wire for the pi adapters; see the adapter-contract
+  amendment);
 - no ordinary review launches more than the configured Luna and Terra caps;
 - queue concurrency never exceeds the configured per-model or global limits;
 - a Flex resource-unavailable response retries with bounded backoff and never

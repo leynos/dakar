@@ -342,7 +342,8 @@ for missing fundamentals.
 Idea: if deterministic host code owns every derivable decision and the two
 Flex-tier model lanes are admitted against a hard budget, an ordinary review
 becomes provably affordable — mean at or below £0.05, hard ceiling £0.10 —
-without losing high-severity recall.
+without losing high-severity recall (an acceptance target that task 7.5.3
+evaluates).
 
 This phase implements
 [ADR 002](adr-002-deterministic-tiered-review-cost.md). It supersedes the
@@ -450,8 +451,12 @@ real branches. See ADR 002 §"Verification".
 - [ ] 7.5.3. Compare legacy and deterministic-flex routes on adjudicated
   fixtures.
   - Requires 7.4.2 and 3.3.1.
-  - Success: the acceptance criteria in ADR 002 §"Verification" hold before
-    the new route becomes the default.
+  - Success: the acceptance criteria in ADR 002 §"Verification" hold. The
+    deterministic-flex route is already the sole live route in this
+    repository (the Decision Log in `docs/execplans/api-key-support.md`
+    records the deliberate collapse of ADR 002 migration step 10), so this
+    comparison validates review quality retrospectively against the
+    `legacy-route-final` tag rather than gating a default flip.
 
 ### 7.6. Gate adoption in df12-build
 

@@ -239,11 +239,13 @@ promoting itself to a costlier model or service tier, so lane choice never
 appears in a prompt. `adapters/pi/` is the Dakar-owned adapter contract for
 these lanes:
 
-- `adapters/pi/flex-tier.ts`: the pi extension that stamps
+- `adapters/pi/extensions/flex-tier.ts`: the pi extension that stamps
   `service_tier: "flex"` from the `before_provider_request` hook and logs
   the assistant message's usage object to stderr with a `DAKAR-USAGE:`
   marker from the `message_end` hook, so the harness can recover per-call
-  token counts that pi's print mode does not otherwise surface.
+  token counts that pi's print mode does not otherwise surface. pi
+  auto-loads every extension under `PI_CODING_AGENT_DIR/extensions/`, so
+  the adapter commands do not need an explicit `-e` flag to load it.
 - `adapters/pi/models.json`: the Dakar-owned `openai-flex` provider
   catalogue (`baseUrl https://api.openai.com/v1`, `api openai-responses`,
   `apiKey: "$OPENAI_API_KEY"`), declaring `gpt-5.6-luna` and
@@ -251,13 +253,17 @@ these lanes:
   makes pi hang rather than fail, so the pinned provider and declared
   models are load-bearing.
 - `odw.config.json`'s `pi-luna-flex`, `pi-luna-flex-medium`, and
-  `pi-terra-flex` adapters invoke
-  `pi -p --no-session -e adapters/pi/flex-tier.ts --provider openai-flex`
-  with the lane's `--model` and `--thinking` pinned and `{prompt}` on
-  stdin.
+  `pi-terra-flex` adapters invoke `pi -p --no-session --provider
+  openai-flex` with the lane's `--model` and `--thinking` pinned and
+  `{prompt}` on stdin. The committed configuration deliberately omits a
+  `-e` flag for the extension: a relative `-e` path resolves against the
+  invoking process's working directory rather than the package root, so
+  it would break under any other cwd; auto-load from
+  `PI_CODING_AGENT_DIR` is the portable path.
 - The CLI sets `PI_CODING_AGENT_DIR` to `adapters/pi/` (and
-  `PI_SKIP_VERSION_CHECK=1`) so pi resolves its provider catalogue from
-  Dakar's own config directory rather than any ambient pi configuration.
+  `PI_SKIP_VERSION_CHECK=1`) so pi resolves its provider catalogue and
+  extensions from Dakar's own config directory rather than any ambient pi
+  configuration.
 
 The legacy per-kind Codex routing (`gpt-5.5` high for source, medium for
 tests, `gpt-5.4-mini` for docs/config, `gpt-5.3-codex-spark` for a

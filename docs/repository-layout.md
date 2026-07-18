@@ -26,6 +26,7 @@ contributor must understand quickly and omits incidental files.
 ├── docs/                 Documentation set (see docs/contents.md)
 │   ├── design/           Supplementary design notes
 │   └── execplans/        Living execution plans
+├── adapters/pi/          Dakar-owned pi provider catalogue and Flex extension
 ├── .github/workflows/    Continuous integration (CI) configuration
 ├── AGENTS.md             Repository contract for contributors and agents
 ├── Makefile              Commit-gate targets (formatting, lint, tests)
@@ -49,6 +50,7 @@ notable conventions.
 | `tests/` | Node test suite covering the CLI, scripts, and workflow orchestration, including property and robustness tests. |
 | `examples/` | Illustrative configuration samples, such as a CodeRabbit-style review configuration. |
 | `docs/` | Documentation set. The [contents file](contents.md) is the index; decision records live here as `adr-NNN-*.md`. |
+| `adapters/pi/` | Dakar-owned pi provider catalogue and Flex extension: committed `models.json` (custom `openai-flex` provider) and `extensions/flex-tier.ts` (service-tier injection plus usage reporting, auto-loaded via `PI_CODING_AGENT_DIR` set by the CLI). pi's runtime state files written beside them are gitignored. |
 | `docs/design/` | Supplementary design notes that expand on the primary design document. |
 | `docs/execplans/` | Living execution plans that record scope, progress, and lessons for individual pieces of work. |
 | `.github/workflows/` | CI configuration that runs the commit gates. |
