@@ -151,10 +151,22 @@ export async function prepareClone(entry, workDir) {
     process.stderr.write(`cloning ${entry.repo} into ${cloneDir}\n`)
     runGit(['clone', `https://github.com/${entry.repo}.git`, cloneDir])
   }
-  process.stderr.write(`fetching pull/${entry.pr}/head for ${entry.repo}\n`)
-  runGit(['fetch', 'origin', `pull/${entry.pr}/head`], cloneDir)
-  const fetchedHead = runGit(['rev-parse', 'FETCH_HEAD'], cloneDir).trim()
-  verifyPinnedHead(fetchedHead, entry)
+  process.stderr.write(`fetching pinned head ${entry.head} for ${entry.repo}\n`)
+  // Fetch the pinned commit by SHA first: an open pull request's head ref
+  // moves under rebases, but GitHub keeps serving the pinned commit itself.
+  // Fall back to the pull ref only when the direct fetch is refused, and
+  // verify whichever route ran against the pinned SHA before checkout.
+  const directFetch = spawnSync('git', ['fetch', 'origin', entry.head], {
+    cwd: cloneDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (directFetch.status !== 0) {
+    process.stderr.write(`direct fetch refused; fetching pull/${entry.pr}/head for ${entry.repo}\n`)
+    runGit(['fetch', 'origin', `pull/${entry.pr}/head`], cloneDir)
+    const fetchedHead = runGit(['rev-parse', 'FETCH_HEAD'], cloneDir).trim()
+    verifyPinnedHead(fetchedHead, entry)
+  }
+  assertCommitPresent(cloneDir, entry.head)
   assertCommitPresent(cloneDir, entry.base)
   runGit(['checkout', '--detach', entry.head], cloneDir)
   return cloneDir
