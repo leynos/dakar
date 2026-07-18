@@ -334,6 +334,11 @@ the conflict in `Decision Log`, and escalate.
     closed, red-first), a stale users-guide default, and a vacuous
     bounded-detail assertion. All three fixed before the pull
     request; the gate reviewed the change that ships the gate.
+  - [x] (2026-07-18 21:50Z) Both branches pushed and draft pull
+    requests opened: leynos/df12-build#64 (Dakar as the default host
+    review gate; `make all` green on the committed tree) and
+    leynos/dakar#6 (this branch). Roadmap 7.6.2 remains unticked
+    until the df12-build pull request lands; M8 closes with it.
 
 ## Surprises & discoveries
 
