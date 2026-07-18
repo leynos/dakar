@@ -35,6 +35,111 @@ test('CLI help documents review invocation', () => {
   assert.match(output, /--telemetry/u)
 })
 
+// The review-tuning flags forward directly to the WorkflowArgs keys resolved by
+// src/workflows/dakar-review/config.ts. Bounds live in resolveWorkflowConfig; the
+// CLI only parses and forwards, so these fixtures assert the passthrough shape.
+const REVIEW_TUNING_FLAGS = [
+  { flag: '--budget-gbp', key: 'budgetGbp', value: '0.5', expected: 0.5, numeric: true },
+  { flag: '--max-luna-calls', key: 'maxLunaFlexCalls', value: '6', expected: 6, numeric: true },
+  { flag: '--transaction-max-files', key: 'transactionMaxFiles', value: '8', expected: 8, numeric: true },
+  {
+    flag: '--transaction-max-input-tokens',
+    key: 'transactionMaxInputTokens',
+    value: '15000',
+    expected: 15_000,
+    numeric: true,
+  },
+  {
+    flag: '--transaction-max-output-tokens',
+    key: 'transactionMaxOutputTokens',
+    value: '900',
+    expected: 900,
+    numeric: true,
+  },
+  { flag: '--terra-max-input-tokens', key: 'terraMaxInputTokens', value: '50000', expected: 50_000, numeric: true },
+  { flag: '--terra-max-output-tokens', key: 'terraMaxOutputTokens', value: '3000', expected: 3_000, numeric: true },
+  { flag: '--adapter-overhead-tokens', key: 'adapterOverheadTokens', value: '28000', expected: 28_000, numeric: true },
+  { flag: '--max-audit-candidates', key: 'maxAuditCandidates', value: '40', expected: 40, numeric: true },
+  { flag: '--luna-reasoning', key: 'lunaReasoning', value: 'medium', expected: 'medium', numeric: false },
+  {
+    flag: '--routing-policy',
+    key: 'routingPolicy',
+    value: 'deterministic-flex-v1',
+    expected: 'deterministic-flex-v1',
+    numeric: false,
+  },
+  { flag: '--flex-attempts', key: 'flexAttempts', value: '5', expected: 5, numeric: true },
+  { flag: '--per-call-timeout', key: 'perCallTimeoutSeconds', value: '600', expected: 600, numeric: true },
+]
+
+// Builds a committed repository plus a fake ODW binary that echoes the workflow
+// `--args` object as `receivedArgs`, so tests can inspect the CLI passthrough.
+function setUpArgsCaptureRepo() {
+  const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-tuning-repo-'))
+  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  const fakeOdw = join(targetRepo, 'capture-odw.mjs')
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const values = process.argv.slice(2)
+const input = JSON.parse(values[values.indexOf('--args') + 1])
+process.stdout.write(JSON.stringify({ ok: true, receivedArgs: input }))
+`)
+  chmodSync(fakeOdw, 0o755)
+  return { targetRepo, runsRoot, xdgConfig, fakeOdw }
+}
+
+for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
+  test(`CLI forwards ${flag} to the ${key} workflow argument`, () => {
+    const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+    const output = runCli(
+      [
+        '--dry-run',
+        '--repo-root',
+        targetRepo,
+        '--base',
+        'HEAD',
+        '--runs-root',
+        runsRoot,
+        '--odw-bin',
+        fakeOdw,
+        flag,
+        value,
+      ],
+      { env: { XDG_CONFIG_HOME: xdgConfig } },
+    )
+    const result = JSON.parse(output)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.receivedArgs[key], expected)
+  })
+}
+
+test('CLI rejects a non-numeric value for a numeric review-tuning flag', () => {
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--dry-run', '--repo-root', repoRoot, '--budget-gbp', 'not-a-number'],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  const error = JSON.parse(result.stderr)
+
+  assert.equal(result.status, 1)
+  assert.equal(error.stage, 'cli')
+  assert.match(error.error, /--budget-gbp must be a number/u)
+})
+
+test('CLI help documents the review-tuning flags', () => {
+  const output = runCli(['--help'])
+
+  assert.match(output, /Review tuning/u)
+  for (const { flag } of REVIEW_TUNING_FLAGS) {
+    assert.ok(output.includes(flag), `help lists ${flag}`)
+  }
+})
+
 test('CLI dry-run prints one machine-readable JSON result', () => {
   const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
   const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))

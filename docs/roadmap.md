@@ -460,7 +460,7 @@ the df12-build workshop, replacing the CodeRabbit CLI and its pinned NDJSON
 wire contract. Live df12-build traffic then doubles as the comparison corpus
 7.5.3 needs.
 
-- [ ] 7.6.1. Expose the budget and coverage knobs as `dakar-review` CLI
+- [x] 7.6.1. Expose the budget and coverage knobs as `dakar-review` CLI
   flags.
   - Requires 7.4.2.
   - Success: a gate invocation can raise `--budget-gbp` and the pack and

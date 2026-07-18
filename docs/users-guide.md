@@ -111,6 +111,38 @@ checkout being reviewed.
 - `--dry-run` returns the workflow contract without launching review agents.
 - `--help` prints command usage, and `--version` prints the Dakar version.
 
+The following review-tuning flags forward directly to the workflow arguments.
+The CLI only parses and forwards them; the workflow enforces every bound, so
+values outside the documented range clamp to the nearest permitted value rather
+than fail. See "Cost, budget, and the ledger" and "Retries, downgrades, and
+deferral" below for what each knob controls.
+
+- `--budget-gbp <number>` sets the hard admission budget in GBP. The default is
+  `0.1`.
+- `--max-luna-calls <number>` caps the Luna Flex finder calls. The default is
+  `4`.
+- `--transaction-max-files <number>` sets the maximum files per finder pack. The
+  default is `5`.
+- `--transaction-max-input-tokens <number>` and
+  `--transaction-max-output-tokens <number>` set the per-finder token estimates
+  used for admission. The defaults are `12000` and `750`.
+- `--terra-max-input-tokens <number>` and `--terra-max-output-tokens <number>`
+  set the audit-call token estimates. The defaults are `48000` and `2500`.
+- `--adapter-overhead-tokens <number>` sets the per-call adapter overhead added
+  to every admission estimate. The default is `13000`; raising it towards
+  `28000` better models the cache pi's agentic loop writes on first,
+  uncached calls.
+- `--max-audit-candidates <number>` caps the candidates forwarded to the audit.
+  The default is `30`.
+- `--luna-reasoning <low|medium>` selects the Luna finder reasoning effort. The
+  default is `low`.
+- `--routing-policy <policy>` selects the routing policy. The default and sole
+  live value is `deterministic-flex-v1`.
+- `--flex-attempts <number>` sets the Flex retry attempts per call. The default
+  is `3`.
+- `--per-call-timeout <seconds>` sets the per-model-call timeout. The default is
+  `300`.
+
 When `--config` is omitted, Dakar resolves review configuration in this order:
 
 1. Repository-local `.coderabbit.yaml`.
@@ -452,6 +484,12 @@ audit's worst-case cost is reserved first, before any Luna finder call, so
 an unaffordable review refuses outright (`stage: "admission"`) rather than
 spending on finders it cannot afford to conclude. Refused finder packs are
 listed in `admissionRefusals` and never consume any budget.
+
+Because admission refuses any finder pack beyond the ordinary budget, a gate
+reviewing a large task branch may need to raise `--budget-gbp` to admit more
+finder packs and so cover the full diff. The ordinary default deliberately
+forces refusals on multi-pack large reviews; lift the budget only for the runs
+that warrant the extra coverage.
 
 `metrics` carries the cost accounting:
 

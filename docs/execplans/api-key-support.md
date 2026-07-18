@@ -311,6 +311,13 @@ the conflict in `Decision Log`, and escalate.
   critical/major CodeRabbit rule), findings-sink parity, and tests
   mirroring the existing host-review harness. Roadmap step 7.6 tracks
   this work.
+  - [x] (2026-07-18 20:45Z) Dakar side: thirteen review-tuning flags
+    wired red-first (`--budget-gbp` through `--per-call-timeout`),
+    forwarding only — bounds stay in `resolveWorkflowConfig`; help
+    text gains a Review tuning grouping; users' guide documents each
+    flag and the raise-the-budget note for large gate reviews. 15
+    focused tests red then green; 230/230 full suite; `make check`
+    green via scrutineer. Roadmap 7.6.1 ticked.
 
 ## Surprises & discoveries
 

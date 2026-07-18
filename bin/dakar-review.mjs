@@ -102,6 +102,22 @@ const OPTION_SPECS = new Map([
   ['max-findings', { key: 'maxFindings', value: true, number: true }],
   ['synthesis-model', { key: 'synthesisModel', value: true }],
   ['synthesis-reasoning', { key: 'synthesisReasoning', value: true }],
+  // Review-tuning knobs (ADR 002 admission and retry envelope). The CLI only
+  // forwards these to their WorkflowArgs keys; resolveWorkflowConfig owns the
+  // bounds, so no validation is duplicated here beyond the numeric parse.
+  ['budget-gbp', { key: 'budgetGbp', value: true, number: true }],
+  ['max-luna-calls', { key: 'maxLunaFlexCalls', value: true, number: true }],
+  ['transaction-max-files', { key: 'transactionMaxFiles', value: true, number: true }],
+  ['transaction-max-input-tokens', { key: 'transactionMaxInputTokens', value: true, number: true }],
+  ['transaction-max-output-tokens', { key: 'transactionMaxOutputTokens', value: true, number: true }],
+  ['terra-max-input-tokens', { key: 'terraMaxInputTokens', value: true, number: true }],
+  ['terra-max-output-tokens', { key: 'terraMaxOutputTokens', value: true, number: true }],
+  ['adapter-overhead-tokens', { key: 'adapterOverheadTokens', value: true, number: true }],
+  ['max-audit-candidates', { key: 'maxAuditCandidates', value: true, number: true }],
+  ['luna-reasoning', { key: 'lunaReasoning', value: true }],
+  ['routing-policy', { key: 'routingPolicy', value: true }],
+  ['flex-attempts', { key: 'flexAttempts', value: true, number: true }],
+  ['per-call-timeout', { key: 'perCallTimeoutSeconds', value: true, number: true }],
   ['timeout', { key: 'timeout', value: true, number: true }],
   ['runs-root', { key: 'runsRoot', value: true }],
   ['format', { key: 'format', value: true }],
@@ -263,6 +279,19 @@ function buildWorkflowArgs(options, repoRoot) {
     ['maxFindings', 'maxFindings'],
     ['synthesisModel', 'synthesisModel'],
     ['synthesisReasoning', 'synthesisReasoning'],
+    ['budgetGbp', 'budgetGbp'],
+    ['maxLunaFlexCalls', 'maxLunaFlexCalls'],
+    ['transactionMaxFiles', 'transactionMaxFiles'],
+    ['transactionMaxInputTokens', 'transactionMaxInputTokens'],
+    ['transactionMaxOutputTokens', 'transactionMaxOutputTokens'],
+    ['terraMaxInputTokens', 'terraMaxInputTokens'],
+    ['terraMaxOutputTokens', 'terraMaxOutputTokens'],
+    ['adapterOverheadTokens', 'adapterOverheadTokens'],
+    ['maxAuditCandidates', 'maxAuditCandidates'],
+    ['lunaReasoning', 'lunaReasoning'],
+    ['routingPolicy', 'routingPolicy'],
+    ['flexAttempts', 'flexAttempts'],
+    ['perCallTimeoutSeconds', 'perCallTimeoutSeconds'],
   ]) {
     if (options[optionKey] !== undefined) {
       workflowArgs[workflowKey] = options[optionKey]
@@ -566,6 +595,21 @@ Options:
   --telemetry                 Stream ODW logs to stderr while preserving final stdout
   --dry-run                   Return workflow contract without agents
   --help                      Show this help
+
+Review tuning (bounds enforced by the workflow; the CLI only forwards):
+  --budget-gbp <n>                   Hard admission budget in GBP (default: 0.1)
+  --max-luna-calls <n>               Maximum Luna Flex finder calls (default: 4)
+  --transaction-max-files <n>        Maximum files per finder pack (default: 5)
+  --transaction-max-input-tokens <n> Finder input-token estimate (default: 12000)
+  --transaction-max-output-tokens <n> Finder output-token estimate (default: 750)
+  --terra-max-input-tokens <n>       Audit input-token estimate (default: 48000)
+  --terra-max-output-tokens <n>      Audit output-token estimate (default: 2500)
+  --adapter-overhead-tokens <n>      Per-call adapter overhead tokens (default: 13000)
+  --max-audit-candidates <n>         Maximum candidates sent to the audit (default: 30)
+  --luna-reasoning <low|medium>      Luna finder reasoning effort (default: low)
+  --routing-policy <policy>          Routing policy (default: deterministic-flex-v1)
+  --flex-attempts <n>                Flex retry attempts per call (default: 3)
+  --per-call-timeout <seconds>       Per-model-call timeout (default: 300)
 `
 }
 
