@@ -5,7 +5,7 @@ This ExecPlan (execution plan) is a living document. The sections
 `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
 proceeds.
 
-Status: DRAFT
+Status: COMPLETE
 
 ## Purpose / big picture
 
@@ -285,7 +285,14 @@ the conflict in `Decision Log`, and escalate.
   corrected to `OPENAI_API_KEY` for the pi route. README (with the
   review-process Mermaid diagram) and the live harness landed alongside
   this milestone. All Markdown gates green.
-- [ ] M7: live cost validation on the estate corpus.
+- [x] (2026-07-18 19:45Z) M7: live cost validation complete. Six
+  corpus reviews plus one seeded-defect review, all under the USD 0.25
+  acceptance; three under the USD 0.11 stretch. Ground-truth recall
+  3/3 with zero false positives and correct severity grading; two
+  audit rejections judged defensible by hand; one organic finding on
+  the oversize probe. Admission refusals, pack truncation, and the
+  reviewed-head invariant all exercised live. Total spend roughly
+  USD 0.52. Roadmap 7.1.2, 7.4.1, and 7.4.2 ticked.
 
 ## Surprises & discoveries
 
@@ -535,7 +542,43 @@ the conflict in `Decision Log`, and escalate.
 
 ## Outcomes & retrospective
 
-To be completed at milestone boundaries and at the end of the work.
+Completed 2026-07-18. The delivery goal is met with room to spare: every
+live review, including the 101-file oversize probe, came in below the
+USD 0.25 acceptance ceiling (range USD 0.021-0.115 reported), and three
+of seven runs beat the USD 0.11 typical-case stretch. Quality is
+demonstrated three ways: a seeded-defect review scored 3/3 recall with
+zero false positives and correct severity grading; the audit's two
+rejections of finder candidates on real PRs were judged defensible by
+hand (one explicitly protecting a PR's purpose from a performative
+suggestion); and the oversize probe surfaced a genuine organic defect.
+The economics beat the model: pi's prompt caching pulls real cost well
+under the cache-write-band worst case on multi-call reviews.
+
+What the plan got right: the M0 go/no-go probe (which killed the Codex
+assumption for USD 0.01 before any code depended on it), the expert
+panel's fault-isolation resequencing, and the live-validation phase,
+which surfaced five implementation defects no test had caught — a
+models.json schema mismatch, ODW's null-on-failure agent semantics,
+slot-nulling in parallel(), the silent zero-coverage pass (the most
+dangerous), and the cwd-fragile extension path.
+
+Lessons: (1) runtime semantics assumed from documentation must be
+probed empirically before error-handling code is built on them — both
+Codex and ODW behaved differently from the reasonable reading;
+(2) fail-closed guards (SHA pinning, zero-coverage refusal, state-root
+containment) each fired at least once in anger during a single day of
+live work; (3) the admission estimator is optimistic for first
+(uncached) calls because pi's agentic loop writes more cache than the
+overhead constant assumes — raise `adapterOverheadTokens` toward 28k
+or restrict finder tools when tuning; (4) an isolated worst case
+(USD 0.133) understates multi-pack large reviews, where the budget
+correctly forces refusals — the ordinary budget is doing its job, and
+operators wanting full large-diff coverage need the explicit
+large-review budget that remains future work (roadmap 7.5).
+
+Remaining work is deliberately out of this slice: SARIF adoption,
+deterministic gate running, and the adjudicated legacy comparison
+(roadmap 7.5.x), plus the cost tunings above.
 
 ## Context and orientation
 
@@ -1060,6 +1103,36 @@ M7 live ledger (running record; spend total updated per run):
   useful-findings acceptance clause open; next the large corpus entry,
   then if needed a seeded-defect review with known ground truth.
   Running M7 spend: roughly USD 0.31.
+- `wireframe` 612 (large, 2026-07-18): complete, `verdict: pass`,
+  0 findings, 0 discarded. Partial coverage by design and by budget:
+  four packs planned over 17 of 28 files (11 truncated by the pack
+  cap), and the admission controller refused packs 3 and 4 with
+  structured reasons ("would exceed the budget by USD 0.008") while
+  protecting the audit reservation — the ADR's ordinary-budget
+  behaviour on a large diff, all honestly recorded in
+  `admissionRefusals` and `metrics.truncatedFiles`. Estimated
+  USD 0.0275 (admitted calls); reported USD 0.0531. Running M7 spend:
+  roughly USD 0.36.
+- Seeded-defect review (`comenq` clone, commit `facfaf63` on
+  2026-07-18, three planted defects framed as a refactor):
+  `verdict: changes-requested`, **3/3 recall with zero false
+  positives** and correct severity grading — high for the
+  seconds-to-milliseconds timeout unit bug, high for the dropped
+  success-path queue acknowledgement (duplicate redelivery), medium
+  for the inverted drained-hook emptiness check (test-only surface).
+  Reported USD 0.0605 (estimated USD 0.1061); head recorded under the
+  isolated seeded state root. This closes the "genuinely useful
+  findings" acceptance clause with ground truth. Running M7 spend:
+  roughly USD 0.42.
+- `wireframe` 609 (oversize probe, 2026-07-18): completed as an
+  honest partial review rather than refusing outright — 20 of 101
+  files packed (81 truncated), two packs refused by admission, audit
+  reservation protected, three ledger entries. Reported USD 0.1035
+  (estimated USD 0.1210). Bonus: one organic accepted finding,
+  medium, "Tracked binary files can abort the spelling check" in
+  `scripts/typos_rollout_check.py` — a genuine defect on a real
+  merged PR, actionable by an implementation agent. Final M7 spend:
+  roughly USD 0.52 of the USD 5.00 cap.
 
 ## Interfaces and dependencies
 
@@ -1203,3 +1276,16 @@ pre-registered; living-document updates added to every milestone's exit
 criteria. Remaining work is unchanged in intent: prove plumbing, build
 the cost machinery, take over deterministic phases, land the audit, then
 Flex, then validate live.
+
+## Revision note (2026-07-18, completion)
+
+M0 through M7 are complete and the plan status is COMPLETE. Since the
+post-panel revision: the adapter vehicle changed from Codex CLI to pi
+per operator direction after the M0 probe falsified the Codex premise
+(ADR 002 carries the amendment); M7 live validation surfaced and fixed
+five defects (models.json schema, ODW null-on-failure agent semantics,
+parallel slot-nulling, the silent zero-coverage pass, and the
+cwd-fragile extension path) and added the DAKAR_USAGE_LOG reported-usage
+channel; the live ledger, hand assessments, and final retrospective are
+recorded above. Deferred work lives in roadmap 7.5 and the retrospective
+lessons.

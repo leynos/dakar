@@ -362,7 +362,7 @@ admission control".
   snapshot.
   - Success: cost estimates record the pricing-table version and FX snapshot;
     rates cover Luna and Terra, standard and Flex, all four token bands.
-- [ ] 7.1.2. Add the per-call cost ledger with estimated and reported usage.
+- [x] 7.1.2. Add the per-call cost ledger with estimated and reported usage.
   - Requires 7.1.1.
   - Success: every model call records model, service tier, reasoning effort,
     estimated worst-case cost, and provider-reported token usage separately.
@@ -429,11 +429,11 @@ failure policy".
 This step answers whether the implemented route meets the delivery goal on
 real branches. See ADR 002 §"Verification".
 
-- [ ] 7.4.1. Build the candidate-branch harness for API-key live runs.
+- [x] 7.4.1. Build the candidate-branch harness for API-key live runs.
   - Requires 7.2 and 7.3.
   - Success: selected estate pull requests of varying sizes can be reviewed
     from clean clones with isolated review state and captured cost ledgers.
-- [ ] 7.4.2. Measure and record per-review provider cost against the targets.
+- [x] 7.4.2. Measure and record per-review provider cost against the targets.
   - Requires 7.4.1.
   - Success: an ordinary review completes with useful findings below USD 0.25
     provider spend; results record whether the USD 0.11 stretch was met.
