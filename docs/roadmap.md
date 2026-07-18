@@ -358,7 +358,7 @@ This step answers whether Dakar can bound worst-case review cost before any
 model call is dispatched. Subsumes 4.3.1. See ADR 002 §"Cost budget and
 admission control".
 
-- [ ] 7.1.1. Land the versioned pricing table with a foreign-exchange
+- [x] 7.1.1. Land the versioned pricing table with a foreign-exchange
   snapshot.
   - Success: cost estimates record the pricing-table version and FX snapshot;
     rates cover Luna and Terra, standard and Flex, all four token bands.

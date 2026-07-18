@@ -172,3 +172,22 @@ export interface PromptContext {
   policyPath: string
   repoRoot: string
 }
+
+/** Records one priced, admitted call for the budget audit trail. */
+export interface LedgerEntry {
+  callId: string
+  phase: string
+  lane: 'luna-flex' | 'terra-flex' | 'standard'
+  model: string
+  serviceTier: string
+  reasoningEffort: string
+  estimatedWorstCaseUsd: number
+  reportedUsage?: {
+    inputTokens: number
+    cachedInputTokens: number
+    outputTokens: number
+  }
+  reportedUsd?: number // reportedUsage priced with the table
+  pricingTableVersion: string
+  attempts: number
+}

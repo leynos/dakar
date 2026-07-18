@@ -173,8 +173,15 @@ the conflict in `Decision Log`, and escalate.
   evidence plus a 3-second live Flex round trip with usage reporting).
   Adapter path decided: pi with a Dakar-owned flex extension, per
   operator direction.
-- [ ] M1: pricing table, cost ledger types, admission controller (pure
-  modules with tests).
+- [x] (2026-07-18 18:40Z) M1: pricing table, cost ledger types, admission
+  controller. `pricing.ts` (with `DEFAULT_PRICING_TABLE`, version
+  2026-07-18, `usdPerGbp` 1.27), `admission.ts`, and the additive
+  `LedgerEntry` type landed red-first (Sonnet subagent): both test files
+  failed with `ERR_MODULE_NOT_FOUND` before the modules existed, then
+  15/15 focused tests and 155/155 full-suite tests passed; full
+  `make check` green via scrutineer. Roadmap 7.1.1 ticked; 7.1.2 and
+  7.1.3 tick when the ledger and controller are wired into the workflow
+  in M4.
 - [ ] M2: deterministic host takeover, in four stages (test-harness mock
   helper; prepare to CLI; deterministic rendering; record to CLI).
 - [ ] M3: issue-set audit replaces per-candidate verification, on the
@@ -856,6 +863,22 @@ To be populated during execution: M0 probe transcripts (with any key
 material redacted), the M0 failure-shape record, red-test evidence per
 milestone, live-run ledger summaries with a running spend total, and the
 final cost table for the corpus.
+
+M0 evidence (scratchpad, 2026-07-18): `flex-control.json` — direct
+Responses API probe, response contains `"service_tier": "flex"`, usage
+13 input / 5 output; `codex-probe.jsonl` — Codex usage block showing
+20,128 input tokens for a one-line prompt; `captured-requests.jsonl` —
+capture-server payloads proving Codex omits `service_tier` (three
+versions) and pi includes it via the flex extension; `pi-live.out` /
+`pi-live.err` — live pi Flex round trip, HTTP 200, 3 s latency, usage
+`{input: 3, output: 5, cacheRead: 0, cacheWrite: 12819}`. Live spend to
+date: three billed probes, well under USD 0.02 total.
+
+M1 red evidence (`/tmp/m1-red-evidence.txt`): both focused test files
+fail before implementation with `ERR_MODULE_NOT_FOUND` for
+`admission.ts` and `pricing.ts`; after implementation, 15/15 focused
+and 155/155 full-suite passes; `make check` green
+(`/tmp/check-dakar-api-key-support.out`, 1,383 lines).
 
 ## Interfaces and dependencies
 
