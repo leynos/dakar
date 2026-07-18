@@ -2,11 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted (2026-07-18): adopt the deterministic-first review pipeline with a
+Luna Flex transactional lane, a Terra Flex issue-set audit lane, host-selected
+routing, and hard cost admission control.
 
 ## Date
 
-2026-07-10.
+2026-07-18.
 
 ## Context and problem statement
 
@@ -254,14 +256,37 @@ Codex CLI exposes `service_tier` as a configuration value and accepts per-call
 configuration overrides through `-c key=value`.[^3] Dakar therefore does not
 need a bespoke Responses API wrapper solely to select Flex.
 
-The ODW configuration should define distinct Luna Flex and Terra Flex adapters,
-or one Flex adapter with host-enforced model and reasoning arguments. A
-representative adapter is:
+The ODW configuration must define distinct Luna Flex and Terra Flex adapters,
+each pinning the reasoning effort configured for its lane. A single shared Flex
+adapter is not viable while the adapter flag surface exposes only the model
+argument, because it could not honour the differing per-lane reasoning
+defaults. Representative adapters are:
 
 ```json
 {
-  "codex-flex": {
-    "label": "Codex CLI, Flex processing",
+  "codex-luna-flex": {
+    "label": "Codex CLI, Luna, Flex processing",
+    "command": [
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "workspace-write",
+      "--cd",
+      "{workspace}",
+      "-c",
+      "service_tier=\"flex\"",
+      "-c",
+      "model_reasoning_effort=\"low\"",
+      "-"
+    ],
+    "stdin": "{prompt}",
+    "flags": {
+      "model": ["--model"]
+    }
+  },
+  "codex-terra-flex": {
+    "label": "Codex CLI, Terra, Flex processing",
     "command": [
       "codex",
       "exec",
@@ -300,8 +325,8 @@ The dark-factory scheduler follows these rules:
    key.
 2. Enforce configurable per-model and global concurrency ceilings.
 3. Allow workers waiting on Flex capacity to yield and process independent work.
-4. Retry `429 Resource Unavailable` with bounded exponential backoff and positive
-   jitter.
+4. Retry an HTTP 429 response carrying the Flex `resource_unavailable` error
+   code with bounded exponential backoff and positive jitter.
 5. Record every attempt and provider request identifier.
 6. Do not charge a resource-unavailable attempt to the estimated token ledger;
    OpenAI does not bill that failure.[^2]
@@ -320,6 +345,7 @@ Default retry and concurrency controls are host configuration:
   "flexJitterSeconds": 30,
   "maxConcurrentLunaFlexCalls": 16,
   "maxConcurrentTerraFlexCalls": 4,
+  "maxConcurrentFlexCallsGlobal": 20,
   "allowStandardFallback": false
 }
 ```
@@ -459,6 +485,25 @@ Negative consequences:
 - Deterministic SARIF rendering gives less freedom for ornamental prose, which
   is an acceptable loss.
 
+## Known risks and limitations
+
+- At decision-date prices, the worst-case spend of the default caps (four Luna
+  transactions plus one Terra audit, all input priced at the cache-write band)
+  is approximately the £0.10 hard budget. The admission controller, not the
+  call caps, is the effective ceiling, and the second large-review Terra call
+  can never fit the ordinary budget. Large reviews must use the explicit
+  larger budget.
+- The partitioning strategy for large reviews is intentionally undefined. It
+  must be designed before migration steps 8 and 9 can exercise
+  `maxTerraFlexCallsLargeReview`.
+- The implementation agent's behaviour after a deferred review — retry
+  cadence, operator notification, and back-pressure — needs definition during
+  implementation. Deferral-rate telemetry should carry an alert threshold so
+  a Flex capacity drought is visible before loops stall.
+- Reasoning-effort escalation to high on Terra requires a dedicated adapter,
+  or an adapter flag mapping for `model_reasoning_effort`, because the
+  representative adapters pin the default effort for each lane.
+
 ## Options considered
 
 ### Keep the current routed finder and per-candidate verifier pipeline
@@ -588,8 +633,8 @@ runs provide the normal verification path.
     instructions, runs deterministic gates before reviewer agents, and reserves
     stronger models for genuinely ambiguous assessment or triage.
 [^2]: OpenAI documents Flex as lower-cost processing with slower responses and
-    occasional resource unavailability, priced at Batch rates. A `429 Resource
-    Unavailable` response is not billed.
+    occasional resource unavailability, priced at Batch rates. An HTTP 429
+    response with the `resource_unavailable` error code is not billed.
 [^3]: Codex documents `service_tier` as a configuration key whose built-in
     values include `flex`. CLI `-c key=value` overrides can set it per call.
 [^4]: Prices are per million tokens for short-context requests and may change.
