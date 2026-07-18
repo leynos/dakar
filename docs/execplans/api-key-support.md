@@ -1034,6 +1034,18 @@ M7 live ledger (running record; spend total updated per run):
   allow-list would defeat the PR's purpose (Dependabot SHA
   ownership) — the adversarial issue-set audit doing precisely its
   ADR 002 job. Running M7 spend: roughly USD 0.14.
+- `frankie` 102 (medium, 2026-07-18): complete, `verdict: pass`,
+  0 findings, 0 discarded; two Luna packs, zero candidates, audit
+  correctly skipped. Estimated USD 0.0276; reported USD 0.0497
+  (27 input / 1,711 output / 175,814 cacheRead / 57,205 cacheWrite).
+  Hand assessment: the PR fixes Oxford-spelling drift after a
+  dictionary refresh; a clean pass is credible. The cost acceptance
+  (below USD 0.25 reported, medium tier) is met with 5x headroom and
+  the stretch (USD 0.11) is met too, but no corpus run has yet
+  produced accepted findings, so the "genuinely useful findings"
+  acceptance clause is still open — proceeding to the upper-medium
+  entry where substantive feedback changes make findings most likely.
+  Running M7 spend: roughly USD 0.19.
 
 ## Interfaces and dependencies
 
