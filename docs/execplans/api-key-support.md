@@ -184,6 +184,11 @@ the conflict in `Decision Log`, and escalate.
   in M4.
 - [ ] M2: deterministic host takeover, in four stages (test-harness mock
   helper; prepare to CLI; deterministic rendering; record to CLI).
+  - [x] (2026-07-18 19:05Z) Stage a: orchestration-test mock helper
+    extracted to `tests/helpers/mock-agents.mjs` (declarative
+    label→responder registry; prompt parsing isolated in one function);
+    pure refactor, no test-body changes, 20/20 focused and 155/155
+    full-suite green. `legacy-route-final` tag planted at the M1 commit.
 - [ ] M3: issue-set audit replaces per-candidate verification, on the
   existing standard-tier adapters.
 - [ ] M4: Flex adapters, Luna and Terra lane routing, admission wiring.

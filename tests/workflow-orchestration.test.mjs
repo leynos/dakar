@@ -3,8 +3,58 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { buildAgentMock, extractCandidateJson, FixtureFailure } from './helpers/mock-agents.mjs'
 
-class FixtureFailure extends Error {}
+function defaultResponders({ failedLabel, recordFailures, collidingCandidates, prepareStateFile, head, base,
+  candidateTitles, summaryCandidateTitles, verdictTransform, synthesisMetrics, recordResult, recordResults }) {
+  return [
+    { match: (label) => label === failedLabel, respond: () => { throw new FixtureFailure('fixture failure') } },
+    { match: 'config-resolve', respond: () => ({ ok: true, config: '/distinct/policy.yaml' }) },
+    {
+      match: 'state-prepare',
+      respond: () => ({ ok: true, stateFile: prepareStateFile, reviewBase: base, headCommit: head,
+        commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }),
+    },
+    {
+      match: 'source-1',
+      respond: () => {
+        const titles = candidateTitles ?? (collidingCandidates
+          ? [`${'same-prefix-'.repeat(5)}first`, `${'same-prefix-'.repeat(5)}second`]
+          : ['Bug'])
+        return { taskId: 'source-1', summary: 'candidate', candidates: titles.map((title) => ({ title, severity: 'high',
+          path: 'src/a.js', line: 2, detail: 'Broken branch', evidence: 'diff line', confidence: 'high' })),
+          metrics: { filesInspected: 1, findingsProposed: 1 } }
+      },
+    },
+    {
+      match: 'review-summary-1',
+      respond: () => ({ taskId: 'review-summary-1', summary: 'covered', candidates: summaryCandidateTitles.map((title) => ({
+        title, severity: 'high', path: 'src/a.js', line: 3, detail: 'Summary branch', evidence: 'diff line', confidence: 'high',
+      })), metrics: { filesInspected: 1, findingsProposed: summaryCandidateTitles.length } }),
+    },
+    {
+      match: (label) => label.startsWith('verify-'),
+      respond: (prompt) => {
+        const candidateId = extractCandidateJson(prompt).candidateId
+        return { candidateId: verdictTransform ? verdictTransform(candidateId) : candidateId,
+          status: 'accepted', reason: 'confirmed', evidenceChecked: 'git object' }
+      },
+    },
+    {
+      match: 'synthesis',
+      respond: () => ({ verdict: 'changes-requested', summary: 'one', reportMarkdown: '# Review', findings: [{}], metrics: synthesisMetrics }),
+    },
+    {
+      match: (label) => label.startsWith('state-record-'),
+      respond: (_prompt, options) => {
+        const attempt = Number(options.label.split('-').at(-1))
+        if (attempt <= recordFailures) throw new FixtureFailure('record fixture failure')
+        return recordResults?.[attempt - 1] ?? recordResult ??
+          { ok: true, stateFile: '/trusted/state/dakar/reviews.toml', headCommit: head }
+      },
+    },
+  ]
+}
 
 async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidates = false, prepareStateFile = '/tmp/reviews.toml', stateRoot = '', commitLength = 40, recordResult, recordResults, candidateTitles, summaryCandidateTitles = [], maxFindings, verdictTransform, synthesisMetrics = {} } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
@@ -18,45 +68,8 @@ async function runWorkflow({ failedLabel, recordFailures = 0, collidingCandidate
   const sleepDelays = []
   const head = 'b'.repeat(commitLength)
   const base = 'a'.repeat(commitLength)
-  const agent = async (prompt, options = {}) => {
-    agentLabels.push(options.label)
-    assert.equal(prompts.has(options.label), false, `duplicate agent label: ${options.label}`)
-    prompts.set(options.label, prompt)
-    if (options.label === failedLabel) throw new FixtureFailure('fixture failure')
-    if (options.label === 'config-resolve') return { ok: true, config: '/distinct/policy.yaml' }
-    if (options.label === 'state-prepare') {
-      return { ok: true, stateFile: prepareStateFile, reviewBase: base, headCommit: head,
-        commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }
-    }
-    if (options.label === 'source-1') {
-      const titles = candidateTitles ?? (collidingCandidates
-        ? [`${'same-prefix-'.repeat(5)}first`, `${'same-prefix-'.repeat(5)}second`]
-        : ['Bug'])
-      return { taskId: 'source-1', summary: 'candidate', candidates: titles.map((title) => ({ title, severity: 'high',
-        path: 'src/a.js', line: 2, detail: 'Broken branch', evidence: 'diff line', confidence: 'high' })),
-        metrics: { filesInspected: 1, findingsProposed: 1 } }
-    }
-    if (options.label === 'review-summary-1') {
-      return { taskId: 'review-summary-1', summary: 'covered', candidates: summaryCandidateTitles.map((title) => ({
-        title, severity: 'high', path: 'src/a.js', line: 3, detail: 'Summary branch', evidence: 'diff line', confidence: 'high',
-      })), metrics: { filesInspected: 1, findingsProposed: summaryCandidateTitles.length } }
-    }
-    if (String(options.label).startsWith('verify-')) {
-      const candidateId = JSON.parse(prompt.split('Candidate JSON:\n')[1].split('\n\nRepository root:')[0]).candidateId
-      return { candidateId: verdictTransform ? verdictTransform(candidateId) : candidateId,
-        status: 'accepted', reason: 'confirmed', evidenceChecked: 'git object' }
-    }
-    if (options.label === 'synthesis') {
-      return { verdict: 'changes-requested', summary: 'one', reportMarkdown: '# Review', findings: [{}], metrics: synthesisMetrics }
-    }
-    if (String(options.label).startsWith('state-record-')) {
-      const attempt = Number(options.label.split('-').at(-1))
-      if (attempt <= recordFailures) throw new FixtureFailure('record fixture failure')
-      return recordResults?.[attempt - 1] ?? recordResult ??
-        { ok: true, stateFile: '/trusted/state/dakar/reviews.toml', headCommit: head }
-    }
-    throw new Error(`unexpected agent label: ${options.label}`)
-  }
+  const agent = buildAgentMock(defaultResponders({ failedLabel, recordFailures, collidingCandidates, prepareStateFile, head, base,
+    candidateTitles, summaryCandidateTitles, verdictTransform, synthesisMetrics, recordResult, recordResults }), { prompts, agentLabels })
   const swallowFixtureFailure = (error) => {
     if (error instanceof FixtureFailure) return null
     throw error
