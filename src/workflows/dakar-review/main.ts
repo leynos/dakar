@@ -39,6 +39,28 @@ interface FlexCallOutcome<T> {
   value?: T
   attempts: number
   error?: unknown
+  retryRefusedByBudget?: boolean
+}
+
+/** Tracks the mutable admission state shared across all admitted Flex calls. */
+interface RetryAdmissionState {
+  budgetUsd: number
+  reservedAuditUsd: number
+  spentUsd: number
+}
+
+/**
+ * Carries the per-attempt admission context for a retried Flex call: retries are
+ * no longer free, so every attempt beyond the first is admitted against the
+ * remaining budget and, when admitted, charged to both `state.spentUsd` and the
+ * call's own `ledgerEntry.estimatedWorstCaseUsd` (which becomes the total
+ * admitted for the call across its attempts).
+ */
+interface RetryAdmission {
+  state: RetryAdmissionState
+  worstCaseUsd: number
+  kind: 'luna-transaction' | 'terra-audit'
+  ledgerEntry: LedgerEntry
 }
 
 /**
@@ -51,20 +73,37 @@ interface FlexCallOutcome<T> {
  * exhaustion it returns `{ ok: false }` with the attempt count rather than
  * throwing, so the caller can downgrade or defer per policy.
  *
+ * Each retry (attempt n >= 2) is admitted against the remaining budget before it
+ * runs: on refusal the loop stops immediately and returns
+ * `retryRefusedByBudget: true` with the observed attempt count, so the caller
+ * downgrades or defers rather than exceeding the hard ceiling; on admission the
+ * attempt's worst case is charged to the shared spend and the call's ledger
+ * estimate. The first attempt's admission and charge remain the caller's.
+ *
  * @param retryConfig - The bounded Flex retry knobs.
  * @param callId - Stable identifier used to derive deterministic jitter.
  * @param invoke - The call to run; typically a single `agent()` request.
+ * @param retryAdmission - Budget admission context charged per admitted retry.
  * @returns The outcome carrying the decoded value or the terminal failure.
  */
 async function callWithFlexRetry<T>(
   retryConfig: FlexRetryConfig,
   callId: string,
   invoke: () => Promise<T>,
+  retryAdmission: RetryAdmission,
 ): Promise<FlexCallOutcome<T>> {
   let lastError: unknown
   for (let attempt = 1; attempt <= retryConfig.flexAttempts; attempt += 1) {
-    // Sleep precedes attempts 2..N; the first attempt runs immediately.
+    // Sleep precedes attempts 2..N; the first attempt runs immediately. Each
+    // retry is admitted and charged before its backoff, so a refused retry
+    // neither sleeps nor spends.
     if (attempt >= 2) {
+      const decision = admit(retryAdmission.state, retryAdmission.worstCaseUsd, retryAdmission.kind)
+      if (!decision.admitted) {
+        return { ok: false, attempts: attempt - 1, error: lastError, retryRefusedByBudget: true }
+      }
+      retryAdmission.state.spentUsd += retryAdmission.worstCaseUsd
+      retryAdmission.ledgerEntry.estimatedWorstCaseUsd += retryAdmission.worstCaseUsd
       await sleep(backoffSeconds(retryConfig, callId, attempt) * 1000)
     }
     try {
@@ -193,6 +232,10 @@ if (DRY_RUN) {
     budgetUsd: BUDGET_USD,
     pricingTableVersion: PRICING_TABLE.version,
     reservedAuditUsd: RESERVED_AUDIT_USD,
+    // Admission reserves only ONE audit attempt's worst case; this chain-level
+    // figure surfaces the audit's full retry cost to operators without
+    // reserving it against the budget.
+    reservedAuditChainUsd: RESERVED_AUDIT_USD * FLEX_ATTEMPTS,
     flexLimits: {
       maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
       transactionMaxFiles: TRANSACTION_MAX_FILES,
@@ -340,23 +383,36 @@ for (const pack of packs) {
 
 phase('Review')
 // Each admitted pack runs through the Flex retry helper, which reissues the same
-// durable call across attempts under one admission. Attempts do NOT re-admit or
-// re-charge spentUsd; the ledger entry's `attempts` field records the count.
+// durable call across attempts. Every ADMITTED retry is charged against the
+// standing budget and accumulated onto the pack's ledger entry; a retry refused
+// by the remaining budget stops the pack and downgrades it. The ledger entry's
+// `attempts` field records the observed count.
 const reviewOutcomes = await parallel(
-    admittedPacks.map((task) => async () => ({
-      task,
-      // Scope the jitter seed per review (head commit) so concurrent reviews of
-      // different heads decorrelate; the ledger callId and agent label stay the
-      // bare task id.
-      outcome: await callWithFlexRetry<CandidateResult | null>(RETRY_CONFIG, `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`, () =>
-        agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext), {
-          label: task.taskId,
-          phase: 'Review',
-          adapter: task.adapter,
-          model: task.model,
-          schema: CANDIDATE_SCHEMA,
-        })),
-    })),
+    admittedPacks.map((task) => async () => {
+      const ledgerEntry = ledger.find((item) => item.callId === task.taskId)
+      return {
+        task,
+        // Scope the jitter seed per review (head commit) so concurrent reviews of
+        // different heads decorrelate; the ledger callId and agent label stay the
+        // bare task id.
+        outcome: await callWithFlexRetry<CandidateResult | null>(
+          RETRY_CONFIG,
+          `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`,
+          () =>
+            agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext), {
+              label: task.taskId,
+              phase: 'Review',
+              adapter: task.adapter,
+              model: task.model,
+              schema: CANDIDATE_SCHEMA,
+            }),
+          // A finder retry keeps the 'luna-transaction' inequality (its worst
+          // case plus the standing audit reservation) because the audit has not
+          // run yet; its ledger entry accumulates each admitted attempt.
+          { state: admissionState, worstCaseUsd: ledgerEntry?.estimatedWorstCaseUsd ?? 0, kind: 'luna-transaction', ledgerEntry: ledgerEntry as LedgerEntry },
+        ),
+      }
+    }),
   )
 // A pack that exhausts its Flex attempts is downgraded rather than failing the
 // review (ADR 002 optional-Luna policy): partial finder coverage with an honest
@@ -388,7 +444,9 @@ for (let index = 0; index < reviewOutcomes.length; index += 1) {
   } else {
     lunaDowngrades.push({
       taskId: task.taskId,
-      reason: 'Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.',
+      reason: outcome.retryRefusedByBudget
+        ? "Finder pack's flex retry refused by the remaining budget; downgraded to partial coverage."
+        : 'Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.',
       attempts: outcome.attempts,
     })
   }
@@ -462,7 +520,7 @@ if (auditCandidates.length > 0) {
     }
   }
   admissionState.spentUsd += RESERVED_AUDIT_USD
-  ledger.push({
+  const auditLedgerEntry: LedgerEntry = {
     callId: 'audit',
     phase: 'Audit',
     lane: 'terra-flex',
@@ -472,27 +530,37 @@ if (auditCandidates.length > 0) {
     estimatedWorstCaseUsd: RESERVED_AUDIT_USD,
     pricingTableVersion: PRICING_TABLE.version,
     attempts: 1,
-  })
-  // The required audit runs through the same Flex retry helper. On exhaustion the
-  // review DEFERS rather than falling back to standard processing: it returns a
-  // structured deferred result with no recordInput, so the CLI's recordReview
-  // guard (ok === true && recordInput) cannot record the head as complete.
-  const auditOutcome = await callWithFlexRetry<AuditResult>(RETRY_CONFIG, `${REPO_ROOT}:${prepared.headCommit}:audit`, () =>
-    agent<AuditResult>(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
-      label: 'audit',
-      phase: 'Audit',
-      adapter: TERRA_LANE.adapter,
-      model: TERRA_LANE.model,
-      schema: AUDIT_SCHEMA,
-    }))
-  const auditLedgerEntry = ledger.find((item) => item.callId === 'audit')
-  if (auditLedgerEntry) auditLedgerEntry.attempts = auditOutcome.attempts
+  }
+  ledger.push(auditLedgerEntry)
+  // The required audit runs through the same Flex retry helper. Each admitted
+  // retry is charged against the budget; the 'terra-audit' inequality already
+  // holds without the standing reservation because the first admission consumed
+  // it. On exhaustion OR a budget-refused retry the review DEFERS rather than
+  // falling back to standard processing: it returns a structured deferred result
+  // with no recordInput, so the CLI's recordReview guard (ok === true &&
+  // recordInput) cannot record the head as complete.
+  const auditOutcome = await callWithFlexRetry<AuditResult>(
+    RETRY_CONFIG,
+    `${REPO_ROOT}:${prepared.headCommit}:audit`,
+    () =>
+      agent<AuditResult>(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+        label: 'audit',
+        phase: 'Audit',
+        adapter: TERRA_LANE.adapter,
+        model: TERRA_LANE.model,
+        schema: AUDIT_SCHEMA,
+      }),
+    { state: admissionState, worstCaseUsd: RESERVED_AUDIT_USD, kind: 'terra-audit', ledgerEntry: auditLedgerEntry },
+  )
+  auditLedgerEntry.attempts = auditOutcome.attempts
   if (!auditOutcome.ok || auditOutcome.value === null || auditOutcome.value === undefined) {
     return {
       ok: false,
       stage: 'deferred',
       deferred: true,
-      reason: 'flex capacity exhausted for the required audit',
+      reason: auditOutcome.retryRefusedByBudget
+        ? 'flex retry refused by the remaining budget for the required audit'
+        : 'flex capacity exhausted for the required audit',
       attempts: auditOutcome.attempts,
       config: CODE_RABBIT_CONFIG,
       headCommit: prepared.headCommit,

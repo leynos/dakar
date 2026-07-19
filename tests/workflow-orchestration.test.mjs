@@ -10,11 +10,13 @@ import { deterministicJitter } from '../src/workflows/dakar-review/retry.ts'
 // default; tests override `finderTitles` to craft multi-candidate packs. The
 // audit responder accepts every compacted candidate unless `auditVerdicts`
 // overrides it.
-function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures = 0, auditFailures = 0 }) {
+function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures = 0, auditFailures = 0, finderFailLabel }) {
   // Per-label transient failure counters give each finder pack and the audit
   // their own "fail N attempts then succeed" state, so the retry helper's
   // deterministic schedule can be exercised without a shared counter leaking
-  // across labels.
+  // across labels. `finderFailLabel` scopes the transient failures to a single
+  // pack so a sibling can survive on its first attempt; when it is undefined
+  // every finder pack fails `finderFailures` times (the historical behaviour).
   const finderAttempts = new Map()
   let auditAttempts = 0
   return [
@@ -25,8 +27,10 @@ function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts
     {
       match: (label) => /^luna-flex-\d+$/u.test(label),
       respond: (prompt, options) => {
+        const failuresForLabel =
+          finderFailLabel === undefined || options.label === finderFailLabel ? finderFailures : 0
         const seen = finderAttempts.get(options.label) ?? 0
-        if (seen < finderFailures) {
+        if (seen < failuresForLabel) {
           finderAttempts.set(options.label, seen + 1)
           throw new FixtureFailure(`finder transient failure ${seen + 1} for ${options.label}`)
         }
@@ -65,7 +69,7 @@ function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts
 
 async function runWorkflow({
   failedLabel, nullLabel, changedFiles = ['src/a.js'], config = '/distinct/policy.yaml', commitLength = 40, repoRoot,
-  finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures,
+  finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures, finderFailLabel,
   nullParallelSlots = [], knobs = {},
 } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
@@ -82,7 +86,7 @@ async function runWorkflow({
   const base = 'a'.repeat(commitLength)
   const prepared = { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
     commitCount: 1, changedFiles, diffStat: '1 file changed', warnings: [] }
-  const agent = buildAgentMock(defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures }),
+  const agent = buildAgentMock(defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures, finderFailLabel }),
     { prompts, agentLabels, agentCalls })
   const swallowFixtureFailure = (error) => {
     if (error instanceof FixtureFailure) return null
@@ -364,7 +368,8 @@ test('metrics are computed host-side and record the routing policy', async () =>
 })
 
 test('a Luna pack failing twice then succeeding retries on the deterministic schedule', async () => {
-  const { agentCalls, result, sleepDelays } = await runWorkflow({ finderFailures: 2 })
+  // A generous budget so every admitted retry is charged rather than refused.
+  const { agentCalls, result, sleepDelays } = await runWorkflow({ finderFailures: 2, knobs: { budgetGbp: 0.5 } })
 
   assert.equal(result.ok, true)
   // One admitted pack, three attempts against the same label.
@@ -387,7 +392,7 @@ test('a Luna pack failing twice then succeeding retries on the deterministic sch
 test('a review whose only finder pack fails is refused, not recorded as a pass', async () => {
   // Live evidence (M7, comenq 140): an adapter failure must never turn into a
   // clean zero-finding review that records the head as reviewed.
-  const { result, sleepDelays } = await runWorkflow({ failedLabel: 'luna-flex-1' })
+  const { result, sleepDelays } = await runWorkflow({ failedLabel: 'luna-flex-1', knobs: { budgetGbp: 0.5 } })
 
   assert.equal(result.ok, false, 'zero finder coverage must fail closed')
   assert.equal(result.stage, 'review')
@@ -434,7 +439,9 @@ test('a parallel slot nulled by the runtime is attributed to its pack', async ()
 })
 
 test('an audit resolving null defers without recording the head', async () => {
-  const { agentCalls, result } = await runWorkflow({ auditNulls: true })
+  // A generous budget so the audit's retries are admitted and charged, letting a
+  // null result consume all three attempts before the review defers.
+  const { agentCalls, result } = await runWorkflow({ auditNulls: true, knobs: { budgetGbp: 0.5 } })
 
   assert.equal(result.ok, false)
   assert.equal(result.stage, 'deferred')
@@ -459,7 +466,9 @@ test('a surviving pack is still audited after a sibling pack is downgraded', asy
 })
 
 test('an audit exhausting its attempts defers without recording the head', async () => {
-  const { agentCalls, result, sleepDelays } = await runWorkflow({ auditFails: true })
+  // A generous budget so the audit exhausts its retries rather than being
+  // refused one, exercising the capacity-exhaustion deferral path.
+  const { agentCalls, result, sleepDelays } = await runWorkflow({ auditFails: true, knobs: { budgetGbp: 0.5 } })
 
   assert.equal(result.ok, false)
   assert.equal(result.stage, 'deferred')
@@ -482,7 +491,8 @@ test('an audit exhausting its attempts defers without recording the head', async
 })
 
 test('an audit failing twice then succeeding recovers with the retry sleeps recorded', async () => {
-  const { agentCalls, result, sleepDelays } = await runWorkflow({ auditFailures: 2 })
+  // A generous budget so both audit retries are admitted and charged.
+  const { agentCalls, result, sleepDelays } = await runWorkflow({ auditFailures: 2, knobs: { budgetGbp: 0.5 } })
 
   assert.equal(result.ok, true)
   assert.equal(result.findings.length, 1)
@@ -508,15 +518,109 @@ test('recordInput.models is derived from the ledger of completed calls', async (
   assert.deepEqual(auditSkipped.result.recordInput.models, ['gpt-5.6-luna'])
 })
 
-test('retries share one admission: spentUsd and ledger totals are unchanged by attempts', async () => {
-  const single = await runWorkflow()
-  const retried = await runWorkflow({ finderFailures: 2, auditFailures: 2 })
+// Deterministic per-call worst cases at transactionMaxInputTokens 1 and
+// adapterOverheadTokens 13000: one Luna finder pack prices at USD 0.010375625
+// (13001 input tokens x cache-write 0.625/MTok + 750 output x 3.0/MTok) and the
+// Terra audit reserve at USD 0.09375. The retry-admission fixtures below are
+// derived from these two figures.
+const PACK_WORST_CASE_USD = (13001 * 0.625) / 1e6 + (750 * 3.0) / 1e6
+const AUDIT_RESERVE_USD = 0.09375
+const RETRY_KNOB_BASE = { transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 }
+const approx = (actual, expected, message) =>
+  assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: ${actual} vs ${expected}`)
 
+test('admitted retries are charged: spentUsd and ledger estimates grow per attempt', async () => {
+  // A budget generous enough to admit three finder attempts and three audit
+  // attempts, so every retry is charged rather than refused.
+  const generous = { budgetGbp: 0.5, ...RETRY_KNOB_BASE }
+  const single = await runWorkflow({ knobs: generous })
+  const retried = await runWorkflow({ finderFailures: 2, auditFailures: 2, knobs: generous })
+
+  assert.equal(single.result.ok, true)
   assert.equal(retried.result.ok, true)
-  assert.equal(retried.result.metrics.spentUsd, single.result.metrics.spentUsd)
-  assert.equal(retried.result.metrics.ledgerTotalEstimatedUsd, single.result.metrics.ledgerTotalEstimatedUsd)
-  // The ledger still holds exactly the two admitted calls, not one entry per attempt.
+
+  const finderOf = (r) => r.result.metrics.ledger.find((entry) => entry.lane === 'luna-flex')
+  const auditOf = (r) => r.result.metrics.ledger.find((entry) => entry.lane === 'terra-flex')
+
+  // Each ADMITTED retry charges another worst case onto the entry's estimate;
+  // three attempts means the estimate is three times the single-run value while
+  // `attempts` records the observed count.
+  approx(finderOf(retried).estimatedWorstCaseUsd, 3 * finderOf(single).estimatedWorstCaseUsd,
+    'finder estimate grows to 3x')
+  approx(auditOf(retried).estimatedWorstCaseUsd, 3 * auditOf(single).estimatedWorstCaseUsd,
+    'audit estimate grows to 3x')
+  assert.equal(finderOf(retried).attempts, 3)
+  assert.equal(auditOf(retried).attempts, 3)
+
+  const finderIncrement = 2 * finderOf(single).estimatedWorstCaseUsd
+  const auditIncrement = 2 * auditOf(single).estimatedWorstCaseUsd
+  approx(retried.result.metrics.spentUsd, single.result.metrics.spentUsd + finderIncrement + auditIncrement,
+    'spentUsd equals the single-run total plus the retry increments')
+  approx(retried.result.metrics.ledgerTotalEstimatedUsd,
+    single.result.metrics.ledgerTotalEstimatedUsd + finderIncrement + auditIncrement,
+    'ledgerTotalEstimatedUsd equals the single-run total plus the retry increments')
+  // Still exactly the two admitted calls: retries accumulate onto entries.
   assert.equal(retried.result.metrics.ledger.length, 2)
+})
+
+test('a Luna retry refused by the budget stops retrying and downgrades', async () => {
+  // Budget fits both packs' first attempts plus the audit reserve (2P + R =
+  // USD 0.11450) but not a single Luna retry (which would need 3P + R =
+  // USD 0.12488). budgetGbp 0.093 -> USD 0.11811 sits between the two.
+  const budgetUsd = 0.093 * 1.27
+  assert.ok(budgetUsd >= 2 * PACK_WORST_CASE_USD + AUDIT_RESERVE_USD, 'first attempts must fit')
+  assert.ok(budgetUsd < 3 * PACK_WORST_CASE_USD + AUDIT_RESERVE_USD, 'one retry must not fit')
+
+  const { result } = await runWorkflow({
+    changedFiles: ['src/a.js', 'src/b.js'],
+    // Only the first pack fails transiently; its sibling survives on attempt 1.
+    finderFailures: 2,
+    finderFailLabel: 'luna-flex-1',
+    knobs: { budgetGbp: 0.093, transactionMaxFiles: 1, ...RETRY_KNOB_BASE },
+  })
+
+  assert.equal(result.ok, true, 'the surviving sibling keeps the review alive')
+  assert.equal(result.lunaDowngrades.length, 1)
+  const downgrade = result.lunaDowngrades[0]
+  assert.equal(downgrade.taskId, 'luna-flex-1')
+  assert.ok(downgrade.attempts < 3, `budget-refused downgrade should stop before exhaustion, got ${downgrade.attempts}`)
+  assert.match(downgrade.reason, /budget/u)
+  assert.equal(result.recordInput, undefined, 'a budget-downgraded review must not be recordable')
+  assert.equal(result.recordWithheld.lunaDowngradeCount, 1)
+  assert.ok(result.metrics.spentUsd <= budgetUsd, `spentUsd ${result.metrics.spentUsd} must not exceed budget ${budgetUsd}`)
+})
+
+test('an audit retry refused by the budget defers', async () => {
+  // Budget fits one finder pack plus one audit attempt (P + R = USD 0.10413)
+  // but not a second audit attempt (P + 2R = USD 0.19788). budgetGbp 0.11 ->
+  // USD 0.1397 admits the audit once, then refuses its retry.
+  const budgetUsd = 0.11 * 1.27
+  assert.ok(budgetUsd >= PACK_WORST_CASE_USD + AUDIT_RESERVE_USD, 'the audit must be admitted once')
+  assert.ok(budgetUsd < PACK_WORST_CASE_USD + 2 * AUDIT_RESERVE_USD, 'the audit retry must not fit')
+
+  const { result } = await runWorkflow({
+    auditFailures: 2,
+    knobs: { budgetGbp: 0.11, ...RETRY_KNOB_BASE },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.stage, 'deferred')
+  assert.equal(result.deferred, true)
+  // The first audit attempt is admitted and runs; its refused retry is attempt
+  // 2, so the helper returns the observed count of 1.
+  assert.equal(result.attempts, 1)
+  assert.match(result.reason, /budget/u)
+  assert.equal(result.recordInput, undefined)
+  assert.ok(result.metrics.spentUsd <= budgetUsd, `spentUsd ${result.metrics.spentUsd} must not exceed budget ${budgetUsd}`)
+})
+
+test('a retried run never lets spentUsd exceed the hard budget', async () => {
+  const generous = { budgetGbp: 0.5, ...RETRY_KNOB_BASE }
+  const { result } = await runWorkflow({ finderFailures: 2, auditFailures: 2, knobs: generous })
+
+  assert.equal(result.ok, true)
+  assert.ok(result.metrics.spentUsd <= result.metrics.budgetUsd,
+    `spentUsd ${result.metrics.spentUsd} must not exceed budgetUsd ${result.metrics.budgetUsd}`)
 })
 
 test('retry jitter seeds are scoped by repository root as well as head', async () => {
@@ -524,8 +628,8 @@ test('retry jitter seeds are scoped by repository root as well as head', async (
   // (jitter 10 versus 5 at attempt 2), so otherwise identical reviews of
   // different repositories never share a backoff schedule.
   const head = 'b'.repeat(40)
-  const runA = await runWorkflow({ repoRoot: '/repo-a', finderFailures: 1 })
-  const runB = await runWorkflow({ repoRoot: '/repo-b', finderFailures: 1 })
+  const runA = await runWorkflow({ repoRoot: '/repo-a', finderFailures: 1, knobs: { budgetGbp: 0.5 } })
+  const runB = await runWorkflow({ repoRoot: '/repo-b', finderFailures: 1, knobs: { budgetGbp: 0.5 } })
 
   const jitterA = deterministicJitter(`/repo-a:${head}:luna-flex-1`, 2, 10)
   const jitterB = deterministicJitter(`/repo-b:${head}:luna-flex-1`, 2, 10)

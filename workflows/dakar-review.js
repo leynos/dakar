@@ -722,10 +722,16 @@ function defaultTaskGraph(config) {
 }
 
 // src/workflows/dakar-review/main.ts
-async function callWithFlexRetry(retryConfig, callId, invoke) {
+async function callWithFlexRetry(retryConfig, callId, invoke, retryAdmission) {
   let lastError;
   for (let attempt = 1; attempt <= retryConfig.flexAttempts; attempt += 1) {
     if (attempt >= 2) {
+      const decision = admit(retryAdmission.state, retryAdmission.worstCaseUsd, retryAdmission.kind);
+      if (!decision.admitted) {
+        return { ok: false, attempts: attempt - 1, error: lastError, retryRefusedByBudget: true };
+      }
+      retryAdmission.state.spentUsd += retryAdmission.worstCaseUsd;
+      retryAdmission.ledgerEntry.estimatedWorstCaseUsd += retryAdmission.worstCaseUsd;
       await sleep(backoffSeconds(retryConfig, callId, attempt) * 1e3);
     }
     try {
@@ -831,6 +837,10 @@ async function workflowMain() {
       budgetUsd: BUDGET_USD,
       pricingTableVersion: PRICING_TABLE.version,
       reservedAuditUsd: RESERVED_AUDIT_USD,
+      // Admission reserves only ONE audit attempt's worst case; this chain-level
+      // figure surfaces the audit's full retry cost to operators without
+      // reserving it against the budget.
+      reservedAuditChainUsd: RESERVED_AUDIT_USD * FLEX_ATTEMPTS,
       flexLimits: {
         maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
         transactionMaxFiles: TRANSACTION_MAX_FILES,
@@ -951,19 +961,30 @@ async function workflowMain() {
   }
   phase("Review");
   const reviewOutcomes = await parallel(
-    admittedPacks.map((task) => async () => ({
-      task,
-      // Scope the jitter seed per review (head commit) so concurrent reviews of
-      // different heads decorrelate; the ledger callId and agent label stay the
-      // bare task id.
-      outcome: await callWithFlexRetry(RETRY_CONFIG, `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`, () => agent(taskPrompt(task, prepared, promptContext), {
-        label: task.taskId,
-        phase: "Review",
-        adapter: task.adapter,
-        model: task.model,
-        schema: CANDIDATE_SCHEMA
-      }))
-    }))
+    admittedPacks.map((task) => async () => {
+      const ledgerEntry = ledger.find((item) => item.callId === task.taskId);
+      return {
+        task,
+        // Scope the jitter seed per review (head commit) so concurrent reviews of
+        // different heads decorrelate; the ledger callId and agent label stay the
+        // bare task id.
+        outcome: await callWithFlexRetry(
+          RETRY_CONFIG,
+          `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`,
+          () => agent(taskPrompt(task, prepared, promptContext), {
+            label: task.taskId,
+            phase: "Review",
+            adapter: task.adapter,
+            model: task.model,
+            schema: CANDIDATE_SCHEMA
+          }),
+          // A finder retry keeps the 'luna-transaction' inequality (its worst
+          // case plus the standing audit reservation) because the audit has not
+          // run yet; its ledger entry accumulates each admitted attempt.
+          { state: admissionState, worstCaseUsd: ledgerEntry?.estimatedWorstCaseUsd ?? 0, kind: "luna-transaction", ledgerEntry }
+        )
+      };
+    })
   );
   const lunaDowngrades = [];
   const taskResults = [];
@@ -988,7 +1009,7 @@ async function workflowMain() {
     } else {
       lunaDowngrades.push({
         taskId: task.taskId,
-        reason: "Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.",
+        reason: outcome.retryRefusedByBudget ? "Finder pack's flex retry refused by the remaining budget; downgraded to partial coverage." : "Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.",
         attempts: outcome.attempts
       });
     }
@@ -1048,7 +1069,7 @@ async function workflowMain() {
       };
     }
     admissionState.spentUsd += RESERVED_AUDIT_USD;
-    ledger.push({
+    const auditLedgerEntry = {
       callId: "audit",
       phase: "Audit",
       lane: "terra-flex",
@@ -1058,22 +1079,27 @@ async function workflowMain() {
       estimatedWorstCaseUsd: RESERVED_AUDIT_USD,
       pricingTableVersion: PRICING_TABLE.version,
       attempts: 1
-    });
-    const auditOutcome = await callWithFlexRetry(RETRY_CONFIG, `${REPO_ROOT}:${prepared.headCommit}:audit`, () => agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
-      label: "audit",
-      phase: "Audit",
-      adapter: TERRA_LANE.adapter,
-      model: TERRA_LANE.model,
-      schema: AUDIT_SCHEMA
-    }));
-    const auditLedgerEntry = ledger.find((item) => item.callId === "audit");
-    if (auditLedgerEntry) auditLedgerEntry.attempts = auditOutcome.attempts;
+    };
+    ledger.push(auditLedgerEntry);
+    const auditOutcome = await callWithFlexRetry(
+      RETRY_CONFIG,
+      `${REPO_ROOT}:${prepared.headCommit}:audit`,
+      () => agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+        label: "audit",
+        phase: "Audit",
+        adapter: TERRA_LANE.adapter,
+        model: TERRA_LANE.model,
+        schema: AUDIT_SCHEMA
+      }),
+      { state: admissionState, worstCaseUsd: RESERVED_AUDIT_USD, kind: "terra-audit", ledgerEntry: auditLedgerEntry }
+    );
+    auditLedgerEntry.attempts = auditOutcome.attempts;
     if (!auditOutcome.ok || auditOutcome.value === null || auditOutcome.value === void 0) {
       return {
         ok: false,
         stage: "deferred",
         deferred: true,
-        reason: "flex capacity exhausted for the required audit",
+        reason: auditOutcome.retryRefusedByBudget ? "flex retry refused by the remaining budget for the required audit" : "flex capacity exhausted for the required audit",
         attempts: auditOutcome.attempts,
         config: CODE_RABBIT_CONFIG,
         headCommit: prepared.headCommit,

@@ -87,6 +87,13 @@ test('dry-run reports the Flex lanes, budget, and reserved audit estimate', () =
   assert.equal(result.pricingTableVersion, '2026-07-18')
   // Reserved Terra audit worst case: 48000 x 1.5625/1e6 + 2500 x 7.5/1e6 = 0.09375.
   assert.ok(Math.abs(result.reservedAuditUsd - 0.09375) < 1e-9, `reservedAuditUsd was ${result.reservedAuditUsd}`)
+  // The chain-level worst case surfaces the full retry cost of the audit for
+  // operators without admission reserving it: one attempt's reserve times the
+  // Flex attempt count.
+  assert.ok(
+    Math.abs(result.reservedAuditChainUsd - result.reservedAuditUsd * result.flexRetry.flexAttempts) < 1e-9,
+    `reservedAuditChainUsd was ${result.reservedAuditChainUsd}`,
+  )
   assert.equal(result.flexLimits.maxLunaFlexCalls, 4)
   assert.equal(result.flexLimits.transactionMaxFiles, 5)
   assert.equal(result.flexLimits.transactionMaxInputTokens, 12000)

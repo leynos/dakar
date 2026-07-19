@@ -622,6 +622,30 @@ the conflict in `Decision Log`, and escalate.
   Rationale: operator direction, 2026-07-19 — the reviewed-head
   invariant means a recorded head was completely reviewed.
   Date/Author: 2026-07-19, implementing agent, per operator direction.
+- Decision (supersession): retries are no longer free — each retry
+  attempt is admitted against the remaining budget before it runs and
+  every admitted attempt is charged to the ledger (the entry's
+  `estimatedWorstCaseUsd` accumulates per admitted attempt; `attempts`
+  stays the observed count). A budget-refused retry stops retrying:
+  the finder pack downgrades and the required audit defers, both with
+  reasons naming the budget stop, and both non-recordable under the
+  full-coverage rule. The upfront reserve-first audit reservation
+  remains one attempt's worst case so defaults keep working; the dry
+  run additionally reports `reservedAuditChainUsd` (reservation times
+  `flexAttempts`, 0.28125 USD at defaults) as the operator-visible
+  chain ceiling. This supersedes the M5 no-re-charge decision and
+  resolves the round-2 reviewer request for retry-chain accounting via
+  the incremental design the operator selected over naive upfront
+  multiplication (which would have refused every default-budget
+  review: 0.094 x 3 = 0.281 USD against a 0.127 USD budget). Charged
+  retries are unaffordable under the default budget at default token
+  sizes — a deliberate property: under budget pressure the review
+  degrades to fewer retries, then partial coverage, then deferral,
+  never past the ceiling.
+  Rationale: the hard ceiling must bound actual worst-case spend
+  including retries, without repealing the ordinary budget or the
+  retry policy as upfront chain reservation would.
+  Date/Author: 2026-07-19, implementing agent, per operator direction.
 - Escalation: M0 reached its Ambiguity tolerance — Codex CLI 0.144.4
   provably does not transmit `service_tier`, so the Codex adapter path
   cannot reach Flex pricing. Options presented to the operator:

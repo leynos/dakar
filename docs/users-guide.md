@@ -22,7 +22,7 @@ On each repeated installer run, `install.sh` first executes
 installation from leaving duplicate `dakar` entries while keeping the shared
 Bun lockfile and other global packages intact.
 
-If you prefer to call Bun directly, use an absolute path or `file:` URL:
+For direct Bun invocation, use an absolute path or `file:` URL:
 
 ```bash
 bun install -g "$PWD"
@@ -492,6 +492,14 @@ an unaffordable review refuses outright (`stage: "admission"`) rather than
 spending on finders it cannot afford to conclude. Refused finder packs are
 listed in `admissionRefusals` and never consume any budget.
 
+Retries are not free: each retry attempt is admitted against the remaining
+budget before it runs, and every admitted attempt is charged to the ledger.
+The reserve-first audit reservation stays one attempt's worst case, so the
+ordinary defaults keep working, while the hard ceiling still bounds the
+actual worst-case spend including retries. A retry refused by the remaining
+budget stops retrying: the finder pack downgrades or the audit defers rather
+than exceeding the ceiling (see "Retries, downgrades, and deferral" below).
+
 Because admission refuses any finder pack beyond the ordinary budget, a gate
 reviewing a large task branch may need to raise `--budget-gbp` to admit more
 finder packs and so cover the full diff. The ordinary default deliberately
@@ -502,7 +510,10 @@ that warrant the extra coverage.
 
 - `ledger`: one entry per admitted call, with `lane`, `model`,
   `serviceTier`, `reasoningEffort`, `estimatedWorstCaseUsd`,
-  `pricingTableVersion`, and `attempts`.
+  `pricingTableVersion`, and `attempts`. `estimatedWorstCaseUsd` is the
+  total admitted for the call across its attempts, so a call that retried
+  carries the summed worst case of each admitted attempt while `attempts`
+  records the observed count.
 - `ledgerTotalEstimatedUsd`: the sum of admitted worst-case estimates.
 - `budgetUsd`, `reservedAuditUsd`, and `spentUsd`: the admission trail for
   this run.
@@ -518,12 +529,26 @@ that warrant the extra coverage.
 Flex calls retry under bounded exponential backoff (`flexAttempts`, default
 `3`; backoff from `flexInitialBackoffSeconds` (`30`) up to
 `flexMaxBackoffSeconds` (`120`), with up to `flexJitterSeconds` (`10`) of
-deterministic jitter). A finder pack that exhausts its retries downgrades:
-it is recorded in `lunaDowngrades` and `metrics.lunaDowngradeCount`, and the
-review continues with the surviving candidates. An audit call that
-exhausts its retries defers the whole review instead: the result is
-`ok: false`, `stage: "deferred"`, no `recordInput` is present, and the CLI
-exits non-zero without recording anything, so the head remains unreviewed.
+deterministic jitter). Each retry attempt is admitted against the remaining
+budget before it runs and charged when admitted, so retries can stop for
+either of two reasons: exhausting the attempt count, or the remaining budget
+refusing the next attempt.
+
+A finder pack that exhausts its retries — or whose next retry the budget
+refuses — downgrades: it is recorded in `lunaDowngrades` and
+`metrics.lunaDowngradeCount`, and the review continues with the surviving
+candidates. An audit call that exhausts its retries, or whose next retry the
+budget refuses, defers the whole review instead: the result is `ok: false`,
+`stage: "deferred"`, no `recordInput` is present, and the CLI exits non-zero
+without recording anything, so the head remains unreviewed. A budget-refused
+retry keeps the actual spend within the hard ceiling rather than overrunning
+it; the deferral or downgrade reason names the budget so operators can tell
+it apart from a capacity exhaustion.
+
+The dry run reports `reservedAuditChainUsd` alongside `reservedAuditUsd`: the
+former is the audit's chain-level worst case (one attempt's reserve times
+`flexAttempts`), shown so operators can see the full retry cost, while
+admission only ever reserves the single-attempt `reservedAuditUsd`.
 
 A deferred review retried later re-pays its Luna finder calls: Luna output
 is not cached across separate `dakar-review` invocations, so a retry after
