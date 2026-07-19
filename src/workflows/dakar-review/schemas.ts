@@ -1,6 +1,14 @@
-/** @file Define JSON Schemas for every structured ODW agent hand-off. */
+/**
+ * Define JSON Schemas for every structured ODW agent hand-off.
+ *
+ * @module
+ */
 
-/** Validates structured configuration-resolution results from the Config phase. */
+/**
+ * Validates structured configuration-resolution results from the Config phase.
+ *
+ * @internal
+ */
 export const CONFIG_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -11,7 +19,11 @@ export const CONFIG_SCHEMA = {
   required: ['ok'],
 }
 
-/** Validates review-range and state metadata returned by the Prepare phase. */
+/**
+ * Validates review-range and state metadata returned by the Prepare phase.
+ *
+ * @internal
+ */
 export const PREPARE_SCHEMA = {
   type: 'object', additionalProperties: true,
   properties: {
@@ -24,7 +36,11 @@ export const PREPARE_SCHEMA = {
   required: ['ok'],
 }
 
-/** Validates bounded candidate findings returned by each Review task. */
+/**
+ * Validates bounded candidate findings returned by each Review task.
+ *
+ * @internal
+ */
 export const CANDIDATE_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -42,7 +58,11 @@ export const CANDIDATE_SCHEMA = {
   required: ['taskId', 'summary', 'candidates', 'metrics'],
 }
 
-/** Validates one adversarial verification decision for a candidate finding. */
+/**
+ * Validates one adversarial verification decision for a candidate finding.
+ *
+ * @internal
+ */
 export const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -54,7 +74,11 @@ export const VERDICT_SCHEMA = {
   required: ['candidateId', 'status', 'reason', 'evidenceChecked'],
 }
 
-/** Validates the final report and presentation metadata from synthesis. */
+/**
+ * Validates the final report and presentation metadata from synthesis.
+ *
+ * @internal
+ */
 export const SYNTHESIS_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -72,7 +96,11 @@ export const SYNTHESIS_SCHEMA = {
   required: ['verdict', 'summary', 'reportMarkdown', 'findings', 'metrics'],
 }
 
-/** Validates review-history recording success or diagnostic output. */
+/**
+ * Validates review-history recording success or diagnostic output.
+ *
+ * @internal
+ */
 export const RECORD_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: { ok: { type: 'boolean' }, stateFile: { type: 'string' }, headCommit: { type: 'string' },

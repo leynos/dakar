@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 20
     env:
       MERMAN_CLI_VERSION: '0.7.0'
+      ODW_GIT_REV: '856f2b9fd83d454fb7256bbad7096742db853ad1'
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
@@ -48,3 +49,20 @@ jobs:
           cargo +1.95.0 install merman-cli --version "=${MERMAN_CLI_VERSION}" --locked
       - name: Validate diagrams
         run: make nixie
+      - name: Install Node.js dependencies
+        run: npm ci
+      - name: Install the ODW CLI
+        # odw is not published to npm and ships no built dist in git, so
+        # build it from a pinned upstream commit; `make check`'s typecheck
+        # stage runs an `odw run --args '{"dryRun":true}'` contract check.
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/xz1220/open-dynamic-workflows /tmp/odw
+          git -C /tmp/odw checkout "${ODW_GIT_REV}"
+          cd /tmp/odw
+          npm ci
+          npm run build
+          npm install --global .
+          odw --version
+      - name: Run commit gates
+        run: make check

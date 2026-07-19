@@ -1,26 +1,47 @@
-/** @file Validate workflow arguments and resolve immutable runtime configuration. */
+/**
+ * Validate workflow arguments and resolve immutable runtime configuration.
+ *
+ * @module
+ */
 
 import { adapterForReasoning, baseModel, DEFAULT_REVIEW_MODELS, isReasoning, modelName, reasoningFromModel } from './model-routing.ts'
 import type { AgentInstructions, ModelSpec, Reasoning, UnknownObject } from './types.ts'
 
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
+  /** Validated trusted-base instructions, or null when the raw argument was absent or malformed. */
   readonly agentInstructions: AgentInstructions | null
+  /** Non-blank base ref to diff against, defaulting to `origin/main`. */
   readonly baseRef: string
+  /** Raw config argument as supplied, defaulting to empty (auto-resolution) when blank. */
   readonly configArg: string
+  /** Whether the workflow should short-circuit with the dry-run contract instead of calling agents. */
   readonly dryRun: boolean
+  /** Non-blank head ref to review up to, defaulting to `HEAD`. */
   readonly headRef: string
+  /** Global cap on normalized candidates, clamped to a positive integer no greater than 1,000. */
   readonly maxCandidates: number
+  /** Cap on accepted findings retained in the final report, clamped to a positive integer no greater than 200. */
   readonly maxFindings: number
+  /** Cap on review tasks the task graph may schedule, clamped to a positive integer no greater than 64. */
   readonly maxTasks: number
+  /** Non-blank repository root, defaulting to `.` when blank. */
   readonly repoRoot: string
+  /** Validated model assignments used for task routing; falls back to `DEFAULT_REVIEW_MODELS` when none are configured. */
   readonly reviewModels: readonly Readonly<ModelSpec>[]
+  /** Non-blank XDG state root used to locate review-history state, defaulting to empty when unset. */
   readonly stateRoot: string
+  /** Codex adapter selected for the synthesis reasoning level. */
   readonly synthesisAdapter: string
+  /** Base synthesis model identifier with any reasoning suffix stripped. */
   readonly synthesisModelBase: string
+  /** Full `model/reasoning` identifier used for synthesis agent calls. */
   readonly synthesisModelName: string
+  /** Reasoning level applied to synthesis calls, resolved from the requested value or defaulting to `high`. */
   readonly synthesisReasoning: Reasoning
+  /** Fixed ordered set of task kinds the workflow can classify changed files into. */
   readonly taskKinds: readonly string[]
+  /** Fixed identifier for the current task-graph strategy, surfaced in run metrics. */
   readonly workflowVersion: string
 }
 

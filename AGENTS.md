@@ -16,9 +16,14 @@ TypeScript or JavaScript assumptions do not override the ODW contract.
   use explicit `.ts` extensions for sibling imports, and use erasable TypeScript
   syntax. Do not introduce CommonJS, runtime dependencies, `Date.now()`,
   `Math.random()`, or argument-less `new Date()` calls.
-- Begin every JavaScript or TypeScript module with a `/** @file … */` comment
-  describing its purpose and responsibilities. Prefer small cohesive functions,
-  precise names, immutable data, and comments that explain why rather than what.
+- Begin every JavaScript or TypeScript module with a `/** … @module */`
+  comment (a top JSDoc block ending with TypeDoc's bare `@module` tag)
+  describing its purpose and responsibilities. `make docs-check` (TypeDoc's
+  `notDocumented` validation, zero tolerance) enforces this and a JSDoc block
+  on every exported declaration; JSON Schema constants are tagged `@internal`
+  so their `description` fields remain the per-field documentation. Prefer
+  small cohesive functions, precise names, immutable data, and comments that
+  explain why rather than what.
 - `bin/dakar-review.mjs` is the user-facing CLI. Keep stdout reserved for the
   final JSON or Markdown result. Progress, telemetry, run ids, and recovery
   warnings belong on stderr.

@@ -7,7 +7,7 @@
     "dakar-review": "./bin/dakar-review.mjs"
   },
   "scripts": {
-    "docstrings": "node scripts/check-docstrings.mjs",
+    "docs:check": "typedoc --options typedoc.json",
     "markdownlint": "markdownlint-cli2 $(git ls-files '*.md')",
     "nixie": "nixie $(git ls-files '*.md')",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -22,6 +22,7 @@
     "esbuild": "0.28.1",
     "fast-check": "4.9.0",
     "markdownlint-cli2": "0.22.1",
+    "typedoc": "0.28.20",
     "typescript": "6.0.3"
   }
 }

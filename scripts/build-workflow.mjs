@@ -1,4 +1,8 @@
-/** @file Build the canonical ODW artefact from the typed Dakar source tree. */
+/**
+ * Build the canonical ODW artefact from the typed Dakar source tree.
+ *
+ * @module
+ */
 
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -24,10 +28,17 @@ const RUNTIME_MODULES = [
   'task-graph.ts',
 ]
 
+/**
+ * Signals a violated ODW build invariant (e.g. an orphan module, a malformed
+ * `meta` banner, or a stale artefact) with a machine-readable `code` so
+ * callers such as the CLI entry point can report the failure kind precisely.
+ */
 export class WorkflowBuildError extends Error {
   constructor(code, message) {
     super(message)
+    /** Always `'WorkflowBuildError'`, distinguishing this from other thrown errors. */
     this.name = 'WorkflowBuildError'
+    /** Machine-readable code identifying which build invariant was violated. */
     this.code = code
   }
 }

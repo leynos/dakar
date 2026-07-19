@@ -1,4 +1,8 @@
-/** @file Normalize, cap, verify, and reduce candidate review findings. */
+/**
+ * Normalize, cap, verify, and reduce candidate review findings.
+ *
+ * @module
+ */
 
 import type { BoundCandidateResult, Candidate, Discarded, RawCandidate, Verdict } from './types.ts'
 
@@ -26,7 +30,16 @@ export function candidateKey(candidate: RawCandidate): string {
  * @param right - Second severity-bearing value.
  * @returns A negative, zero, or positive comparator result.
  */
-export function bySeverity<T extends { candidateId?: string; line?: number; path?: string; severity?: string }>(left: T, right: T): number {
+export function bySeverity<T extends {
+  /** Stable identity used as the final tie-breaker so ties sort deterministically. */
+  candidateId?: string
+  /** Secondary tie-breaker, applied after path, before candidate id. */
+  line?: number
+  /** Primary tie-breaker once severity is equal. */
+  path?: string
+  /** Ranked via `SEVERITY_RANK`; unrecognized or missing severities sort last. */
+  severity?: string
+}>(left: T, right: T): number {
   const severity = (SEVERITY_RANK[left.severity || ''] ?? 4) - (SEVERITY_RANK[right.severity || ''] ?? 4)
   if (severity !== 0) return severity
   const leftPath = String(left.path || '')
