@@ -279,11 +279,17 @@ ADR 002 implements this section's original ledger aspiration (below) as
 `admission.ts::admit()`. Each `LedgerEntry` carries `callId`, `phase`,
 `lane` (`luna-flex`, `terra-flex`, or `standard`), `model`, `serviceTier`,
 `reasoningEffort`, `estimatedWorstCaseUsd`, `pricingTableVersion`, and
-`attempts`, plus an optional `reportedUsage` (`inputTokens`,
-`cachedInputTokens`, `outputTokens`) and `reportedUsd` that the CLI or
-harness enrich after the workflow returns; estimated and reported fields
-stay distinct, satisfying this section's original requirement that
-estimates be marked as estimates. `metrics` also carries
+`attempts`; estimated and reported fields stay distinct, satisfying this
+section's original requirement that estimates be marked as estimates.
+Reported usage is not attached to individual ledger entries. Instead, the
+CLI reads the `pi` extension's per-call usage log and attaches it to the
+top level of the result: `metrics.reportedUsage` is an ordered array of
+`{ model, usage: { input, output, cacheRead, cacheWrite } }` records, one
+per model call, and `metrics.reportedTokens` is the summed totals across
+those records using the same four keys. The live harness prices those
+records per lane (`scripts/live-review-harness.mjs::priceReportedUsage`)
+and exposes a top-level `reportedUsd` in its own summary output; that
+figure is not part of the workflow result. `metrics` also carries
 `ledgerTotalEstimatedUsd` (the sum of admitted worst-case estimates),
 `budgetUsd`, `reservedAuditUsd`, `spentUsd`, `pricingTableVersion`, and
 `routingPolicy` (the sole live value is `deterministic-flex-v1`).

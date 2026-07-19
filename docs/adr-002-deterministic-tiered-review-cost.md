@@ -272,21 +272,50 @@ under the worst-case output estimate.
 > extension that injects `service_tier = "flex"` through pi's documented
 > `before_provider_request` hook, and a Dakar-owned provider catalogue.
 > A live probe confirmed the applied Flex tier and per-call usage
-> reporting. The host-enforcement, telemetry, and contract-test
-> requirements below apply unchanged to the pi adapters; the JSON below
-> is retained as the falsified original for the record. See the
-> `api-key-support` ExecPlan, milestones M0 and M4, for evidence and the
-> adapter specification.
+> reporting. The current adapter contract below reflects the pi path;
+> the falsified Codex material is preserved in the historical
+> subsection at the end of this section. See the `api-key-support`
+> ExecPlan, milestones M0 and M4, for evidence and the adapter
+> specification.
 
-Codex CLI exposes `service_tier` as a configuration value and accepts per-call
-configuration overrides through `-c key=value`.[^3] Dakar therefore does not
-need a bespoke Responses API wrapper solely to select Flex.
+The ODW configuration defines three pi adapters, each pinning its lane's
+model and reasoning effort:
 
-The ODW configuration must define distinct Luna Flex and Terra Flex adapters,
-each pinning the reasoning effort configured for its lane. A single shared Flex
-adapter is not viable while the adapter flag surface exposes only the model
-argument, because it could not honour the differing per-lane reasoning
-defaults. Representative adapters are:
+- `pi-luna-flex` — `gpt-5.6-luna` at low reasoning, the default finder
+  lane;
+- `pi-luna-flex-medium` — `gpt-5.6-luna` at medium reasoning, the
+  pre-registered finder escalation lane; and
+- `pi-terra-flex` — `gpt-5.6-terra` at medium reasoning, the issue-set
+  audit lane.
+
+Each adapter runs pi in print mode (`pi -p --no-session`) against the
+Dakar-owned `openai-flex` provider catalogue (`adapters/pi/models.json`),
+with the prompt on stdin. The Dakar-owned `flex-tier` extension
+(`adapters/pi/extensions/flex-tier.ts`), auto-loaded from the
+`PI_CODING_AGENT_DIR` the CLI sets, injects `service_tier = "flex"`
+through pi's documented `before_provider_request` hook and reports each
+call's provider usage through the `DAKAR_USAGE_LOG` file channel. Distinct
+per-lane adapters remain necessary because the adapter flag surface
+exposes only the model argument and could not otherwise honour the
+differing per-lane reasoning defaults.
+
+The host must record the requested service tier, model, reasoning effort,
+and provider-reported usage for every call. Adapter contract tests must
+prove the committed adapter commands, catalogue, and extension keep their
+load-bearing shape, and wire validation must prove the provider request
+carries `service_tier = "flex"` on the pi path (the recorded
+capture-server and live-probe transcripts are the authoritative
+evidence).
+
+### Historical: the falsified Codex CLI adapter contract
+
+The original decision assumed Codex CLI exposed `service_tier` as a
+configuration value honoured through `-c key=value` overrides,[^3] and
+therefore that Dakar needed no bespoke Responses API wrapper to select
+Flex. Empirical verification falsified this: no tested Codex version
+transmits the field from `exec` mode. The representative adapters below
+are retained solely as the historical record of the falsified design and
+must not be read as a current implementation requirement.
 
 ```json
 {
@@ -334,10 +363,6 @@ defaults. Representative adapters are:
   }
 }
 ```
-
-The host must record the requested service tier, model, reasoning effort, and
-provider-reported usage for every call. Adapter contract tests must prove that
-`service_tier = "flex"` reaches the Codex effective configuration.
 
 ## Flex scheduling and failure policy
 

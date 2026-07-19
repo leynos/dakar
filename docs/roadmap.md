@@ -453,10 +453,21 @@ real branches. See ADR 002 §"Verification".
   - Requires 7.4.2 and 3.3.1.
   - Success: the acceptance criteria in ADR 002 §"Verification" hold. The
     deterministic-flex route is already the sole live route in this
-    repository (the Decision Log in `docs/execplans/api-key-support.md`
-    records the deliberate collapse of ADR 002 migration step 10), so this
-    comparison validates review quality retrospectively against the
-    `legacy-route-final` tag rather than gating a default flip.
+    repository: ADR 002's staged default-cutover guideline (migration step
+    10) was superseded by the recorded decision in the Decision Log of
+    `docs/execplans/api-key-support.md`, so this comparison validates
+    review quality retrospectively against the `legacy-route-final` tag
+    rather than gating a default flip.
+- [ ] 7.5.4. Add a knob permitting partial-coverage reviews to record their
+  head explicitly.
+  - Requires 7.4.2.
+  - Success: recording now requires complete planned finder coverage (zero
+    truncated files, zero admission refusals, zero downgrades — the
+    operator-directed tightening of 2026-07-19); a future opt-in knob (for
+    example `allowPartialCoverageRecord`) would let an operator accept the
+    coverage gap deliberately, with the partial-coverage evidence preserved
+    in the recorded metrics. The earlier downgrade-and-continue recording
+    design is retained in history for context.
 
 ### 7.6. Gate adoption in df12-build
 

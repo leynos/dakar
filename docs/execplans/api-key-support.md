@@ -1043,16 +1043,22 @@ make workflow-build && make workflow-freshness
 ```
 
 M0 probes (from the scratchpad directory; the key never appears in the
-command line — the direct probe reads it into the process environment):
+command line — the header-file form below keeps it out of curl's argv.
+The original probe, recorded before this correction, used the
+argv-visible `-H "Authorization: Bearer $OPENAI_API_KEY"` form; the
+header-file form is the supported pattern):
 
 ```sh
-OPENAI_API_KEY="$(cat ~/dakar-api-key.txt)" curl -s \
-  https://api.openai.com/v1/responses \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
+umask 077
+printf 'Authorization: Bearer %s\n' "$(cat ~/dakar-api-key.txt)" \
+  > "$SCRATCHPAD/auth-header"
+curl -s https://api.openai.com/v1/responses \
+  -H @"$SCRATCHPAD/auth-header" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-5.6-luna","service_tier":"flex",
        "input":"Reply with the single word: pong"}' \
   > flex-control.json
+rm -f "$SCRATCHPAD/auth-header"
 
 CODEX_API_KEY="$(cat ~/dakar-api-key.txt)" codex exec --json \
   --skip-git-repo-check --sandbox read-only \
@@ -1075,8 +1081,9 @@ node scripts/live-review-harness.mjs \
 ```
 
 Expected: stderr shows telemetry; `$SCRATCHPAD/results/comenq-140.json`
-contains the result with `metrics.ledger` rows and
-`metrics.ledgerTotalReportedUsd` below the target.
+contains the result with `metrics.ledger` rows and the top-level
+`metrics.reportedUsage`/`metrics.reportedTokens` records; the harness
+summary's `reportedUsd` is the acceptance number, below the target.
 
 ## Validation and acceptance
 
@@ -1343,10 +1350,14 @@ where `VERDICT_SCHEMA_WITH_CLUSTER` is the existing per-item
 `VERDICT_SCHEMA` plus an optional `clusterId` string. The workflow result
 gains additive `metrics.ledger: LedgerEntry[]`,
 `metrics.ledgerTotalEstimatedUsd` (sum of admitted worst-case estimates,
-the admission audit trail), `metrics.ledgerTotalReportedUsd` (sum of
-`reportedUsd`; the M7 acceptance number), and `metrics.routingPolicy`.
-The workflow echoes `headCommit`, `reviewBase`, `commitCount`, and
-`changedFiles` from `args.prepared` back in its result unchanged.
+kept as the admission audit trail), and `metrics.routingPolicy`. The
+reported sum in USD is not part of the workflow result: it is computed
+by the harness (`priceReportedUsage` in
+`scripts/live-review-harness.mjs`) from the CLI-attached
+`metrics.reportedUsage` records, and surfaced as the harness summary's
+`reportedUsd` (the M7 acceptance number). The workflow echoes
+`headCommit`, `reviewBase`, `commitCount`, and `changedFiles` from
+`args.prepared` back in its result unchanged.
 
 ## Revision note (2026-07-18)
 
@@ -1383,3 +1394,20 @@ cwd-fragile extension path) and added the DAKAR_USAGE_LOG reported-usage
 channel; the live ledger, hand assessments, and final retrospective are
 recorded above. Deferred work lives in roadmap 7.5 and the retrospective
 lessons.
+
+## Revision note (2026-07-19, documentation contract alignment)
+
+Corrected two documentation drifts against the as-built system, no code
+changed. `metrics.ledgerTotalReportedUsd` never existed on the workflow
+result; the reported-usage contract is the top-level
+`metrics.reportedUsage`/`metrics.reportedTokens` records the CLI attaches
+from the `pi` extension's usage log, with the reported USD figure
+(`reportedUsd`) computed by the live harness's `priceReportedUsage` and
+surfaced only in its summary output. References to
+`metrics.ledgerTotalReportedUsd` in the M7 expected output and the
+Interfaces section are corrected accordingly, matching
+`docs/dakar-review-design.md` §8. Separately, the M0 curl probe example
+is corrected to keep the API key out of curl's argv via the header-file
+form, consistent with the surrounding never-on-a-command-line guidance;
+the original probe transcript, recorded before this correction, used the
+argv-visible header form.

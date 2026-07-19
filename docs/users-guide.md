@@ -70,7 +70,8 @@ Set `OPENAI_API_KEY` before running a live review. The default
 `adapters/pi/` extension and provider catalogue; `pi` must be installed and
 on `PATH`. The CLI sets `PI_CODING_AGENT_DIR` to point `pi` at that
 catalogue and warns on stderr, without failing, if `OPENAI_API_KEY` is
-unset.
+unset. ADR 002's staged-cutover guideline for this default was superseded
+by a recorded operator decision (see roadmap task 7.5.3).
 
 The `config` argument points at the CodeRabbit YAML file whose review tone,
 path instructions, and pre-merge checks should guide the review. The `base`
