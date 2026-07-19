@@ -122,6 +122,43 @@ test('extractUsageLines parses DAKAR-USAGE payloads and ignores other stderr noi
   assert.deepEqual(usages[1], { input: 100, output: 40, cacheRead: 200, cacheWrite: 0 })
 })
 
+test('extractUsageLines rejects non-object and malformed payloads', () => {
+  const stderrText = [
+    'DAKAR-USAGE: null',
+    'DAKAR-USAGE: [1,2]',
+    'DAKAR-USAGE: 42',
+    'DAKAR-USAGE: "str"',
+    // A well-formed object whose consumed fields are strings, not numbers.
+    'DAKAR-USAGE: {"input":"3","output":"5","cacheRead":0,"cacheWrite":0}',
+  ].join('\n')
+
+  assert.deepEqual(extractUsageLines(stderrText), [])
+})
+
+test('extractUsageLines accepts a plain object and applies the same rule to a nested usage', () => {
+  const stderrText = [
+    'DAKAR-USAGE: {"input":3,"output":5,"cacheRead":0,"cacheWrite":0}',
+    'DAKAR-USAGE: {"model":"gpt-5.6-luna","usage":{"input":10,"output":2,"cacheRead":1,"cacheWrite":4}}',
+    // Nested usage with a non-finite field is rejected wholesale.
+    'DAKAR-USAGE: {"model":"gpt-5.6-luna","usage":{"input":"x"}}',
+  ].join('\n')
+
+  const usages = extractUsageLines(stderrText)
+
+  assert.equal(usages.length, 2)
+  assert.deepEqual(usages[0], { input: 3, output: 5, cacheRead: 0, cacheWrite: 0 })
+  assert.deepEqual(usages[1], { model: 'gpt-5.6-luna', usage: { input: 10, output: 2, cacheRead: 1, cacheWrite: 4 } })
+})
+
+test('sumUsage ignores non-finite fields rather than propagating NaN', () => {
+  const totals = sumUsage([
+    { input: 3, output: Number.NaN, cacheRead: 0, cacheWrite: 5 },
+    { input: Infinity, output: 40, cacheRead: 200, cacheWrite: 0 },
+  ])
+
+  assert.deepEqual(totals, { input: 3, output: 40, cacheRead: 200, cacheWrite: 5 })
+})
+
 test('sumUsage totals input, output, cacheRead, and cacheWrite across entries', () => {
   const totals = sumUsage([
     { input: 3, output: 5, cacheRead: 0, cacheWrite: 12819 },
@@ -204,6 +241,28 @@ test('priceReportedUsage skips unpriceable records rather than guessing', () => 
     { model: 'gpt-5.6-luna', usage: { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 } },
   ])
   assert.ok(Math.abs(priced - 0.003) < 1e-12, `priced ${priced}`)
+})
+
+test('summarize skips a malformed null record in metrics.reportedUsage', () => {
+  const entry = { repo: 'leynos/frankie', pr: 102, tier: 'medium' }
+  const resultJson = {
+    ok: true,
+    findings: [],
+    discarded: [],
+    metrics: {
+      ledger: [],
+      ledgerTotalEstimatedUsd: 0.01,
+      reportedUsage: [
+        null,
+        { model: 'gpt-5.6-luna', usage: { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 } },
+      ],
+    },
+  }
+
+  const summary = summarize({ entry, resultJson, usages: [], resultPath: '/r', stderrPath: '/s' })
+
+  assert.deepEqual(summary.reportedTokens, { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 })
+  assert.ok(Math.abs(summary.reportedUsd - 0.003) < 1e-12, `priced ${summary.reportedUsd}`)
 })
 
 test('summarize shapes a deferred result fixture', () => {

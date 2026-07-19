@@ -14,7 +14,7 @@ import fc from 'fast-check'
 
 import { admit } from '../src/workflows/dakar-review/admission.ts'
 import { backoffSeconds, deterministicJitter } from '../src/workflows/dakar-review/retry.ts'
-import { compactForAudit, SEVERITY_RANK } from '../src/workflows/dakar-review/candidates.ts'
+import { candidateKey, compactForAudit, SEVERITY_RANK } from '../src/workflows/dakar-review/candidates.ts'
 
 test('admit never overspends the budget and never mutates its state argument', () => {
   const nonNegative = fc.double({ min: 0, max: 1000, noNaN: true })
@@ -80,24 +80,41 @@ test('backoffSeconds stays within its documented bounds and is deterministic per
   )
 })
 
-test('compactForAudit caps, preserves every candidate, and orders by non-decreasing severity rank', () => {
+test('compactForAudit caps to the deduped count, preserves the deduped set, and orders by non-decreasing severity rank', () => {
   const severityArb = fc.constantFrom('critical', 'high', 'medium', 'low')
+  // Draw path, line, and title from small domains so distinct entries routinely
+  // collide on candidateKey, genuinely exercising the dedup-then-cap interaction.
+  const pathArb = fc.constantFrom('src/a.js', 'src/b.js', 'src/c.js')
+  const lineArb = fc.integer({ min: 1, max: 3 })
+  const titleArb = fc.constantFrom('alpha', 'beta', 'gamma')
+  const rowArb = fc.record({ severity: severityArb, path: pathArb, line: lineArb, title: titleArb })
   fc.assert(
-    fc.property(fc.array(severityArb, { maxLength: 40 }), fc.integer({ min: 1, max: 60 }), (severities, cap) => {
-      // Distinct path/line/title per entry so the upstream dedup never drops one
-      // and the union comparison is a clean multiset of candidate ids.
-      const input = severities.map((severity, index) => ({
+    fc.property(fc.array(rowArb, { maxLength: 40 }), fc.integer({ min: 1, max: 60 }), (rows, cap) => {
+      const input = rows.map((row, index) => ({
         candidateId: `c-${index}`, taskId: 'source-1', taskKind: 'source', sourceModel: 'gpt-5.5/high',
-        verificationPolicy: 'verify-all', title: `t-${index}`, severity, path: `src/f-${index}.js`,
-        line: index + 1, detail: 'detail', evidence: 'evidence', confidence: 'high', policyRefs: [],
+        verificationPolicy: 'verify-all', title: row.title, severity: row.severity, path: row.path,
+        line: row.line, detail: 'detail', evidence: 'evidence', confidence: 'high', policyRefs: [],
       }))
+
+      // Mirror compactForAudit's first-occurrence-per-key dedup to derive the
+      // expected surviving multiset and its exact size.
+      const seen = new Set()
+      const dedupedIds = []
+      for (const candidate of input) {
+        const key = candidateKey(candidate)
+        if (seen.has(key)) continue
+        seen.add(key)
+        dedupedIds.push(candidate.candidateId)
+      }
+      const uniqueByKeyCount = dedupedIds.length
 
       const { auditCandidates, overCap } = compactForAudit(input, cap)
 
-      assert.ok(auditCandidates.length <= cap)
-      // The audited subset and the over-cap discards partition the input exactly.
+      // The cap binds against the deduped count, not the raw input length.
+      assert.equal(auditCandidates.length, Math.min(uniqueByKeyCount, cap))
+      // The audited subset and the over-cap discards partition the deduped set exactly.
       const unionIds = [...auditCandidates.map((c) => c.candidateId), ...overCap.map((d) => d.candidate.candidateId)].sort()
-      assert.deepEqual(unionIds, input.map((c) => c.candidateId).sort())
+      assert.deepEqual(unionIds, [...dedupedIds].sort())
       // Severity ranks are non-decreasing through the audited subset.
       const ranks = auditCandidates.map((c) => SEVERITY_RANK[c.severity])
       for (let index = 1; index < ranks.length; index += 1) {

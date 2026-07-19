@@ -22,6 +22,48 @@ import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const corpusPath = join(moduleDir, 'live-corpus.json')
 const DAKAR_USAGE_MARKER = 'DAKAR-USAGE: '
+/** Token-count fields a usage payload may carry; each must be a finite number. */
+const USAGE_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite']
+
+/**
+ * Whether a value is a non-null, non-array plain object.
+ *
+ * @param {unknown} value - the candidate value.
+ * @returns {boolean} true only for plain objects.
+ */
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Whether every present usage field on a record is a finite number.
+ *
+ * Absent fields are permitted; a present but non-finite field (a string, null,
+ * NaN, or Infinity) rejects the whole record so no garbage reaches the sums.
+ *
+ * @param {Record<string, unknown>} record - a plain object bearing usage fields.
+ * @returns {boolean} true when no present field is non-finite.
+ */
+function hasFiniteUsageFields(record) {
+  return USAGE_FIELDS.every((field) => record[field] === undefined || Number.isFinite(record[field]))
+}
+
+/**
+ * Whether a parsed telemetry payload is a usable usage record.
+ *
+ * The payload must be a plain object whose own usage fields are finite; when it
+ * wraps a nested `usage` object, the same rule applies to that nested object.
+ *
+ * @param {unknown} payload - a parsed `DAKAR-USAGE` payload.
+ * @returns {boolean} true when the payload is safe to sum or price.
+ */
+function isValidUsagePayload(payload) {
+  if (!isPlainObject(payload) || !hasFiniteUsageFields(payload)) return false
+  if (payload.usage !== undefined) {
+    if (!isPlainObject(payload.usage) || !hasFiniteUsageFields(payload.usage)) return false
+  }
+  return true
+}
 
 /**
  * Load the pinned corpus manifest and find the entry for a repo and PR number.
@@ -227,7 +269,10 @@ export function extractUsageLines(stderrText) {
     if (markerIndex === -1) continue
     const payload = line.slice(markerIndex + DAKAR_USAGE_MARKER.length).trim()
     try {
-      usages.push(JSON.parse(payload))
+      const parsed = JSON.parse(payload)
+      // Reject non-object and non-finite payloads exactly as parse failures are
+      // rejected: telemetry stays best-effort and never crashes a review.
+      if (isValidUsagePayload(parsed)) usages.push(parsed)
     } catch {
       // Malformed telemetry must not fail the whole run; skip it.
     }
@@ -244,10 +289,10 @@ export function extractUsageLines(stderrText) {
 export function sumUsage(usages) {
   const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   for (const usage of usages) {
-    totals.input += usage.input ?? 0
-    totals.output += usage.output ?? 0
-    totals.cacheRead += usage.cacheRead ?? 0
-    totals.cacheWrite += usage.cacheWrite ?? 0
+    for (const field of USAGE_FIELDS) {
+      // Guard each field so a stray non-finite value never poisons the total.
+      if (Number.isFinite(usage[field])) totals[field] += usage[field]
+    }
   }
   return totals
 }
@@ -298,11 +343,12 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
   })
 
   const stdoutChunks = []
-  const stderrChunks = []
   const stderrFile = createWriteStream(stderrPath)
+  // Tee child stderr to the log file and this process's stderr only; the
+  // DAKAR-USAGE scan reads the log file back after exit rather than buffering
+  // the full stderr in memory, which is unbounded for long live reviews.
   child.stdout.on('data', (chunk) => stdoutChunks.push(chunk))
   child.stderr.on('data', (chunk) => {
-    stderrChunks.push(chunk)
     stderrFile.write(chunk)
     process.stderr.write(chunk)
   })
@@ -311,10 +357,11 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
     child.on('error', reject)
     child.on('close', (code) => resolvePromise(code))
   })
-  stderrFile.end()
+  // Wait for the log file to flush before reading it back for the usage scan.
+  await new Promise((resolveEnd) => stderrFile.end(resolveEnd))
 
   const stdoutText = Buffer.concat(stdoutChunks).toString('utf8')
-  const stderrText = Buffer.concat(stderrChunks).toString('utf8')
+  const stderrText = readFileSync(stderrPath, 'utf8')
   writeFileSync(resultPath, stdoutText)
 
   const usages = extractUsageLines(stderrText)
@@ -356,7 +403,10 @@ export function summarize({ entry, resultJson, usages = [], resultPath, stderrPa
   const reportedRecords = Array.isArray(resultJson?.metrics?.reportedUsage)
     ? resultJson.metrics.reportedUsage
     : usages
-  const usagePayloads = reportedRecords.map((record) => record.usage ?? record)
+  // Skip malformed records (e.g. a null entry) rather than dereferencing them.
+  const usagePayloads = reportedRecords
+    .filter((record) => isPlainObject(record))
+    .map((record) => record.usage ?? record)
   return {
     repo: entry.repo,
     pr: entry.pr,
@@ -389,6 +439,7 @@ export function summarize({ entry, resultJson, usages = [], resultPath, stderrPa
 export function priceReportedUsage(records) {
   let total = null
   for (const record of records) {
+    if (!isPlainObject(record)) continue
     const usage = record.usage ?? record
     const band = DEFAULT_PRICING_TABLE.rates[`${record.model}:flex`]
     if (!band) continue

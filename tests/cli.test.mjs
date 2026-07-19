@@ -205,6 +205,19 @@ test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout',
   for (const name of piAdapters) {
     assert.equal(overridden.config.adapters[name].timeout, 120, `${name} carries the flag's 120 s timeout`)
   }
+
+  // The derived config must reason about the same bounded value as the workflow,
+  // which clamps perCallTimeoutSeconds to [30, 900] (config.ts). An over-ceiling
+  // flag clamps down to 900 and an under-floor flag clamps up to 30, so the
+  // stamped adapter timeout and worstCaseReviewSeconds never diverge.
+  const overCeiling = runOnce(['--per-call-timeout', '5000'])
+  for (const name of piAdapters) {
+    assert.equal(overCeiling.config.adapters[name].timeout, 900, `${name} clamps an over-ceiling timeout to 900 s`)
+  }
+  const underFloor = runOnce(['--per-call-timeout', '10'])
+  for (const name of piAdapters) {
+    assert.equal(underFloor.config.adapters[name].timeout, 30, `${name} clamps an under-floor timeout to 30 s`)
+  }
 })
 
 for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {

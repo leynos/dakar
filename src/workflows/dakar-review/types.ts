@@ -196,12 +196,6 @@ export interface LedgerEntry {
   serviceTier: string
   reasoningEffort: string
   estimatedWorstCaseUsd: number
-  reportedUsage?: {
-    inputTokens: number
-    cachedInputTokens: number
-    outputTokens: number
-  }
-  reportedUsd?: number // reportedUsage priced with the table
   pricingTableVersion: string
   attempts: number
 }

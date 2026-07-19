@@ -20,6 +20,25 @@ import { appendReview, prepare } from '../scripts/review-state.mjs'
 /** ODW's documented default per-model-call timeout in seconds. */
 const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
 
+/**
+ * Clamp a per-call timeout to the same default and bounds the workflow applies.
+ *
+ * `resolveWorkflowConfig` bounds `perCallTimeoutSeconds` with
+ * `boundedInteger(value, 300, 30, 900)` (src/workflows/dakar-review/config.ts),
+ * the source of truth for the default (300) and the inclusive range [30, 900].
+ * The CLI applies the same default and range before deriving the run-local ODW
+ * config so the stamped pi Flex adapter timeout and the workflow's
+ * `worstCaseReviewSeconds` reason about one bounded value rather than diverging
+ * (e.g. `--per-call-timeout 5000` stamping 5000 while the workflow caps at 900).
+ *
+ * @param {number} [value] - the parsed `--per-call-timeout` value, if any.
+ * @returns {number} the value clamped to [30, 900], defaulting to 300.
+ */
+function clampPerCallTimeout(value = DEFAULT_PER_CALL_TIMEOUT_SECONDS) {
+  if (!Number.isFinite(value)) return DEFAULT_PER_CALL_TIMEOUT_SECONDS
+  return Math.min(900, Math.max(30, Math.trunc(value)))
+}
+
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workflowPath = join(packageRoot, 'workflows', 'dakar-review.js')
 const odwConfigPath = join(packageRoot, 'odw.config.json')
@@ -818,7 +837,7 @@ async function run(argv) {
   }
   // Derive a run-local ODW config that bounds the pi Flex calls with the per-call
   // timeout, then remove it after the run like the usage-log file.
-  options.odwConfigPath = writeDerivedOdwConfig(options.perCallTimeoutSeconds ?? DEFAULT_PER_CALL_TIMEOUT_SECONDS)
+  options.odwConfigPath = writeDerivedOdwConfig(clampPerCallTimeout(options.perCallTimeoutSeconds))
   let outcome
   try {
     outcome = options.telemetry
