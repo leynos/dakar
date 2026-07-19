@@ -112,14 +112,15 @@ test('extractUsageLines parses DAKAR-USAGE payloads and ignores other stderr noi
     'DAKAR-USAGE: {"input":3,"output":5,"cacheRead":0,"cacheWrite":12819}',
     'another progress line',
     'DAKAR-USAGE: {"input":100,"output":40,"cacheRead":200,"cacheWrite":0}',
-    'DAKAR-USAGE: not json, should be skipped',
+    'DAKAR-USAGE: not json, should be diagnosed',
   ].join('\n')
 
-  const usages = extractUsageLines(stderrText)
+  const { usages, malformed } = extractUsageLines(stderrText)
 
   assert.equal(usages.length, 2)
   assert.deepEqual(usages[0], { input: 3, output: 5, cacheRead: 0, cacheWrite: 12819 })
   assert.deepEqual(usages[1], { input: 100, output: 40, cacheRead: 200, cacheWrite: 0 })
+  assert.deepEqual(malformed, [{ line: 5, category: 'invalid-json' }])
 })
 
 test('extractUsageLines rejects non-object and malformed payloads', () => {
@@ -132,7 +133,16 @@ test('extractUsageLines rejects non-object and malformed payloads', () => {
     'DAKAR-USAGE: {"input":"3","output":"5","cacheRead":0,"cacheWrite":0}',
   ].join('\n')
 
-  assert.deepEqual(extractUsageLines(stderrText), [])
+  const { usages, malformed } = extractUsageLines(stderrText)
+
+  assert.deepEqual(usages, [])
+  assert.deepEqual(malformed, [
+    { line: 1, category: 'non-object' },
+    { line: 2, category: 'non-object' },
+    { line: 3, category: 'non-object' },
+    { line: 4, category: 'non-object' },
+    { line: 5, category: 'invalid-fields' },
+  ])
 })
 
 test('extractUsageLines accepts a plain object and applies the same rule to a nested usage', () => {
@@ -143,11 +153,12 @@ test('extractUsageLines accepts a plain object and applies the same rule to a ne
     'DAKAR-USAGE: {"model":"gpt-5.6-luna","usage":{"input":"x"}}',
   ].join('\n')
 
-  const usages = extractUsageLines(stderrText)
+  const { usages, malformed } = extractUsageLines(stderrText)
 
   assert.equal(usages.length, 2)
   assert.deepEqual(usages[0], { input: 3, output: 5, cacheRead: 0, cacheWrite: 0 })
   assert.deepEqual(usages[1], { model: 'gpt-5.6-luna', usage: { input: 10, output: 2, cacheRead: 1, cacheWrite: 4 } })
+  assert.deepEqual(malformed, [{ line: 3, category: 'invalid-fields' }])
 })
 
 test('sumUsage ignores non-finite fields rather than propagating NaN', () => {
@@ -206,6 +217,7 @@ test('summarize shapes an ok result fixture', () => {
     reportedTokens: { input: 100, output: 40, cacheRead: 200, cacheWrite: 0 },
     // Bare stderr-scanned usages carry no model, so nothing is priceable.
     reportedUsd: null,
+    malformedTelemetryCount: 0,
     resultPath: '/scratch/results/frankie-102.json',
     stderrPath: '/scratch/results/frankie-102.stderr.log',
   })
@@ -263,6 +275,133 @@ test('summarize skips a malformed null record in metrics.reportedUsage', () => {
 
   assert.deepEqual(summary.reportedTokens, { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 })
   assert.ok(Math.abs(summary.reportedUsd - 0.003) < 1e-12, `priced ${summary.reportedUsd}`)
+  // The null entry is now diagnosed, not silently vanished.
+  assert.equal(summary.malformedTelemetryCount, 1)
+  assert.deepEqual(summary.malformedTelemetryCategories, { 'non-object': 1 })
+})
+
+test('extractUsageLines flags a malformed JSON line as invalid-json with its position', () => {
+  const { usages, malformed } = extractUsageLines('DAKAR-USAGE: {not valid json')
+
+  assert.deepEqual(usages, [])
+  assert.deepEqual(malformed, [{ line: 1, category: 'invalid-json' }])
+})
+
+test('extractUsageLines categorises null, array, and scalar payloads as non-object', () => {
+  const stderrText = [
+    'DAKAR-USAGE: null',
+    'DAKAR-USAGE: [1,2]',
+    'DAKAR-USAGE: 42',
+    'DAKAR-USAGE: "str"',
+  ].join('\n')
+
+  const { usages, malformed } = extractUsageLines(stderrText)
+
+  assert.deepEqual(usages, [])
+  assert.equal(malformed.length, 4)
+  assert.ok(malformed.every((diagnostic) => diagnostic.category === 'non-object'))
+  assert.deepEqual(malformed.map((diagnostic) => diagnostic.line), [1, 2, 3, 4])
+})
+
+test('extractUsageLines categorises invalid numeric fields as invalid-fields', () => {
+  const { usages, malformed } = extractUsageLines(
+    'DAKAR-USAGE: {"input":"3","output":"5","cacheRead":0,"cacheWrite":0}',
+  )
+
+  assert.deepEqual(usages, [])
+  assert.deepEqual(malformed, [{ line: 1, category: 'invalid-fields' }])
+})
+
+test('extractUsageLines ignores unmarked stderr lines and never counts them as malformed', () => {
+  const stderrText = [
+    'some progress line',
+    'DAKAR-USAGE: {"input":3,"output":5,"cacheRead":0,"cacheWrite":0}',
+    'another progress line without the marker',
+  ].join('\n')
+
+  const { usages, malformed } = extractUsageLines(stderrText)
+
+  assert.equal(usages.length, 1)
+  assert.deepEqual(malformed, [])
+})
+
+test('extractUsageLines separates mixed valid and malformed lines with exact positions and no payload leak', () => {
+  const stderrText = [
+    'DAKAR-USAGE: {"input":3,"output":5,"cacheRead":0,"cacheWrite":12819}',
+    'DAKAR-USAGE: {broken json',
+    'DAKAR-USAGE: {"input":100,"output":40,"cacheRead":200,"cacheWrite":0}',
+    'DAKAR-USAGE: [1,2]',
+    'DAKAR-USAGE: {"input":"NOPAYLOADLEAK","output":5}',
+  ].join('\n')
+
+  const { usages, malformed } = extractUsageLines(stderrText)
+
+  assert.equal(usages.length, 2)
+  // Valid totals stay byte-identical to processing the valid lines alone.
+  assert.deepEqual(sumUsage(usages), { input: 103, output: 45, cacheRead: 200, cacheWrite: 12819 })
+  assert.deepEqual(malformed, [
+    { line: 2, category: 'invalid-json' },
+    { line: 4, category: 'non-object' },
+    { line: 5, category: 'invalid-fields' },
+  ])
+  // The distinctive marker planted in a malformed payload must not surface.
+  assert.ok(!JSON.stringify(malformed).includes('NOPAYLOADLEAK'))
+})
+
+test('summarize surfaces malformed telemetry counts and a category tally from the stderr scan', () => {
+  const entry = { repo: 'leynos/frankie', pr: 102, tier: 'medium' }
+  const resultJson = { ok: true, findings: [], discarded: [], metrics: { ledger: [], ledgerTotalEstimatedUsd: 0.01 } }
+  const usages = [{ input: 100, output: 40, cacheRead: 200, cacheWrite: 0 }]
+  const malformedTelemetry = [
+    { line: 2, category: 'invalid-json' },
+    { line: 5, category: 'non-object' },
+    { line: 7, category: 'invalid-json' },
+  ]
+
+  const summary = summarize({ entry, resultJson, usages, malformedTelemetry, resultPath: '/r', stderrPath: '/s' })
+
+  // Valid accounting is untouched by the malformed diagnostics.
+  assert.deepEqual(summary.reportedTokens, { input: 100, output: 40, cacheRead: 200, cacheWrite: 0 })
+  assert.equal(summary.malformedTelemetryCount, 3)
+  assert.deepEqual(summary.malformedTelemetryCategories, { 'invalid-json': 2, 'non-object': 1 })
+})
+
+test('summarize diagnoses malformed metrics.reportedUsage entries while keeping valid accounting exact', () => {
+  const entry = { repo: 'leynos/frankie', pr: 102, tier: 'medium' }
+  const resultJson = {
+    ok: true,
+    findings: [],
+    discarded: [],
+    metrics: {
+      ledger: [],
+      ledgerTotalEstimatedUsd: 0.01,
+      reportedUsage: [
+        null,
+        'DAKAR-USAGE-PAYLOAD-LEAK',
+        { model: 'gpt-5.6-luna', usage: { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 } },
+        { model: 'gpt-5.6-luna', usage: { input: 'x' } },
+      ],
+    },
+  }
+
+  const summary = summarize({ entry, resultJson, usages: [], malformedTelemetry: [], resultPath: '/r', stderrPath: '/s' })
+
+  assert.deepEqual(summary.reportedTokens, { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 })
+  assert.ok(Math.abs(summary.reportedUsd - 0.003) < 1e-12, `priced ${summary.reportedUsd}`)
+  assert.equal(summary.malformedTelemetryCount, 3)
+  assert.deepEqual(summary.malformedTelemetryCategories, { 'non-object': 2, 'invalid-fields': 1 })
+  // The serialized summary must not leak any malformed payload contents.
+  assert.ok(!JSON.stringify(summary).includes('DAKAR-USAGE-PAYLOAD-LEAK'))
+})
+
+test('summarize reports a zero malformed count and omits the category tally when telemetry is clean', () => {
+  const entry = { repo: 'leynos/frankie', pr: 102, tier: 'medium' }
+  const resultJson = { ok: true, findings: [], discarded: [], metrics: { ledger: [], ledgerTotalEstimatedUsd: 0.01 } }
+
+  const summary = summarize({ entry, resultJson, usages: [], resultPath: '/r', stderrPath: '/s' })
+
+  assert.equal(summary.malformedTelemetryCount, 0)
+  assert.ok(!('malformedTelemetryCategories' in summary))
 })
 
 test('summarize shapes a deferred result fixture', () => {

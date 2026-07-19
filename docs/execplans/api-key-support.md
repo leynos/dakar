@@ -646,6 +646,24 @@ the conflict in `Decision Log`, and escalate.
   including retries, without repealing the ordinary budget or the
   retry policy as upfront chain reservation would.
   Date/Author: 2026-07-19, implementing agent, per operator direction.
+- Decision (round-4 batch dispositions): malformed `DAKAR-USAGE`
+  telemetry is now an explicit parse outcome — the harness returns
+  structured `{ line, category }` diagnostics (categories
+  `invalid-json`, `non-object`, `invalid-fields`; never payload
+  contents) and the summary exposes `malformedTelemetryCount` with a
+  category tally, applied consistently to stderr-scanned lines and
+  CLI-attached `metrics.reportedUsage`. Docstring coverage was closed
+  at the gate: `check-docstrings.mjs` now also scopes `scripts/*.mjs`
+  and `adapters/pi/extensions/*.ts`, and the gate reports 203/203
+  (100%) — the recurring ~60% external claims counted files the gate
+  did not; the true extended-scope deficit was five declarations.
+  Skipped with reasons: tracing spans (tracked as GitHub issue #2;
+  not implemented in this pull request); the shared usage-log
+  concurrency concern (per-CLI-process filenames include pid and
+  timestamp, single-line `O_APPEND` writes are atomic at these sizes,
+  and the harness's corpus runs are operator-sequenced by design —
+  revisit only if parallel in-process reviews ever share a log).
+  Date/Author: 2026-07-19, implementing agent.
 - Escalation: M0 reached its Ambiguity tolerance — Codex CLI 0.144.4
   provably does not transmit `service_tier`, so the Codex adapter path
   cannot reach Flex pricing. Options presented to the operator:

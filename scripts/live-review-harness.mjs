@@ -49,20 +49,40 @@ function hasFiniteUsageFields(record) {
 }
 
 /**
- * Whether a parsed telemetry payload is a usable usage record.
+ * Classify an already-parsed telemetry value as a valid usage record or a
+ * specific malformed category, without ever echoing the value's contents.
  *
- * The payload must be a plain object whose own usage fields are finite; when it
+ * A valid record is a plain object whose own usage fields are finite; when it
  * wraps a nested `usage` object, the same rule applies to that nested object.
+ * The returned category is safe to log or serialise: it names the failure mode
+ * only, never any prompt, key, request body, or other payload content.
  *
- * @param {unknown} payload - a parsed `DAKAR-USAGE` payload.
- * @returns {boolean} true when the payload is safe to sum or price.
+ * @param {unknown} value - a parsed `DAKAR-USAGE` payload or reported-usage record.
+ * @returns {{ category: 'valid', value: Record<string, unknown> } | { category: 'non-object' | 'invalid-fields' }}
+ *   `valid` with the record when safe to sum or price; otherwise the malformed category.
  */
-function isValidUsagePayload(payload) {
-  if (!isPlainObject(payload) || !hasFiniteUsageFields(payload)) return false
-  if (payload.usage !== undefined) {
-    if (!isPlainObject(payload.usage) || !hasFiniteUsageFields(payload.usage)) return false
+function classifyUsageValue(value) {
+  if (!isPlainObject(value)) return { category: 'non-object' }
+  if (!hasFiniteUsageFields(value)) return { category: 'invalid-fields' }
+  if (value.usage !== undefined) {
+    if (!isPlainObject(value.usage) || !hasFiniteUsageFields(value.usage)) return { category: 'invalid-fields' }
   }
-  return true
+  return { category: 'valid', value }
+}
+
+/**
+ * Tally malformed-telemetry diagnostics by category into a non-sensitive count
+ * map, e.g. `{ 'invalid-json': 2, 'non-object': 1 }`.
+ *
+ * @param {Array<{ category: string }>} diagnostics - structured malformed diagnostics.
+ * @returns {Record<string, number>} a count keyed by diagnostic category.
+ */
+function tallyMalformedCategories(diagnostics) {
+  const tally = {}
+  for (const { category } of diagnostics) {
+    tally[category] = (tally[category] ?? 0) + 1
+  }
+  return tally
 }
 
 /**
@@ -257,27 +277,68 @@ export async function prepareClone(entry, workDir) {
 
 /**
  * Parse `DAKAR-USAGE: ` marker lines out of the pi Flex adapter's stderr
- * telemetry, ignoring unrelated lines and malformed payloads.
+ * telemetry, separating valid usage records from an explicit, non-sensitive
+ * account of the malformed ones. Unrelated stderr lines (with no marker) are
+ * ignored entirely and never counted as malformed.
+ *
+ * Malformed lines are neither dropped silently nor allowed to crash the run:
+ * each yields a structured diagnostic carrying only the 1-based line position
+ * and a failure category. No payload contents — prompts, keys, request bodies,
+ * or raw text — are ever placed in a diagnostic.
  *
  * @param {string} stderrText - the full stderr capture from a review run.
- * @returns {Array<Record<string, number>>} the parsed usage payloads, in order.
+ * @returns {{ usages: Array<Record<string, number>>, malformed: Array<{ line: number, category: 'invalid-json' | 'non-object' | 'invalid-fields' }> }}
+ *   the valid usage payloads in order, plus one diagnostic per malformed marker line.
  */
 export function extractUsageLines(stderrText) {
   const usages = []
-  for (const line of stderrText.split('\n')) {
+  const malformed = []
+  const lines = stderrText.split('\n')
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
     const markerIndex = line.indexOf(DAKAR_USAGE_MARKER)
     if (markerIndex === -1) continue
     const payload = line.slice(markerIndex + DAKAR_USAGE_MARKER.length).trim()
+    let parsed
     try {
-      const parsed = JSON.parse(payload)
-      // Reject non-object and non-finite payloads exactly as parse failures are
-      // rejected: telemetry stays best-effort and never crashes a review.
-      if (isValidUsagePayload(parsed)) usages.push(parsed)
+      parsed = JSON.parse(payload)
     } catch {
-      // Malformed telemetry must not fail the whole run; skip it.
+      // Position and category only: never the raw payload text.
+      malformed.push({ line: index + 1, category: 'invalid-json' })
+      continue
+    }
+    const outcome = classifyUsageValue(parsed)
+    if (outcome.category === 'valid') {
+      usages.push(outcome.value)
+    } else {
+      malformed.push({ line: index + 1, category: outcome.category })
     }
   }
-  return usages
+  return { usages, malformed }
+}
+
+/**
+ * Partition CLI-attached `metrics.reportedUsage` records into valid records and
+ * non-sensitive malformed diagnostics, applying the same classifier the stderr
+ * scan uses so both telemetry sources are diagnosed consistently.
+ *
+ * @param {unknown[]} records - the raw `metrics.reportedUsage` array.
+ * @returns {{ records: Array<Record<string, unknown>>, malformed: Array<{ line: number, category: 'non-object' | 'invalid-fields' }> }}
+ *   valid records preserved in order, plus one diagnostic (positioned by array
+ *   index) per malformed entry. Diagnostics carry no record contents.
+ */
+function partitionReportedUsage(records) {
+  const valid = []
+  const malformed = []
+  records.forEach((record, index) => {
+    const outcome = classifyUsageValue(record)
+    if (outcome.category === 'valid') {
+      valid.push(outcome.value)
+    } else {
+      malformed.push({ line: index, category: outcome.category })
+    }
+  })
+  return { records: valid, malformed }
 }
 
 /**
@@ -312,7 +373,8 @@ export function sumUsage(usages) {
  * @param {string[]} [options.extraArgs] - additional arguments passed through to `dakar-review`.
  * @param {string} options.keyPath - path to the file holding the provider API key.
  * @param {string} options.packageRoot - Dakar's package root, containing `bin/dakar-review.mjs`.
- * @returns {Promise<{ resultJson: object, usages: Array<Record<string, number>>, resultPath: string, stderrPath: string, exitCode: number | null }>} the run's outputs.
+ * @returns {Promise<{ resultJson: object, usages: Array<Record<string, number>>, malformedTelemetry: Array<{ line: number, category: string }>, resultPath: string, stderrPath: string, exitCode: number | null }>}
+ *   the run's outputs, including the valid usage records and non-sensitive malformed-telemetry diagnostics from the stderr scan.
  */
 export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs = [], keyPath, packageRoot }) {
   const apiKey = readFileSync(keyPath, 'utf8').trim()
@@ -364,7 +426,7 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
   const stderrText = readFileSync(stderrPath, 'utf8')
   writeFileSync(resultPath, stdoutText)
 
-  const usages = extractUsageLines(stderrText)
+  const { usages, malformed: malformedTelemetry } = extractUsageLines(stderrText)
 
   let resultJson
   try {
@@ -379,7 +441,7 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
     throw new Error(`dakar-review exited with code ${exitCode}; see ${stderrPath}`)
   }
 
-  return { resultJson, usages, resultPath, stderrPath, exitCode }
+  return { resultJson, usages, malformedTelemetry, resultPath, stderrPath, exitCode }
 }
 
 /**
@@ -389,25 +451,26 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
  * @param {object} options - summarize inputs.
  * @param {{ repo: string, pr: number, tier: string }} options.entry - the pinned corpus entry.
  * @param {object} options.resultJson - the parsed `dakar-review` result.
- * @param {Array<Record<string, number>>} [options.usages] - parsed `DAKAR-USAGE` payloads.
+ * @param {Array<Record<string, number>>} [options.usages] - valid `DAKAR-USAGE` payloads from the stderr scan.
+ * @param {Array<{ line: number, category: string }>} [options.malformedTelemetry] - the stderr scan's malformed diagnostics.
  * @param {string} options.resultPath - path the raw result JSON was written to.
  * @param {string} options.stderrPath - path the raw stderr log was written to.
- * @returns {object} the harness summary.
+ * @returns {object} the harness summary, including a non-sensitive
+ *   `malformedTelemetryCount` and, when non-zero, a `malformedTelemetryCategories` tally.
  */
-export function summarize({ entry, resultJson, usages = [], resultPath, stderrPath }) {
+export function summarize({ entry, resultJson, usages = [], malformedTelemetry = [], resultPath, stderrPath }) {
   const ok = resultJson?.ok === true
   const stage = resultJson?.stage ?? (ok ? 'complete' : 'unknown')
   const ledger = resultJson?.metrics?.ledger
   // The CLI-attached usage records (via the DAKAR_USAGE_LOG file channel) are
-  // authoritative; the stderr scan is a fallback for direct pi invocations.
-  const reportedRecords = Array.isArray(resultJson?.metrics?.reportedUsage)
-    ? resultJson.metrics.reportedUsage
-    : usages
-  // Skip malformed records (e.g. a null entry) rather than dereferencing them.
-  const usagePayloads = reportedRecords
-    .filter((record) => isPlainObject(record))
-    .map((record) => record.usage ?? record)
-  return {
+  // authoritative; the stderr scan is a fallback for direct pi invocations. In
+  // either case malformed entries are diagnosed, not silently dropped, and the
+  // diagnostics carry only positions and categories — never record contents.
+  const reported = Array.isArray(resultJson?.metrics?.reportedUsage)
+    ? partitionReportedUsage(resultJson.metrics.reportedUsage)
+    : { records: usages, malformed: malformedTelemetry }
+  const usagePayloads = reported.records.map((record) => record.usage ?? record)
+  const summary = {
     repo: entry.repo,
     pr: entry.pr,
     tier: entry.tier,
@@ -418,10 +481,15 @@ export function summarize({ entry, resultJson, usages = [], resultPath, stderrPa
     ledgerTotalEstimatedUsd: resultJson?.metrics?.ledgerTotalEstimatedUsd ?? null,
     ledgerEntryCount: Array.isArray(ledger) ? ledger.length : 0,
     reportedTokens: sumUsage(usagePayloads),
-    reportedUsd: priceReportedUsage(reportedRecords),
+    reportedUsd: priceReportedUsage(reported.records),
+    malformedTelemetryCount: reported.malformed.length,
     resultPath,
     stderrPath,
   }
+  if (reported.malformed.length > 0) {
+    summary.malformedTelemetryCategories = tallyMalformedCategories(reported.malformed)
+  }
+  return summary
 }
 
 /**
@@ -536,7 +604,7 @@ async function main() {
 
   const packageRoot = resolve(moduleDir, '..')
   const extraArgs = options.dakarArgs ? splitExtraArgs(options.dakarArgs) : []
-  const { resultJson, usages, resultPath, stderrPath } = await runReview({
+  const { resultJson, usages, malformedTelemetry, resultPath, stderrPath } = await runReview({
     entry,
     cloneDir,
     stateRoot,
@@ -545,7 +613,7 @@ async function main() {
     keyPath: options.keyFile,
     packageRoot,
   })
-  const summary = summarize({ entry, resultJson, usages, resultPath, stderrPath })
+  const summary = summarize({ entry, resultJson, usages, malformedTelemetry, resultPath, stderrPath })
   process.stdout.write(`${JSON.stringify(summary)}\n`)
   if (!summary.ok) {
     process.exitCode = 1
