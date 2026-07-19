@@ -1055,3 +1055,75 @@ process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], r
   assert.equal(output.recorded, undefined, 'nothing is stamped as recorded')
   assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false, 'nothing may be recorded')
 })
+
+test('a hung log follow still fetches and records the completed result', () => {
+  const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
+  const stateRoot = join(tempRoot, 'trusted-state')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  // `odw run` emits a run id; `odw logs --follow` hangs forever; `odw result`
+  // returns a completed, recordable review. A follow timeout must not abandon
+  // the billed result: the CLI fetches and records it in the grace window.
+  writeFileSync(
+    fakeOdw,
+    `#!/usr/bin/env node
+import { readFileSync, writeFileSync } from 'node:fs'
+const values = process.argv.slice(2)
+const mode = values[0]
+if (mode === 'run') {
+  const input = JSON.parse(values[values.indexOf('--args') + 1])
+  writeFileSync(process.env.DAKAR_FAKE_PREPARED, JSON.stringify(input.prepared))
+  process.stdout.write('started run 20260719-000000-abcdef\\n')
+} else if (mode === 'logs') {
+  // A genuine hang: the interval keeps the event loop alive until SIGTERM.
+  setInterval(() => {}, 1000)
+} else if (mode === 'result') {
+  const prepared = JSON.parse(readFileSync(process.env.DAKAR_FAKE_PREPARED, 'utf8'))
+  process.stdout.write(JSON.stringify({
+    ok: true, verdict: 'pass',
+    reviewBase: prepared.reviewBase, headCommit: prepared.headCommit,
+    commitCount: prepared.commitCount, changedFiles: prepared.changedFiles,
+    findings: [], reportMarkdown: 'x', metrics: {},
+    recordInput: {
+      reviewId: 'head-' + prepared.headCommit, baseCommit: prepared.reviewBase,
+      headCommit: prepared.headCommit, commitCount: prepared.commitCount,
+      changedFiles: prepared.changedFiles, models: ['gpt-5.6-luna'],
+      findingsTotal: 0, summary: 'clean', metrics: {},
+    },
+  }))
+}
+`,
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+     '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, DAKAR_FAKE_PREPARED: join(tempRoot, 'prepared.json') } },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  const output = JSON.parse(result.stdout)
+  assert.equal(output.ok, true)
+  assert.equal(output.recorded.ok, true, 'the completed result must be recorded despite the hung follow')
+  assert.equal(output.recorded.headCommit, head)
+})
+
+test('an outer timeout below the retry worst case warns on stderr', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const stateRoot = join(tempRoot, 'trusted-state')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writePreparedEchoOdw(fakeOdw)
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+     '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--timeout', '600'],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+
+  assert.equal(result.status, 0)
+  assert.match(result.stderr, /below the retry schedule's worst case/u)
+})
+

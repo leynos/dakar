@@ -1068,6 +1068,7 @@ header-file form is the supported pattern):
 umask 077
 printf 'Authorization: Bearer %s\n' "$(cat ~/dakar-api-key.txt)" \
   > "$SCRATCHPAD/auth-header"
+trap 'rm -f "$SCRATCHPAD/auth-header"' EXIT
 curl -s https://api.openai.com/v1/responses \
   -H @"$SCRATCHPAD/auth-header" \
   -H "Content-Type: application/json" \
@@ -1075,6 +1076,7 @@ curl -s https://api.openai.com/v1/responses \
        "input":"Reply with the single word: pong"}' \
   > flex-control.json
 rm -f "$SCRATCHPAD/auth-header"
+trap - EXIT
 
 CODEX_API_KEY="$(cat ~/dakar-api-key.txt)" codex exec --json \
   --skip-git-repo-check --sandbox read-only \
@@ -1334,16 +1336,19 @@ export interface LedgerEntry {
   serviceTier: string;
   reasoningEffort: string;
   estimatedWorstCaseUsd: number;
-  reportedUsage?: {
-    inputTokens: number;
-    cachedInputTokens: number;
-    outputTokens: number;
-  };
-  reportedUsd?: number; // reportedUsage priced with the table
   pricingTableVersion: string;
   attempts: number;
 }
 ```
+
+Reported provider usage is not a `LedgerEntry` field: the CLI attaches
+`metrics.reportedUsage` (ordered
+`{ model, usage: { input, output, cacheRead, cacheWrite } }` records from
+the pi extension's usage log) and `metrics.reportedTokens` (the summed
+totals with the same four keys) to the workflow result, and
+`scripts/live-review-harness.mjs::priceReportedUsage` prices those records
+per lane into the `reportedUsd` figure that appears only in the harness
+summary output.
 
 The `standard` lane value exists for M3's interim standard-tier audit and
 keeps the ledger honest if a future policy reintroduces standard calls;

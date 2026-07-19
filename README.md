@@ -65,14 +65,15 @@ flowchart TD
   F -->|candidates remain| G[One Terra Flex issue-set audit]
   F -->|no candidates| H[Deterministic report rendering]
   G --> H
-  H --> I[CLI: record reviewed head and cost ledger]
+  H -->|complete planned coverage| I[CLI: record reviewed head and cost ledger]
+  H -->|truncation, refusal, or downgrade| W[Return recordWithheld: head stays unrecorded]
 ```
 
 *Figure 1: The deterministic-tiered review route. Model spend happens
-only in the two Flex lanes; every other step is host code.*
+only in the two Flex lanes; every other step is host code, and only a
+review with complete planned coverage records the reviewed head.*
 
 ______________________________________________________________________
-
 
 ## Why Dakar?
 

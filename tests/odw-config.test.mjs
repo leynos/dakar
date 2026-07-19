@@ -29,7 +29,11 @@ test('deriveOdwConfig honours a non-default timeout value', () => {
 })
 
 test('deriveOdwConfig leaves the base config unmutated', () => {
-  const before = JSON.stringify(packaged)
-  deriveOdwConfig(packaged, 120)
-  assert.equal(JSON.stringify(packaged), before, 'the base config must not be mutated in place')
+  // A fresh fixture loaded inside the test, with a timeout no other test
+  // uses, so shared-fixture mutations elsewhere can never mask a mutation
+  // performed by this very invocation.
+  const fresh = JSON.parse(readFileSync(join(repoRoot, 'odw.config.json'), 'utf8'))
+  const before = JSON.stringify(fresh)
+  deriveOdwConfig(fresh, 121)
+  assert.equal(JSON.stringify(fresh), before, 'the base config must not be mutated in place')
 })

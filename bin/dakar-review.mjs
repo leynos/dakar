@@ -15,6 +15,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { deriveOdwConfig } from '../scripts/odw-config.mjs'
 import { resolveReviewConfig } from '../scripts/review-config.mjs'
+import { worstCaseReviewSeconds } from '../src/workflows/dakar-review/retry.ts'
 import { appendReview, prepare } from '../scripts/review-state.mjs'
 
 /** ODW's documented default per-model-call timeout in seconds. */
@@ -44,6 +45,25 @@ const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
 function clampPerCallTimeout(value = DEFAULT_PER_CALL_TIMEOUT_SECONDS) {
   const floored = Math.floor(Number(value))
   return Number.isFinite(floored) && floored >= 30 ? Math.min(floored, 900) : DEFAULT_PER_CALL_TIMEOUT_SECONDS
+}
+
+/**
+ * Bound an optional numeric option the way `resolveWorkflowConfig` does.
+ *
+ * Mirrors `boundedInteger` (src/workflows/dakar-review/config.ts): invalid
+ * or sub-minimum values fall back to the default, over-maximum values clamp
+ * down. Used only for the advisory worst-case timeout warning, so the CLI
+ * reasons about the same effective knobs as the workflow.
+ *
+ * @param {number} [value] - the parsed option value, if any.
+ * @param {number} fallback - default used for invalid or sub-minimum values.
+ * @param {number} min - inclusive lower bound for a valid value.
+ * @param {number} max - inclusive upper bound; larger values clamp to it.
+ * @returns {number} the bounded value.
+ */
+function clampLikeConfig(value, fallback, min, max) {
+  const floored = Math.floor(Number(value))
+  return Number.isFinite(floored) && floored >= min ? Math.min(floored, max) : fallback
 }
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -684,19 +704,29 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   process.stderr.write(`dakar-review: following ODW run ${runId}\n`)
   const logStatus = await followOdwLogs(odwBin, buildRunScopedArgs('logs', options, runId, ['--follow']), timeoutMs)
   if (logStatus === 124) {
+    // A hung or outlasted log stream must not abandon a possibly-completed
+    // (and already billed) review: give the result one short grace fetch so
+    // a run that finished while the follow was stuck is still recorded.
     process.stderr.write(
-      `${JSON.stringify(
-        {
-          ok: false,
-          stage: 'odw-logs',
-          runId,
-          error: `timed out following ODW run after ${options.timeout || 3600}s`,
-        },
-        null,
-        2,
-      )}\n`,
+      `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch\n`,
     )
-    return { status: 1 }
+    try {
+      return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
+    } catch {
+      process.stderr.write(
+        `${JSON.stringify(
+          {
+            ok: false,
+            stage: 'odw-logs',
+            runId,
+            error: `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
+          },
+          null,
+          2,
+        )}\n`,
+      )
+      return { status: 1 }
+    }
   }
   if (logStatus !== 0) {
     process.stderr.write(`dakar-review: ODW log stream exited with status ${logStatus}; fetching result anyway\n`)
@@ -847,6 +877,23 @@ async function run(argv) {
     // mocked ODW binary still runs.
     if (!process.env.OPENAI_API_KEY) {
       process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
+    }
+    // Advisory guard: an outer wait shorter than the retry schedule's worst
+    // case can kill a healthy run before the workflow's own deferral logic
+    // fires. The knob bounds mirror resolveWorkflowConfig's defaults.
+    const worstCase = worstCaseReviewSeconds(
+      {
+        flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),
+        flexInitialBackoffSeconds: clampLikeConfig(options.flexInitialBackoffSeconds, 30, 1, 300),
+        flexMaxBackoffSeconds: clampLikeConfig(options.flexMaxBackoffSeconds, 120, 1, 900),
+        flexJitterSeconds: clampLikeConfig(options.flexJitterSeconds, 10, 0, 60),
+      },
+      clampPerCallTimeout(options.perCallTimeoutSeconds),
+    )
+    if ((options.timeout || 3600) < worstCase) {
+      process.stderr.write(
+        `dakar-review: --timeout ${options.timeout || 3600}s is below the retry schedule's worst case (${worstCase}s); the run may be killed before the workflow can defer.\n`,
+      )
     }
   }
   // Derive a run-local ODW config that bounds the pi Flex calls with the per-call
