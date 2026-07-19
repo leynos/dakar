@@ -348,7 +348,7 @@ const reviewOutcomes = await parallel(
       // Scope the jitter seed per review (head commit) so concurrent reviews of
       // different heads decorrelate; the ledger callId and agent label stay the
       // bare task id.
-      outcome: await callWithFlexRetry<CandidateResult | null>(RETRY_CONFIG, `${prepared.headCommit}:${task.taskId}`, () =>
+      outcome: await callWithFlexRetry<CandidateResult | null>(RETRY_CONFIG, `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`, () =>
         agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext), {
           label: task.taskId,
           phase: 'Review',
@@ -477,7 +477,7 @@ if (auditCandidates.length > 0) {
   // review DEFERS rather than falling back to standard processing: it returns a
   // structured deferred result with no recordInput, so the CLI's recordReview
   // guard (ok === true && recordInput) cannot record the head as complete.
-  const auditOutcome = await callWithFlexRetry<AuditResult>(RETRY_CONFIG, `${prepared.headCommit}:audit`, () =>
+  const auditOutcome = await callWithFlexRetry<AuditResult>(RETRY_CONFIG, `${REPO_ROOT}:${prepared.headCommit}:audit`, () =>
     agent<AuditResult>(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
       label: 'audit',
       phase: 'Audit',
@@ -694,17 +694,35 @@ for (const entry of ledger) {
   seenRecordedModels.add(entry.model)
   recordedModels.push(entry.model)
 }
-const recordInput = {
-  reviewId: `head-${prepared.headCommit}`,
-  baseCommit: prepared.reviewBase,
-  headCommit: prepared.headCommit,
-  commitCount: prepared.commitCount,
-  changedFiles: prepared.changedFiles,
-  models: recordedModels,
-  findingsTotal: authoritativeFindings.length,
-  summary: authoritativeSummary,
-  metrics,
-}
+// The reviewed-head invariant means a recorded head was completely reviewed.
+// A review that completed with partial planned coverage — truncated files,
+// refused packs, or downgraded packs — therefore withholds recordInput so the
+// CLI cannot record it, while keeping every diagnostic visible (operator
+// direction, 2026-07-19, superseding the earlier downgrade-and-record
+// design; roadmap 7.5.4 tracks an explicit opt-in knob).
+const coverageComplete =
+  truncatedFiles.length === 0 && admissionRefusals.length === 0 && lunaDowngrades.length === 0
+const recordInput = coverageComplete
+  ? {
+      reviewId: `head-${prepared.headCommit}`,
+      baseCommit: prepared.reviewBase,
+      headCommit: prepared.headCommit,
+      commitCount: prepared.commitCount,
+      changedFiles: prepared.changedFiles,
+      models: recordedModels,
+      findingsTotal: authoritativeFindings.length,
+      summary: authoritativeSummary,
+      metrics,
+    }
+  : undefined
+const recordWithheld = coverageComplete
+  ? undefined
+  : {
+      reason: 'planned finder coverage was incomplete; the head is not recorded as reviewed',
+      truncatedFileCount: truncatedFiles.length,
+      admissionRefusalCount: admissionRefusals.length,
+      lunaDowngradeCount: lunaDowngrades.length,
+    }
 
 return {
   ok: true,
@@ -726,7 +744,8 @@ return {
   summary: authoritativeSummary,
   reportMarkdown: authoritativeReport,
   metrics,
-  recordInput,
+  ...(recordInput ? { recordInput } : {}),
+  ...(recordWithheld ? { recordWithheld } : {}),
 }
 
 }

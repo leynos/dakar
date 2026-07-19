@@ -606,6 +606,22 @@ the conflict in `Decision Log`, and escalate.
   out of the planning context, and makes M1 delegable after context
   compaction.
   Date/Author: 2026-07-18, planning agent.
+- Decision (supersession): partial planned finder coverage no longer
+  records the reviewed head. A successful review emits `recordInput`
+  only when truncated files, admission refusals, and Luna downgrades
+  are all zero; otherwise the result stays `ok: true` but carries
+  `recordWithheld` (reason and counts) instead, and the CLI passes it
+  through unrecorded without treating it as a record error. This
+  supersedes the M5 downgrade-and-record design and the round-2 skip
+  of the reviewer's non-recordability request. The zero-coverage and
+  all-refused guards keep failing closed as before. Retry jitter seeds
+  are additionally scoped by repository root as well as head
+  (`<repoRoot>:<head>:<callId>`), so concurrent reviews of different
+  repositories never share a backoff schedule. Roadmap 7.5.4 tracks a
+  future opt-in knob for recording partial coverage deliberately.
+  Rationale: operator direction, 2026-07-19 — the reviewed-head
+  invariant means a recorded head was completely reviewed.
+  Date/Author: 2026-07-19, implementing agent, per operator direction.
 - Escalation: M0 reached its Ambiguity tolerance — Codex CLI 0.144.4
   provably does not transmit `service_tier`, so the Codex adapter path
   cannot reach Flex pricing. Options presented to the operator:

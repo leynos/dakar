@@ -64,7 +64,7 @@ function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts
 }
 
 async function runWorkflow({
-  failedLabel, nullLabel, changedFiles = ['src/a.js'], config = '/distinct/policy.yaml', commitLength = 40,
+  failedLabel, nullLabel, changedFiles = ['src/a.js'], config = '/distinct/policy.yaml', commitLength = 40, repoRoot,
   finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures,
   nullParallelSlots = [], knobs = {},
 } = {}) {
@@ -105,7 +105,7 @@ async function runWorkflow({
     }
   }))
   const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message),
-    { config, prepared, ...knobs },
+    { config, prepared, ...(repoRoot === undefined ? {} : { repoRoot }), ...knobs },
     { total: null, spent: () => 0, remaining: () => 0 }, async () => null,
     () => ({ ok: true, meta: null, errors: [], warnings: [] }), async (milliseconds) => { sleepDelays.push(milliseconds) })
   return { agentLabels, agentCalls, logs, phases, prompts, result, sleepDelays }
@@ -379,8 +379,8 @@ test('a Luna pack failing twice then succeeding retries on the deterministic sch
   // Exactly the deterministic jitter derived from the per-review call id (head
   // commit prefix) and attempt.
   const head = 'b'.repeat(40)
-  assert.equal(sleepDelays[0], (30 + deterministicJitter(`${head}:luna-flex-1`, 2, 10)) * 1000)
-  assert.equal(sleepDelays[1], (60 + deterministicJitter(`${head}:luna-flex-1`, 3, 10)) * 1000)
+  assert.equal(sleepDelays[0], (30 + deterministicJitter(`.:${head}:luna-flex-1`, 2, 10)) * 1000)
+  assert.equal(sleepDelays[1], (60 + deterministicJitter(`.:${head}:luna-flex-1`, 3, 10)) * 1000)
   assert.equal(result.findings.length, 1)
 })
 
@@ -490,8 +490,8 @@ test('an audit failing twice then succeeding recovers with the retry sleeps reco
   assert.equal(auditCalls.length, 3)
   assert.equal(sleepDelays.length, 2)
   const head = 'b'.repeat(40)
-  assert.equal(sleepDelays[0], (30 + deterministicJitter(`${head}:audit`, 2, 10)) * 1000)
-  assert.equal(sleepDelays[1], (60 + deterministicJitter(`${head}:audit`, 3, 10)) * 1000)
+  assert.equal(sleepDelays[0], (30 + deterministicJitter(`.:${head}:audit`, 2, 10)) * 1000)
+  assert.equal(sleepDelays[1], (60 + deterministicJitter(`.:${head}:audit`, 3, 10)) * 1000)
 })
 
 test('recordInput.models is derived from the ledger of completed calls', async () => {
@@ -517,4 +517,67 @@ test('retries share one admission: spentUsd and ledger totals are unchanged by a
   assert.equal(retried.result.metrics.ledgerTotalEstimatedUsd, single.result.metrics.ledgerTotalEstimatedUsd)
   // The ledger still holds exactly the two admitted calls, not one entry per attempt.
   assert.equal(retried.result.metrics.ledger.length, 2)
+})
+
+test('retry jitter seeds are scoped by repository root as well as head', async () => {
+  // /repo-a and /repo-b are a verified divergent fixture pair for this head
+  // (jitter 10 versus 5 at attempt 2), so otherwise identical reviews of
+  // different repositories never share a backoff schedule.
+  const head = 'b'.repeat(40)
+  const runA = await runWorkflow({ repoRoot: '/repo-a', finderFailures: 1 })
+  const runB = await runWorkflow({ repoRoot: '/repo-b', finderFailures: 1 })
+
+  const jitterA = deterministicJitter(`/repo-a:${head}:luna-flex-1`, 2, 10)
+  const jitterB = deterministicJitter(`/repo-b:${head}:luna-flex-1`, 2, 10)
+  assert.notEqual(jitterA, jitterB, 'the fixture pair must diverge for the assertion to bite')
+  assert.equal(runA.sleepDelays[0], (30 + jitterA) * 1000)
+  assert.equal(runB.sleepDelays[0], (30 + jitterB) * 1000)
+})
+
+test('finder-plan truncation withholds recordInput while keeping diagnostics', async () => {
+  const changedFiles = Array.from({ length: 6 }, (_, index) => `src/module-${index}.js`)
+  const { result } = await runWorkflow({
+    changedFiles,
+    knobs: { budgetGbp: 0.12, transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.recordInput, undefined, 'truncated coverage must not be recordable')
+  assert.equal(result.recordWithheld.truncatedFileCount, 2)
+  assert.equal(result.metrics.truncatedFileCount, 2, 'diagnostics stay visible')
+})
+
+test('an admission refusal withholds recordInput while the review completes', async () => {
+  const changedFiles = ['src/a.js', 'src/b.js', 'src/c.js']
+  const { result } = await runWorkflow({
+    changedFiles,
+    // A budget admitting the audit and some, but not all, of the three packs.
+    knobs: { budgetGbp: 0.095, transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 },
+  })
+
+  assert.equal(result.ok, true)
+  assert.ok(result.admissionRefusals.length >= 1, 'the scenario must refuse at least one pack')
+  assert.equal(result.recordInput, undefined, 'refused coverage must not be recordable')
+  assert.equal(result.recordWithheld.admissionRefusalCount, result.admissionRefusals.length)
+})
+
+test('a Luna downgrade withholds recordInput while the review completes', async () => {
+  const { result } = await runWorkflow({
+    changedFiles: ['src/a.js', 'src/b.js'],
+    failedLabel: 'luna-flex-1',
+    knobs: { transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000, budgetGbp: 0.12 },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.lunaDowngrades.length, 1)
+  assert.equal(result.recordInput, undefined, 'downgraded coverage must not be recordable')
+  assert.equal(result.recordWithheld.lunaDowngradeCount, 1)
+})
+
+test('a complete successful review still emits recordInput and no recordWithheld', async () => {
+  const { result } = await runWorkflow()
+
+  assert.equal(result.ok, true)
+  assert.ok(result.recordInput, 'complete coverage remains recordable')
+  assert.equal(result.recordWithheld, undefined)
 })

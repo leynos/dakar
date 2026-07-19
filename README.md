@@ -19,11 +19,9 @@ ______________________________________________________________________
 
 ## Licence
 
-A licence has not been chosen yet; treat the code as all rights reserved
-until one lands.
+ISC — see [LICENSE](LICENSE) for details.
 
 ______________________________________________________________________
-
 
 ### Installation
 

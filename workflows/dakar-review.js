@@ -956,7 +956,7 @@ async function workflowMain() {
       // Scope the jitter seed per review (head commit) so concurrent reviews of
       // different heads decorrelate; the ledger callId and agent label stay the
       // bare task id.
-      outcome: await callWithFlexRetry(RETRY_CONFIG, `${prepared.headCommit}:${task.taskId}`, () => agent(taskPrompt(task, prepared, promptContext), {
+      outcome: await callWithFlexRetry(RETRY_CONFIG, `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`, () => agent(taskPrompt(task, prepared, promptContext), {
         label: task.taskId,
         phase: "Review",
         adapter: task.adapter,
@@ -1059,7 +1059,7 @@ async function workflowMain() {
       pricingTableVersion: PRICING_TABLE.version,
       attempts: 1
     });
-    const auditOutcome = await callWithFlexRetry(RETRY_CONFIG, `${prepared.headCommit}:audit`, () => agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
+    const auditOutcome = await callWithFlexRetry(RETRY_CONFIG, `${REPO_ROOT}:${prepared.headCommit}:audit`, () => agent(auditPrompt(auditCandidates, prepared, promptContext, REMAINING_BUDGET_NOTE), {
       label: "audit",
       phase: "Audit",
       adapter: TERRA_LANE.adapter,
@@ -1239,7 +1239,8 @@ async function workflowMain() {
     seenRecordedModels.add(entry.model);
     recordedModels.push(entry.model);
   }
-  const recordInput = {
+  const coverageComplete = truncatedFiles.length === 0 && admissionRefusals.length === 0 && lunaDowngrades.length === 0;
+  const recordInput = coverageComplete ? {
     reviewId: `head-${prepared.headCommit}`,
     baseCommit: prepared.reviewBase,
     headCommit: prepared.headCommit,
@@ -1249,6 +1250,12 @@ async function workflowMain() {
     findingsTotal: authoritativeFindings.length,
     summary: authoritativeSummary,
     metrics
+  } : void 0;
+  const recordWithheld = coverageComplete ? void 0 : {
+    reason: "planned finder coverage was incomplete; the head is not recorded as reviewed",
+    truncatedFileCount: truncatedFiles.length,
+    admissionRefusalCount: admissionRefusals.length,
+    lunaDowngradeCount: lunaDowngrades.length
   };
   return {
     ok: true,
@@ -1270,7 +1277,8 @@ async function workflowMain() {
     summary: authoritativeSummary,
     reportMarkdown: authoritativeReport,
     metrics,
-    recordInput
+    ...recordInput ? { recordInput } : {},
+    ...recordWithheld ? { recordWithheld } : {}
   };
 }
 

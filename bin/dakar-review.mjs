@@ -31,12 +31,19 @@ const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
  * `worstCaseReviewSeconds` reason about one bounded value rather than diverging
  * (e.g. `--per-call-timeout 5000` stamping 5000 while the workflow caps at 900).
  *
+ * Mirrors `resolveWorkflowConfig`'s `boundedInteger` semantics exactly
+ * (src/workflows/dakar-review/config.ts): a sub-minimum or invalid value
+ * falls back to the default rather than clamping up, and an over-maximum
+ * value clamps down — so the derived adapter timeout and the workflow's
+ * own `perCallTimeoutSeconds` can never diverge.
+ *
  * @param {number} [value] - the parsed `--per-call-timeout` value, if any.
- * @returns {number} the value clamped to [30, 900], defaulting to 300.
+ * @returns {number} the bounded value: floor(value) in [30, 900] capped at
+ * 900, or the 300 default when invalid or below 30.
  */
 function clampPerCallTimeout(value = DEFAULT_PER_CALL_TIMEOUT_SECONDS) {
-  if (!Number.isFinite(value)) return DEFAULT_PER_CALL_TIMEOUT_SECONDS
-  return Math.min(900, Math.max(30, Math.trunc(value)))
+  const floored = Math.floor(Number(value))
+  return Number.isFinite(floored) && floored >= 30 ? Math.min(floored, 900) : DEFAULT_PER_CALL_TIMEOUT_SECONDS
 }
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -472,8 +479,15 @@ function recordReview(output, trustedLocation, prepared) {
   if (!output || output.dryRun || output.skipped || output.ok !== true) {
     return output
   }
-  // Fail closed: an ok result with no recordInput must never be treated as a
-  // complete review, so refuse rather than silently return it unrecorded.
+  // A review that completed with partial planned coverage legitimately
+  // withholds recordInput (recordWithheld carries the reason and counts);
+  // the head must stay unrecorded, and that is not an error.
+  if (output.recordWithheld && !output.recordInput) {
+    return output
+  }
+  // Fail closed: an ok result with no recordInput and no recordWithheld
+  // marker must never be treated as a complete review, so refuse rather
+  // than silently return it unrecorded.
   if (!output.recordInput) {
     const error = 'workflow result lacked recordInput; refusing to treat an unrecorded review as complete'
     output.ok = false

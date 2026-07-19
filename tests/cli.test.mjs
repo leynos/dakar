@@ -207,16 +207,19 @@ test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout',
   }
 
   // The derived config must reason about the same bounded value as the workflow,
-  // which clamps perCallTimeoutSeconds to [30, 900] (config.ts). An over-ceiling
-  // flag clamps down to 900 and an under-floor flag clamps up to 30, so the
-  // stamped adapter timeout and worstCaseReviewSeconds never diverge.
+  // which bounds perCallTimeoutSeconds via boundedInteger (config.ts). An
+  // over-ceiling flag clamps down to 900 and an under-floor flag falls back to
+  // the 300 default, so the stamped adapter timeout and
+  // worstCaseReviewSeconds never diverge.
   const overCeiling = runOnce(['--per-call-timeout', '5000'])
   for (const name of piAdapters) {
     assert.equal(overCeiling.config.adapters[name].timeout, 900, `${name} clamps an over-ceiling timeout to 900 s`)
   }
   const underFloor = runOnce(['--per-call-timeout', '10'])
   for (const name of piAdapters) {
-    assert.equal(underFloor.config.adapters[name].timeout, 30, `${name} clamps an under-floor timeout to 30 s`)
+    // boundedInteger semantics: below the 30 s floor falls back to the 300 s
+    // default (mirroring resolveWorkflowConfig), so both sides stay aligned.
+    assert.equal(underFloor.config.adapters[name].timeout, 300, `${name} falls back to the default for an under-floor timeout`)
   }
 })
 
@@ -1021,4 +1024,34 @@ test('install script help does not install', () => {
   })
 
   assert.match(output, /Usage: \.\/install\.sh/u)
+})
+
+test('a recordWithheld result stays successful and records nothing', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const stateRoot = join(tempRoot, 'trusted-state')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  // Partial planned coverage legitimately withholds recordInput; the CLI must
+  // pass the result through unrecorded without flipping it to a record error.
+  writeFileSync(
+    fakeOdw,
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], reportMarkdown: 'x', metrics: {},
+  recordWithheld: { reason: 'planned finder coverage was incomplete', truncatedFileCount: 2, admissionRefusalCount: 0, lunaDowngradeCount: 0 } }))
+`,
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  const output = JSON.parse(result.stdout)
+
+  assert.equal(result.status, 0)
+  assert.equal(output.ok, true)
+  assert.equal(output.stage, undefined, 'a withheld record is not a record error')
+  assert.equal(output.recordWithheld.truncatedFileCount, 2)
+  assert.equal(output.recorded, undefined, 'nothing is stamped as recorded')
+  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false, 'nothing may be recorded')
 })
