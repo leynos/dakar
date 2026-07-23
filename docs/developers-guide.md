@@ -168,6 +168,15 @@ and pass the reviewed repository as the workflow `repoRoot` argument. This is
 intentional: globally installed agents need Dakar's workflow, state helper, and
 `odw.config.json` to be available even when they review another checkout.
 
+The packaged `odw.config.json` is an immutable installation input, not the
+configuration passed directly to a CLI-started run. Before spawning ODW, the
+CLI calls `deriveOdwConfig()` from `scripts/odw-config.mjs`, clamps
+`--per-call-timeout` to the workflow's supported bounds, stamps that timeout
+onto the three pi Flex adapters, and writes a temporary per-run config. The
+workflow receives the same clamped value in its arguments so adapter-level
+termination and retry budgeting cannot disagree. Direct ODW users remain
+responsible for supplying equivalent adapter timeouts in their own config.
+
 When the reviewed repository has a root `AGENTS.md`, the CLI should pass its
 content as `agentInstructions`. Keep this as context for review agents, not as
 an override for Dakar's schema, output, or safety rules.

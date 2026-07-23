@@ -130,6 +130,15 @@ code around a workflow whose only phases are Plan, Review (Luna Flex finder
 fan-out), and Audit (one Terra Flex issue-set audit); the CLI records every
 successful result directly rather than only recovering after a failure.
 
+The CLI also owns the model-call timeout boundary. The packaged
+`odw.config.json` remains unchanged on disk; for each CLI-started run,
+`scripts/odw-config.mjs::deriveOdwConfig()` copies it and stamps the clamped
+`--per-call-timeout` value onto only the three pi Flex adapters. The CLI passes
+that same value into the workflow configuration, keeping ODW's adapter timeout
+aligned with the deterministic retry and worst-case wall-clock calculation.
+Direct ODW invocation bypasses this host derivation and must provide an
+equivalent adapter timeout itself.
+
 ODW still receives one workflow file, but that runtime constraint does not
 require one source file. ADR 001 establishes typed source modules under
 `src/workflows/dakar-review/` and a small compiler that produces the committed

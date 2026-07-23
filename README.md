@@ -1,9 +1,6 @@
-# Dakar
-
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](
-https://deepwiki.com/leynos/dakar)
-
 # 🏜️ Dakar
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/leynos/dakar)
 
 *Semantic code review that knows exactly what it is allowed to spend.*
 
@@ -16,12 +13,25 @@ enforced before any call is dispatched.
 
 ______________________________________________________________________
 
+## Why Dakar?
 
-## Licence
-
-ISC — see [LICENSE](LICENSE) for details.
+- **A hard cost ceiling, not a cost report**: the Terra audit's worst-case
+  estimate is reserved first, every finder call passes admission control,
+  and a review that cannot afford its audit refuses before spending
+  anything.
+- **Deterministic where determinism is possible**: no model is paid to run
+  a shell command and echo its JSON. Range preparation, report rendering,
+  and review-history recording are host code with tests.
+- **One adversarial audit instead of thirty verifier calls**: candidates
+  are deduplicated and capped deterministically, then judged as an issue
+  set — duplicates merged, causes clustered, performative findings
+  rejected.
+- **Reviews remember where they stopped**: completed reviews record the
+  reviewed head, so the next run reviews only new commits.
 
 ______________________________________________________________________
+
+## Quick start
 
 ### Installation
 
@@ -30,18 +40,20 @@ ______________________________________________________________________
 export OPENAI_API_KEY="sk-..."
 ```
 
+### Basic usage
 
-## Contributing
-
-Contributions welcome! Please read [AGENTS.md](AGENTS.md) for the
-repository contract and run `make check` before committing.
-
+```bash
 # Review the current branch's unreviewed commits against origin/main
 dakar-review --base origin/main --telemetry
 
+# See the resolved policy, lanes, limits, and budget without spending
+dakar-review --dry-run
+```
 
-## Quick start
+The final result is a single JSON object on stdout (or Markdown with
+`--format markdown`); progress and telemetry stay on stderr.
 
+______________________________________________________________________
 
 ## How a review flows
 
@@ -75,39 +87,6 @@ review with complete planned coverage records the reviewed head.*
 
 ______________________________________________________________________
 
-## Why Dakar?
-
-- **A hard cost ceiling, not a cost report**: the Terra audit's worst-case
-  estimate is reserved first, every finder call passes admission control,
-  and a review that cannot afford its audit refuses before spending
-  anything.
-- **Deterministic where determinism is possible**: no model is paid to run
-  a shell command and echo its JSON. Range preparation, report rendering,
-  and review-history recording are host code with tests.
-- **One adversarial audit instead of thirty verifier calls**: candidates
-  are deduplicated and capped deterministically, then judged as an issue
-  set — duplicates merged, causes clustered, performative findings
-  rejected.
-- **Reviews remember where they stopped**: completed reviews record the
-  reviewed head, so the next run reviews only new commits.
-
-______________________________________________________________________
-
-
-### Basic usage
-
-```bash
-
-# See the resolved policy, lanes, limits, and budget without spending
-dakar-review --dry-run
-```
-
-The final result is a single JSON object on stdout (or Markdown with
-`--format markdown`); progress and telemetry stay on stderr.
-
-______________________________________________________________________
-
-
 ## Features
 
 - CodeRabbit-compatible configuration discovery with documented
@@ -124,7 +103,6 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-
 ## Learn more
 
 - [Documentation contents](docs/contents.md) — the index for the full
@@ -138,3 +116,14 @@ ______________________________________________________________________
 - [Roadmap](docs/roadmap.md) — planned features and progress.
 
 ______________________________________________________________________
+
+## Licence
+
+ISC — see [licence](LICENSE) for details.
+
+______________________________________________________________________
+
+## Contributing
+
+Contributions welcome! Please read [AGENTS.md](AGENTS.md) for the
+repository contract and run `make check` before committing.

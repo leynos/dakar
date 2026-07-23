@@ -1109,6 +1109,38 @@ if (mode === 'run') {
   assert.equal(output.recorded.headCommit, head)
 })
 
+test('a failed grace fetch reports the result error in the log envelope', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(
+    fakeOdw,
+    `#!/usr/bin/env node
+const mode = process.argv[2]
+if (mode === 'run') {
+  process.stdout.write('started run 20260719-000000-fedcba\\n')
+} else if (mode === 'logs') {
+  setInterval(() => {}, 1000)
+} else if (mode === 'result') {
+  process.stderr.write('grace fetch exploded\\n')
+  process.exitCode = 42
+}
+`,
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base,
+     '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+
+  assert.equal(result.status, 1)
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /"stage":\s*"odw-logs"/u)
+  assert.match(result.stderr, /"error":\s*"grace fetch exploded"/u)
+})
+
 test('an outer timeout below the retry worst case warns on stderr', () => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
   const stateRoot = join(tempRoot, 'trusted-state')
@@ -1126,4 +1158,3 @@ test('an outer timeout below the retry worst case warns on stderr', () => {
   assert.equal(result.status, 0)
   assert.match(result.stderr, /below the retry schedule's worst case/u)
 })
-

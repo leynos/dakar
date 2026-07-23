@@ -712,14 +712,16 @@ async function runOdwWithTelemetry(options, workflowArgs) {
     )
     try {
       return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
-    } catch {
+    } catch (error) {
       process.stderr.write(
         `${JSON.stringify(
           {
             ok: false,
             stage: 'odw-logs',
             runId,
-            error: `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
+            error:
+              error.message ||
+              `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
           },
           null,
           2,
