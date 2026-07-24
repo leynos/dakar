@@ -14,11 +14,16 @@ const DEFAULT_OUTPUT = path.join(ROOT, 'workflows', 'dakar-review.js')
 // is framed verbatim, while declaration-only and type-only modules are erased.
 // The metafile comparison below enforces this manifest in both directions.
 const RUNTIME_MODULES = [
+  'admission.ts',
   'candidates.ts',
   'config.ts',
   'main.ts',
   'model-routing.ts',
+  'pricing.ts',
+  'policy.ts',
   'prompts.ts',
+  'retry.ts',
+  'sarif.ts',
   'schemas.ts',
   'shell.ts',
   'task-graph.ts',
@@ -32,14 +37,37 @@ export class WorkflowBuildError extends Error {
   }
 }
 
+/**
+ * Fail the build by throwing a coded {@link WorkflowBuildError}.
+ *
+ * @param {string} code - the machine-readable failure code (e.g. `BUILD_META_COUNT`).
+ * @param {string} message - the human-readable failure description.
+ * @returns {never} always throws; never returns normally.
+ */
 function reject(code, message) {
   throw new WorkflowBuildError(code, message)
 }
 
+/**
+ * Normalise CRLF and lone-CR line endings to LF so the generated artefact and
+ * its freshness comparison are byte-stable across platforms.
+ *
+ * @param {string} text - the source text to normalise.
+ * @returns {string} the text with every line ending collapsed to `\n`.
+ */
 function normalizeLineEndings(text) {
   return text.replace(/\r\n?/gu, '\n')
 }
 
+/**
+ * Whether a TypeScript AST node is a compile-time constant: a string, numeric,
+ * boolean, or null literal, or an array or object literal composed recursively
+ * of such literals with non-computed keys. Used to prove the metadata banner's
+ * `meta` object is a static literal and carries no executable expression.
+ *
+ * @param {import('typescript').Node} node - the AST node to inspect.
+ * @returns {boolean} true only when the node is a fully literal value.
+ */
 function isLiteralValue(node) {
   if (
     ts.isStringLiteral(node) ||
@@ -228,6 +256,17 @@ export async function buildWorkflow({
   return artefact
 }
 
+/**
+ * CLI entry point: parse `--check` and `--out-file <path>` arguments, then
+ * either build the workflow artefact or verify it is fresh.
+ *
+ * Side effects: writes the artefact (unless `--check`), logs a status line to
+ * stderr, and sets `process.exitCode` — 2 for a usage error, 1 for a build or
+ * freshness failure, 0 on success. Never throws to the top level; build errors
+ * are caught and reported with their {@link WorkflowBuildError} code.
+ *
+ * @returns {Promise<void>} resolves once the build or check has completed.
+ */
 async function main() {
   let checkOnly = false
   let outFile = DEFAULT_OUTPUT

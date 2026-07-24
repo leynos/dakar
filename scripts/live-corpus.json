@@ -1,0 +1,44 @@
+[
+  {
+    "tier": "tiny",
+    "repo": "leynos/comenq",
+    "pr": 140,
+    "base": "e39920ff83c23d75dd1ce4c2d4e35e7e05fd461f",
+    "head": "448f1a4581856894f79d18637ff784b928214ab2"
+  },
+  {
+    "tier": "small",
+    "repo": "leynos/ddlint",
+    "pr": 294,
+    "base": "73ad5cbe7b0850c48196012f5046b31726a23490",
+    "head": "dab5e73472b4d16ba3b39644dc714765d66068ce"
+  },
+  {
+    "tier": "medium",
+    "repo": "leynos/frankie",
+    "pr": 102,
+    "base": "b5695f9a6394172245ebaa6f300f222d1019d14e",
+    "head": "e6f6607c0b4827c920393e5c2d1d5327f31cfa0a"
+  },
+  {
+    "tier": "upper-medium",
+    "repo": "leynos/rstest-bdd",
+    "pr": 593,
+    "base": "3410c4ab29cf279aec019947d88c4a521cae4018",
+    "head": "6d0a14bb1cc36cf2b254221580ac56d40efc2179"
+  },
+  {
+    "tier": "large",
+    "repo": "leynos/wireframe",
+    "pr": 612,
+    "base": "6ba14735ca72609d87a3fd054f38ac48b391ee79",
+    "head": "1df84ef92f91c9dc47caea76e4dd282db3c19761"
+  },
+  {
+    "tier": "oversize-probe",
+    "repo": "leynos/wireframe",
+    "pr": 609,
+    "base": "1f8abdb4c536090f56892757325c5425a5a3b168",
+    "head": "0cf82559ba39209b1f0238333c1920184c1b14e7"
+  }
+]

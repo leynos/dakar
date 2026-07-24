@@ -59,12 +59,82 @@ test('dry-run exposes routed workflow contract', () => {
   assert.equal(result.limits.maxTasks, 6)
   assert.equal(result.limits.maxCandidates, 12)
   assert.equal(result.limits.maxFindings, 4)
+  assert.equal(result.limits.maxAuditCandidates, 30)
+  assert.equal(result.routingPolicy, 'deterministic-flex-v1')
   assert.ok(Array.isArray(result.defaultTaskGraph))
   assert.ok(result.defaultTaskGraph.length >= 3)
   assert.ok(result.defaultTaskGraph.every((task) => task.taskId && task.assignedModel && task.adapter))
   assert.equal(result.candidateSchema.properties.candidates.type, 'array')
   assert.equal(result.verdictSchema.properties.status.enum.includes('accepted'), true)
-  assert.equal(result.synthesisSchema.properties.reportMarkdown.type, 'string')
+  assert.equal(result.auditSchema.required.includes('verdicts'), true)
+  assert.equal(result.auditSchema.properties.verdicts.items.properties.clusterId.type, 'string')
+  assert.equal(result.synthesisSchema, undefined)
+})
+
+test('dry-run reports the Flex lanes, budget, and reserved audit estimate', () => {
+  const result = runDryRun()
+
+  assert.deepEqual(result.lanes.luna, {
+    role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low',
+  })
+  assert.deepEqual(result.lanes['luna-medium'], {
+    role: 'luna-medium', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-medium', serviceTier: 'flex', reasoning: 'medium',
+  })
+  assert.deepEqual(result.lanes.terra, {
+    role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex', serviceTier: 'flex', reasoning: 'medium',
+  })
+  assert.equal(result.budgetGbp, 0.1)
+  assert.equal(result.pricingTableVersion, '2026-07-18')
+  // Reserved Terra audit worst case: (48000 + 13000) x 1.5625/1e6 + 2500 x 7.5/1e6 = 0.1140625.
+  assert.ok(Math.abs(result.reservedAuditUsd - 0.1140625) < 1e-9, `reservedAuditUsd was ${result.reservedAuditUsd}`)
+  // The chain-level worst case surfaces the full retry cost of the audit for
+  // operators without admission reserving it: one attempt's reserve times the
+  // Flex attempt count.
+  assert.ok(
+    Math.abs(result.reservedAuditChainUsd - result.reservedAuditUsd * result.flexRetry.flexAttempts) < 1e-9,
+    `reservedAuditChainUsd was ${result.reservedAuditChainUsd}`,
+  )
+  assert.equal(result.flexLimits.maxLunaFlexCalls, 4)
+  assert.equal(result.flexLimits.transactionMaxFiles, 5)
+  assert.equal(result.flexLimits.transactionMaxInputTokens, 12000)
+  assert.equal(result.flexLimits.transactionMaxOutputTokens, 750)
+  assert.equal(result.flexLimits.terraMaxInputTokens, 48000)
+  assert.equal(result.flexLimits.terraMaxOutputTokens, 2500)
+  assert.equal(result.flexLimits.adapterOverheadTokens, 13000)
+})
+
+test('dry-run reports the Flex retry schedule and worst-case timeout budget', () => {
+  const result = runDryRun()
+
+  assert.deepEqual(result.flexRetry, {
+    flexAttempts: 3,
+    flexInitialBackoffSeconds: 30,
+    flexMaxBackoffSeconds: 120,
+    flexJitterSeconds: 10,
+    perCallTimeoutSeconds: 300,
+  })
+  // Pack chain plus audit chain: 2 * (3 * 300 + (30 + 10) + (60 + 10)) = 2020.
+  assert.equal(result.worstCaseReviewSeconds, 2020)
+  assert.ok(result.worstCaseReviewSeconds < 3600, 'the worst case must fit the outer --timeout 3600')
+})
+
+test('dry-run honours a custom audit cap and clamps an unknown routing policy', () => {
+  // Only 'deterministic-flex-v1' is a live routing policy, so an unknown value
+  // clamps to it rather than being echoed back into the dry-run contract.
+  const result = runDryRun({ maxAuditCandidates: 7, routingPolicy: 'legacy' })
+
+  assert.equal(result.limits.maxAuditCandidates, 7)
+  assert.equal(result.routingPolicy, 'deterministic-flex-v1')
+})
+
+test('dry-run ignores a supplied prepared review and does not echo it', () => {
+  const result = runDryRun({
+    prepared: { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: 'a'.repeat(40), headCommit: 'b'.repeat(40), commitCount: 2, changedFiles: ['src/a.ts'] },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.dryRun, true)
+  assert.equal(result.prepared, undefined)
 })
 
 test('dry-run routes requested reasoning through ODW adapters', () => {
@@ -100,7 +170,7 @@ test('dry-run rejects malformed model and limit inputs in favour of safe default
     models: [],
   })
 
-  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20 })
+  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20, maxAuditCandidates: 30 })
   assert.deepEqual(result.models, [
     'gpt-5.5/medium',
     'gpt-5.5/high',
@@ -117,10 +187,10 @@ test('dry-run always retains the mandatory review summary within a small task bu
 
 test('dry-run clamps oversized limits to explicit ceilings', () => {
   const result = runDryRun({ maxTasks: 999, maxCandidates: 9999, maxFindings: 999 })
-  assert.deepEqual(result.limits, { maxTasks: 64, maxCandidates: 1000, maxFindings: 200 })
+  assert.deepEqual(result.limits, { maxTasks: 64, maxCandidates: 1000, maxFindings: 200, maxAuditCandidates: 30 })
 })
 
 test('dry-run treats positive sub-unit limits as invalid defaults', () => {
   const result = runDryRun({ maxTasks: 0.5, maxCandidates: 0.9, maxFindings: 0.1 })
-  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20 })
+  assert.deepEqual(result.limits, { maxTasks: 8, maxCandidates: 30, maxFindings: 20, maxAuditCandidates: 30 })
 })
