@@ -85,10 +85,12 @@ Non-goals:
 > **Superseded pipeline shape.**
 > [ADR 002](adr-002-deterministic-tiered-review-cost.md) moved
 > configuration resolution and range preparation into deterministic CLI host
-> code before `odw run`, and history recording into deterministic CLI host code
-> after it. Report rendering remains deterministic, model-free logic in
-> `main.ts`, executed inside the compiled ODW workflow rather than through an
-> agent call. The workflow's phases are now Plan, Review, and Audit (one
+> code before `odw run`, and review-history recording into deterministic CLI
+> host code after it. Separately, report rendering remains deterministic,
+> model-free logic inside the compiled ODW workflow, implemented by
+> `src/workflows/dakar-review/main.ts::workflowMain()` through
+> `renderSarifMarkdown(sarif)`.
+> The workflow's phases are now Plan, Review, and Audit (one
 > issue-set audit call replaces per-candidate verification). Figure 1 and its
 > prose below describe the pre-ADR-002 shape for historical context; see
 > [`docs/developers-guide.md`](developers-guide.md) §§2-4 for the current
