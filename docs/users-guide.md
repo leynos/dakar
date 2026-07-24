@@ -399,6 +399,7 @@ Dry-run output is also JSON, but it describes the contract instead of a review:
   "budgetUsd": 0.127,
   "pricingTableVersion": "2026-07-18",
   "reservedAuditUsd": 0.1140625,
+  "reservedAuditChainUsd": 0.3421875,
   "flexLimits": {
     "maxLunaFlexCalls": 4,
     "transactionMaxFiles": 5,

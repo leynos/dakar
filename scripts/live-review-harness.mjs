@@ -13,10 +13,13 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
+import { once } from 'node:events'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { fileURLToPath } from 'node:url'
+import { Writable } from 'node:stream'
 import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -24,6 +27,8 @@ const corpusPath = join(moduleDir, 'live-corpus.json')
 const DAKAR_USAGE_MARKER = 'DAKAR-USAGE: '
 /** Token-count fields a usage payload may carry; each must be a finite number. */
 const USAGE_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite']
+/** Maximum stderr line retained by the incremental telemetry scanner. */
+const MAX_TELEMETRY_LINE_CHARS = 1024 * 1024
 
 /**
  * Whether a value is a non-null, non-array plain object.
@@ -295,26 +300,112 @@ export function extractUsageLines(stderrText) {
   const malformed = []
   const lines = stderrText.split('\n')
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    const markerIndex = line.indexOf(DAKAR_USAGE_MARKER)
-    if (markerIndex === -1) continue
-    const payload = line.slice(markerIndex + DAKAR_USAGE_MARKER.length).trim()
-    let parsed
-    try {
-      parsed = JSON.parse(payload)
-    } catch {
-      // Position and category only: never the raw payload text.
-      malformed.push({ line: index + 1, category: 'invalid-json' })
-      continue
-    }
-    const outcome = classifyUsageValue(parsed)
-    if (outcome.category === 'valid') {
-      usages.push(outcome.value)
-    } else {
-      malformed.push({ line: index + 1, category: outcome.category })
-    }
+    collectUsageLine(lines[index], index + 1, usages, malformed)
   }
   return { usages, malformed }
+}
+
+/**
+ * Classify one stderr line without retaining raw telemetry in diagnostics.
+ *
+ * @param {string} line - one decoded stderr line without its newline.
+ * @param {number} lineNumber - one-based position in the stderr stream.
+ * @param {Array<Record<string, number>>} usages - valid-record accumulator.
+ * @param {Array<{ line: number, category: string }>} malformed - diagnostic accumulator.
+ * @returns {void}
+ */
+function collectUsageLine(line, lineNumber, usages, malformed) {
+  const markerIndex = line.indexOf(DAKAR_USAGE_MARKER)
+  if (markerIndex === -1) return
+  const payload = line.slice(markerIndex + DAKAR_USAGE_MARKER.length).trim()
+  let parsed
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    // Position and category only: never the raw payload text.
+    malformed.push({ line: lineNumber, category: 'invalid-json' })
+    return
+  }
+  const outcome = classifyUsageValue(parsed)
+  if (outcome.category === 'valid') {
+    usages.push(outcome.value)
+  } else {
+    malformed.push({ line: lineNumber, category: outcome.category })
+  }
+}
+
+/**
+ * Build a bounded streaming scanner for `DAKAR-USAGE:` stderr records.
+ *
+ * The scanner decodes across chunk boundaries and retains at most
+ * `maxLineChars` from the current line. An oversized telemetry line is
+ * diagnosed without preserving its payload, so provider output cannot cause
+ * unbounded harness memory growth or leak through error reporting.
+ *
+ * @param {object} [options] - scanner bounds.
+ * @param {number} [options.maxLineChars] - maximum retained characters per line.
+ * @returns {{ stream: Writable, result: () => { usages: Array<Record<string, number>>, malformed: Array<{ line: number, category: string }> } }}
+ *   a writable stderr sink and a snapshot function for parsed telemetry.
+ */
+export function createUsageScanner({ maxLineChars = MAX_TELEMETRY_LINE_CHARS } = {}) {
+  const decoder = new StringDecoder('utf8')
+  const usages = []
+  const malformed = []
+  let partialLine = ''
+  let lineNumber = 0
+  let overflowing = false
+  let overflowContainsMarker = false
+
+  const consume = (text, final = false) => {
+    const fragments = text.split('\n')
+    const completeCount = final ? fragments.length : fragments.length - 1
+    for (let index = 0; index < fragments.length; index += 1) {
+      const complete = index < completeCount
+      const fragment = fragments[index]
+      if (!overflowing) {
+        const remaining = maxLineChars - partialLine.length
+        partialLine += fragment.slice(0, Math.max(0, remaining))
+        if (fragment.length > remaining) {
+          overflowContainsMarker = partialLine.includes(DAKAR_USAGE_MARKER)
+          partialLine = ''
+          overflowing = true
+        }
+      }
+      if (!complete) continue
+      lineNumber += 1
+      if (overflowing) {
+        if (overflowContainsMarker) malformed.push({ line: lineNumber, category: 'invalid-json' })
+      } else {
+        collectUsageLine(partialLine, lineNumber, usages, malformed)
+      }
+      partialLine = ''
+      overflowing = false
+      overflowContainsMarker = false
+    }
+  }
+
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      try {
+        consume(decoder.write(chunk))
+        callback()
+      } catch (error) {
+        callback(error)
+      }
+    },
+    final(callback) {
+      try {
+        consume(decoder.end(), true)
+        callback()
+      } catch (error) {
+        callback(error)
+      }
+    },
+  })
+  return {
+    stream,
+    result: () => ({ usages: [...usages], malformed: [...malformed] }),
+  }
 }
 
 /**
@@ -404,14 +495,16 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
-  const stdoutChunks = []
+  const resultFile = createWriteStream(resultPath)
   const stderrFile = createWriteStream(stderrPath)
-  // Tee child stderr to the log file and this process's stderr only; the
-  // DAKAR-USAGE scan reads the log file back after exit rather than buffering
-  // the full stderr in memory, which is unbounded for long live reviews.
-  child.stdout.on('data', (chunk) => stdoutChunks.push(chunk))
+  const usageScanner = createUsageScanner()
+  const resultWritten = once(resultFile, 'finish')
+  const stderrWritten = once(stderrFile, 'finish')
+  const telemetryScanned = once(usageScanner.stream, 'finish')
+  child.stdout.pipe(resultFile)
+  child.stderr.pipe(stderrFile)
+  child.stderr.pipe(usageScanner.stream)
   child.stderr.on('data', (chunk) => {
-    stderrFile.write(chunk)
     process.stderr.write(chunk)
   })
 
@@ -419,23 +512,17 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
     child.on('error', reject)
     child.on('close', (code) => resolvePromise(code))
   })
-  // Wait for the log file to flush before reading it back for the usage scan.
-  await new Promise((resolveEnd) => stderrFile.end(resolveEnd))
-
-  const stdoutText = Buffer.concat(stdoutChunks).toString('utf8')
-  const stderrText = readFileSync(stderrPath, 'utf8')
-  writeFileSync(resultPath, stdoutText)
-
-  const { usages, malformed: malformedTelemetry } = extractUsageLines(stderrText)
+  await Promise.all([resultWritten, stderrWritten, telemetryScanned])
 
   let resultJson
   try {
-    resultJson = JSON.parse(stdoutText)
+    resultJson = JSON.parse(readFileSync(resultPath, 'utf8'))
   } catch (error) {
     throw new Error(
       `dakar-review stdout was not valid JSON (exit ${exitCode}): ${error.message}; see ${resultPath} and ${stderrPath}`,
     )
   }
+  const { usages, malformed: malformedTelemetry } = usageScanner.result()
 
   if (exitCode !== 0 && resultJson?.ok !== false) {
     throw new Error(`dakar-review exited with code ${exitCode}; see ${stderrPath}`)

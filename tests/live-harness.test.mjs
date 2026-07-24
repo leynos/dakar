@@ -10,6 +10,7 @@
  */
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { once } from 'node:events'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -17,6 +18,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  createUsageScanner,
   extractUsageLines,
   guardStateRoot,
   loadCorpusEntry,
@@ -239,6 +241,23 @@ test('extractUsageLines accepts a plain object and applies the same rule to a ne
   assert.deepEqual(usages[0], { input: 3, output: 5, cacheRead: 0, cacheWrite: 0 })
   assert.deepEqual(usages[1], { model: 'gpt-5.6-luna', usage: { input: 10, output: 2, cacheRead: 1, cacheWrite: 4 } })
   assert.deepEqual(malformed, [{ line: 3, category: 'invalid-fields' }])
+})
+
+test('createUsageScanner parses chunked telemetry and bounds oversized lines', async () => {
+  const scanner = createUsageScanner({ maxLineChars: 80 })
+  scanner.stream.write('progress\nDAKAR-USA')
+  scanner.stream.write('GE: {"input":3,"output":5,"cacheRead":0,"cacheWrite":1}\n')
+  scanner.stream.write(`DAKAR-USAGE: ${'x'.repeat(100)}\n`)
+  scanner.stream.end('DAKAR-USAGE: null')
+  await once(scanner.stream, 'finish')
+
+  assert.deepEqual(scanner.result(), {
+    usages: [{ input: 3, output: 5, cacheRead: 0, cacheWrite: 1 }],
+    malformed: [
+      { line: 3, category: 'invalid-json' },
+      { line: 4, category: 'non-object' },
+    ],
+  })
 })
 
 test('sumUsage ignores non-finite fields rather than propagating NaN', () => {
