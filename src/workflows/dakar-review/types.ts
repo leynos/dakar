@@ -21,21 +21,66 @@ export interface AgentInstructions {
   truncated?: boolean
 }
 
+/** Describes one validated path-scoped instruction from review policy. */
+export interface PolicyPathInstruction {
+  instructions: string
+  path: string
+  policyRef: string
+}
+
+/** Describes one validated deterministic or model-mediated custom check. */
+export interface PolicyCustomCheck {
+  blocking: boolean
+  command?: string
+  gateId: string
+  instructions?: string
+  name: string
+}
+
+/** Carries the normalized, serializable CodeRabbit policy subset. */
+export interface NormalizedReviewPolicy {
+  customChecks: readonly PolicyCustomCheck[]
+  ignoredKeys: readonly string[]
+  language?: string
+  pathInstructions: readonly PolicyPathInstruction[]
+  profile?: string
+  toneInstructions?: string
+  version: 1
+}
+
 /** Describes untrusted external arguments accepted by the workflow entry. */
 export interface WorkflowArgs {
+  adapterOverheadTokens?: unknown
   agentInstructions?: AgentInstructions
   base?: string
+  budgetGbp?: unknown
   config?: string
   dryRun?: boolean
+  flexAttempts?: unknown
+  flexInitialBackoffSeconds?: unknown
+  flexJitterSeconds?: unknown
+  flexMaxBackoffSeconds?: unknown
   head?: string
+  lunaReasoning?: unknown
+  maxAuditCandidates?: unknown
   maxCandidates?: unknown
   maxFindings?: unknown
+  maxLunaFlexCalls?: unknown
   maxTasks?: unknown
   models?: unknown
+  perCallTimeoutSeconds?: unknown
+  policy?: unknown
+  prepared?: PreparedReview
   repoRoot?: string
+  routingPolicy?: unknown
   stateRoot?: string
   synthesisModel?: string
   synthesisReasoning?: string
+  terraMaxInputTokens?: unknown
+  terraMaxOutputTokens?: unknown
+  transactionMaxFiles?: unknown
+  transactionMaxInputTokens?: unknown
+  transactionMaxOutputTokens?: unknown
 }
 
 /** Captures the deterministic review range returned by the state helper. */
@@ -49,6 +94,22 @@ export interface PreparedReview {
   reviewBase?: string
   stateFile?: string
   warnings?: string[]
+  deterministicGates?: DeterministicGateResult[]
+}
+
+/** Captures one host-executed deterministic check without secret-bearing environment data. */
+export interface DeterministicGateResult {
+  blocking: boolean
+  command: string
+  exitCode: number | null
+  gateId: string
+  name: string
+  signal?: string | null
+  status: 'passed' | 'failed' | 'error'
+  stderr: string
+  stderrSha256: string
+  stdout: string
+  stdoutSha256: string
 }
 
 /** Defines one bounded, model-routed unit of changed-file review work. */
@@ -60,7 +121,9 @@ export interface ReviewTask {
   maxFindings: number
   model: string
   modelLabel?: string
+  reasoningEffort?: string
   role: string
+  serviceTier?: string
   taskId: string
   verificationPolicy: string
 }
@@ -107,6 +170,7 @@ export interface Candidate extends RawCandidate {
   taskKind: string
   title: string
   verificationPolicy: string
+  clusterId?: string
   evidenceChecked?: string
   verificationReason?: string
   verificationStatus?: string
@@ -116,6 +180,7 @@ export interface Candidate extends RawCandidate {
 export interface Verdict {
   acceptedSeverity?: 'critical' | 'high' | 'medium' | 'low'
   candidateId: string
+  clusterId?: string
   evidenceChecked: string
   reason: string
   status:
@@ -130,6 +195,12 @@ export interface Verdict {
     | 'needs_human'
 }
 
+/** Captures the single issue-set audit response returned by the audit lane. */
+export interface AuditResult {
+  verdicts: Verdict[]
+  summary?: string
+}
+
 /** Records why a candidate or unknown verifier reference was not accepted. */
 export interface Discarded {
   candidate: Candidate | { candidateId?: string }
@@ -138,37 +209,38 @@ export interface Discarded {
   status: string
 }
 
-/** Captures the schema-permitted presentation returned by synthesis. */
-export interface SynthesisResult {
-  findings?: unknown[]
-  metrics?: UnknownObject
-  reportMarkdown?: string
-  summary?: string
-  verdict?: string
-}
-
-/** Captures configuration resolution status, provenance, and checked paths. */
-export interface ConfigResult {
-  config?: string
-  checked?: string[]
-  error?: string
-  ok: boolean
-  source?: 'explicit' | 'repository' | 'user' | 'example'
-}
-
-/** Captures the review-history helper's success or diagnostic output. */
-export interface RecordResult {
-  error?: string
-  headCommit?: string
-  ok: boolean
-  stateFile?: string
-  stderr?: string
-  stdout?: string
-}
-
 /** Bundles trusted repository, policy, and instruction data for prompt builders. */
 export interface PromptContext {
   agentInstructions: AgentInstructions | null
+  policy: NormalizedReviewPolicy
   policyPath: string
   repoRoot: string
+}
+
+/** Records one refused model call and why admission control rejected it. */
+export interface AdmissionRefusal {
+  callId: string
+  kind: 'luna-transaction' | 'terra-audit'
+  reason: string
+  worstCaseUsd: number
+}
+
+/** Records one finder pack that exhausted its Flex retries and was downgraded. */
+export interface LunaDowngrade {
+  taskId: string
+  reason: string
+  attempts: number
+}
+
+/** Records one priced, admitted call for the budget audit trail. */
+export interface LedgerEntry {
+  callId: string
+  phase: string
+  lane: 'luna-flex' | 'terra-flex' | 'standard'
+  model: string
+  serviceTier: string
+  reasoningEffort: string
+  estimatedWorstCaseUsd: number
+  pricingTableVersion: string
+  attempts: number
 }

@@ -11,6 +11,8 @@ const defaultSourcePatterns = [
   'src/workflows/dakar-review/*.js',
   'src/workflows/dakar-review/*.ts',
   ':(exclude)src/workflows/dakar-review/*.d.ts',
+  'scripts/*.mjs',
+  'adapters/pi/extensions/*.ts',
 ]
 
 /** Return tracked authored source files in the documentation audit scope. */
@@ -44,6 +46,15 @@ function inspectFile(file) {
   const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true)
   const symbols = [{ file, name: '<module>', documented: hasModuleJsdoc(sourceText) }]
 
+  /**
+   * Recursively record the documented status of each auditable declaration:
+   * every named function declaration, every exported interface or type alias,
+   * and every exported variable binding. Other nodes are traversed but not
+   * counted.
+   *
+   * @param {import('typescript').Node} node - the current AST node to inspect.
+   * @returns {void}
+   */
   function visit(node) {
     if (ts.isFunctionDeclaration(node) && node.name) {
       symbols.push({ file, name: node.name.text, documented: hasJsdoc(node, sourceText) })

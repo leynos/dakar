@@ -1,6 +1,6 @@
 /** @file Classify changed files and construct the bounded review task graph. */
 
-import { adapterForReasoning, baseModel, modelForRole, modelName } from './model-routing.ts'
+import { adapterForReasoning, baseModel, flexLaneRole, modelForRole, modelName } from './model-routing.ts'
 import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'
 
 /** Defines the bounded limits and model set used to construct review tasks. */
@@ -8,6 +8,33 @@ export interface TaskGraphConfig {
   maxFindings: number
   maxTasks: number
   reviewModels: readonly Readonly<ModelSpec>[]
+}
+
+/** Bounds and lane selection for the deterministic Flex finder plan. */
+export interface FlexFinderConfig {
+  maxLunaFlexCalls: number
+  maxTasks: number
+  transactionMaxFiles: number
+  lunaRole: 'luna' | 'luna-medium'
+  maxFindings: number
+}
+
+/** Fixed kind order that keeps Flex finder packs deterministic and homogeneous. */
+const FLEX_PACK_KIND_ORDER = ['source', 'tests', 'config', 'docs'] as const
+
+/**
+ * Maps a changed path onto the coarse Flex pack kind used for homogeneous packing.
+ *
+ * Dependency and unknown kinds fold into `source`, matching the legacy task
+ * grouping, so every changed file belongs to exactly one packing bucket.
+ *
+ * @param path - Changed repository-relative path.
+ * @returns One of `source`, `tests`, `config`, or `docs`.
+ */
+function flexPackKind(path: string): (typeof FLEX_PACK_KIND_ORDER)[number] {
+  const kind = classifyPath(path)
+  if (kind === 'tests' || kind === 'config' || kind === 'docs') return kind
+  return 'source'
 }
 
 /**
@@ -120,6 +147,62 @@ export function buildTaskGraph(prepared: PreparedReview, config: TaskGraphConfig
   }
   tasks.push(taskSpec('review-summary', prepared.changedFiles || [], 0, config))
   return tasks
+}
+
+/**
+ * Builds the deterministic Luna Flex finder plan for the default route.
+ *
+ * Changed files are grouped by their coarse kind in a fixed order, chunked into
+ * homogeneous packs of at most `transactionMaxFiles`, and capped at the
+ * effective pack cap, `min(maxTasks, maxLunaFlexCalls)`. The legacy
+ * cross-cutting review-summary task is dropped on this route because the Terra
+ * issue-set audit subsumes it. Files beyond the `cap x transactionMaxFiles`
+ * coverage window are not packed and are returned as `truncatedFiles` so the
+ * host can record the partial-coverage bound in metrics.
+ *
+ * @param prepared - Trusted prepare result containing the reviewed changed files.
+ * @param config - Luna call cap, per-pack file cap, lane, and finding limit.
+ * @returns The bounded finder packs and any changed files left uncovered.
+ */
+export function buildFlexFinderPlan(
+  prepared: PreparedReview,
+  config: FlexFinderConfig,
+): { packs: ReviewTask[]; truncatedFiles: string[] } {
+  const lane = flexLaneRole(config.lunaRole)
+  const perPack = Math.max(1, config.transactionMaxFiles)
+  const buckets = new Map<string, string[]>()
+  for (const file of prepared.changedFiles || []) {
+    const kind = flexPackKind(file)
+    const files = buckets.get(kind) ?? []
+    files.push(file)
+    buckets.set(kind, files)
+  }
+  const orderedChunks: Array<{ kind: string; files: string[] }> = []
+  for (const kind of FLEX_PACK_KIND_ORDER) {
+    for (const files of chunk(buckets.get(kind) || [], perPack)) orderedChunks.push({ kind, files })
+  }
+  // --max-tasks is the planned-task cap and composes with --max-luna-calls: the
+  // effective finder cap is the smaller of the two, so a low maxTasks bounds the
+  // dispatched packs even when maxLunaFlexCalls is higher. Truncation accounting
+  // reflects this effective cap.
+  const effectiveCap = Math.max(1, Math.min(config.maxTasks, config.maxLunaFlexCalls))
+  const admittedChunks = orderedChunks.slice(0, effectiveCap)
+  const truncatedFiles = orderedChunks.slice(effectiveCap).flatMap((entry) => entry.files)
+  const packs = admittedChunks.map((entry, index): ReviewTask => ({
+    taskId: `luna-flex-${index + 1}`,
+    kind: entry.kind,
+    files: entry.files,
+    assignedModel: modelName({ model: lane.model, reasoning: lane.reasoning }),
+    adapter: lane.adapter,
+    model: lane.model,
+    modelLabel: lane.adapter,
+    role: lane.role,
+    serviceTier: lane.serviceTier,
+    reasoningEffort: lane.reasoning,
+    maxFindings: Math.max(1, Math.min(config.maxFindings, entry.kind === 'source' ? 6 : 3)),
+    verificationPolicy: 'verify-all',
+  }))
+  return { packs, truncatedFiles }
 }
 
 /**

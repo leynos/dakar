@@ -117,6 +117,42 @@ export function candidatesForVerification(candidates: Candidate[]): Candidate[] 
 }
 
 /**
+ * Compacts eligible candidates into a bounded, ordered issue-set for one audit.
+ *
+ * Candidates are deduplicated by {@link candidateKey} (defence in depth; the
+ * normalized set is already deduplicated upstream), ordered by severity with
+ * stable path/line/id tie-breaks, and capped at maxAuditCandidates. Every
+ * candidate beyond the cap is returned as an explicit `over_audit_cap` discard
+ * rather than silently dropped.
+ *
+ * @param candidates - Eligible candidates selected by the verification policy.
+ * @param maxAuditCandidates - Positive inclusive cap on audited candidates.
+ * @returns The audited subset and the over-cap discards.
+ */
+export function compactForAudit(
+  candidates: Candidate[],
+  maxAuditCandidates: number,
+): { auditCandidates: Candidate[]; overCap: Discarded[] } {
+  const seen = new Set<string>()
+  const deduped: Candidate[] = []
+  for (const candidate of candidates) {
+    const key = candidateKey(candidate)
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(candidate)
+  }
+  const ordered = deduped.sort(bySeverity)
+  const auditCandidates = ordered.slice(0, maxAuditCandidates)
+  const overCap = ordered.slice(maxAuditCandidates).map((candidate): Discarded => ({
+    candidate,
+    status: 'over_audit_cap',
+    reason: `Candidate exceeded the configured audit cap of ${maxAuditCandidates} candidates.`,
+    evidenceChecked: '',
+  }))
+  return { auditCandidates, overCap }
+}
+
+/**
  * Counts discarded candidates by their audit status.
  *
  * @param discarded - Completed discard audit entries.
@@ -149,6 +185,7 @@ export function acceptedFromVerdicts(
       severity: verdict.status === 'severity_downgraded' && typeof verdict.acceptedSeverity === 'string' &&
         (SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) > (SEVERITY_RANK[candidate.severity || ''] ?? 4)
         ? verdict.acceptedSeverity : candidate.severity,
+      clusterId: typeof verdict.clusterId === 'string' && verdict.clusterId !== '' ? verdict.clusterId : candidate.clusterId,
       verificationStatus: verdict.status,
       verificationReason: verdict.reason,
       evidenceChecked: verdict.evidenceChecked,

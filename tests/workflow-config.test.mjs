@@ -17,6 +17,15 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   assert.equal(config.maxCandidates, 30)
   assert.equal(config.maxFindings, 20)
   assert.equal(config.maxTasks, 8)
+  assert.equal(config.maxAuditCandidates, 30)
+  assert.equal(config.routingPolicy, 'deterministic-flex-v1')
+  assert.equal(config.policyValid, true)
+  assert.deepEqual(config.reviewPolicy, {
+    version: 1,
+    pathInstructions: [],
+    customChecks: [],
+    ignoredKeys: [],
+  })
   assert.equal(config.reviewModels, DEFAULT_REVIEW_MODELS)
   assert.equal(config.synthesisModelName, 'gpt-5.5/high')
   assert.equal(config.synthesisAdapter, 'codex-high')
@@ -24,6 +33,160 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   assert.equal(Object.isFrozen(config.reviewModels), true)
   assert.equal(config.reviewModels.every(Object.isFrozen), true)
   assert.throws(() => config.reviewModels.push({ model: 'leak', reasoning: 'low' }), TypeError)
+})
+
+test('resolveWorkflowConfig supplies the ADR 002 Flex knob defaults', () => {
+  const config = resolveWorkflowConfig(undefined)
+
+  assert.equal(config.budgetGbp, 0.1)
+  assert.equal(config.maxLunaFlexCalls, 4)
+  assert.equal(config.transactionMaxFiles, 5)
+  assert.equal(config.transactionMaxInputTokens, 12000)
+  assert.equal(config.transactionMaxOutputTokens, 750)
+  assert.equal(config.terraMaxInputTokens, 48000)
+  assert.equal(config.terraMaxOutputTokens, 2500)
+  assert.equal(config.adapterOverheadTokens, 13000)
+  assert.equal(config.lunaReasoning, 'low')
+})
+
+test('resolveWorkflowConfig supplies the M5 Flex retry and timeout defaults', () => {
+  const config = resolveWorkflowConfig(undefined)
+
+  assert.equal(config.flexAttempts, 3)
+  assert.equal(config.flexInitialBackoffSeconds, 30)
+  assert.equal(config.flexMaxBackoffSeconds, 120)
+  assert.equal(config.flexJitterSeconds, 10)
+  assert.equal(config.perCallTimeoutSeconds, 300)
+})
+
+test('Flex retry knobs clamp to their bounds and reject invalid input', () => {
+  const low = resolveWorkflowConfig({
+    flexAttempts: 0,
+    flexInitialBackoffSeconds: 0,
+    flexMaxBackoffSeconds: 0,
+    flexJitterSeconds: -1,
+    perCallTimeoutSeconds: 1,
+  })
+  assert.equal(low.flexAttempts, 3)
+  assert.equal(low.flexInitialBackoffSeconds, 30)
+  assert.equal(low.flexMaxBackoffSeconds, 120)
+  assert.equal(low.flexJitterSeconds, 10)
+  assert.equal(low.perCallTimeoutSeconds, 300)
+
+  const high = resolveWorkflowConfig({
+    flexAttempts: 999,
+    flexInitialBackoffSeconds: 999,
+    flexMaxBackoffSeconds: 9999,
+    flexJitterSeconds: 999,
+    perCallTimeoutSeconds: 9999,
+  })
+  assert.equal(high.flexAttempts, 6)
+  assert.equal(high.flexInitialBackoffSeconds, 300)
+  assert.equal(high.flexMaxBackoffSeconds, 900)
+  assert.equal(high.flexJitterSeconds, 60)
+  assert.equal(high.perCallTimeoutSeconds, 900)
+
+  // Zero jitter is a valid inclusive-floor value; the others floor at one.
+  assert.equal(resolveWorkflowConfig({ flexJitterSeconds: 0 }).flexJitterSeconds, 0)
+  assert.equal(resolveWorkflowConfig({ flexAttempts: 5 }).flexAttempts, 5)
+})
+
+test('Flex knobs clamp to their bounds and reject invalid input', () => {
+  const low = resolveWorkflowConfig({
+    budgetGbp: 0.001,
+    maxLunaFlexCalls: 0,
+    transactionMaxFiles: 0,
+    adapterOverheadTokens: -5,
+  })
+  assert.equal(low.budgetGbp, 0.1)
+  assert.equal(low.maxLunaFlexCalls, 4)
+  assert.equal(low.transactionMaxFiles, 5)
+  assert.equal(low.adapterOverheadTokens, 13000)
+
+  const high = resolveWorkflowConfig({
+    budgetGbp: 999,
+    maxLunaFlexCalls: 999,
+    transactionMaxFiles: 999,
+    adapterOverheadTokens: 999999,
+  })
+  assert.equal(high.budgetGbp, 10)
+  assert.equal(high.maxLunaFlexCalls, 16)
+  assert.equal(high.transactionMaxFiles, 20)
+  assert.equal(high.adapterOverheadTokens, 50000)
+
+  assert.equal(resolveWorkflowConfig({ budgetGbp: 0.05 }).budgetGbp, 0.05)
+  assert.equal(resolveWorkflowConfig({ adapterOverheadTokens: 0 }).adapterOverheadTokens, 0)
+  assert.equal(resolveWorkflowConfig({ budgetGbp: 'nope' }).budgetGbp, 0.1)
+})
+
+test('lunaReasoning accepts low and medium and rejects other values', () => {
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 'medium' }).lunaReasoning, 'medium')
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 'low' }).lunaReasoning, 'low')
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 'high' }).lunaReasoning, 'low')
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 42 }).lunaReasoning, 'low')
+})
+
+test('resolveWorkflowConfig passes the prepared review through unvalidated', () => {
+  const prepared = {
+    ok: true, stateFile: '/tmp/reviews.toml', reviewBase: 'a'.repeat(40), headCommit: 'b'.repeat(40),
+    commitCount: 3, changedFiles: ['src/a.ts'],
+  }
+  const config = resolveWorkflowConfig({ prepared })
+
+  assert.deepEqual(config.prepared, prepared)
+  assert.equal(resolveWorkflowConfig({}).prepared, undefined)
+  assert.equal(resolveWorkflowConfig(undefined).prepared, undefined)
+})
+
+test('resolveWorkflowConfig validates and freezes the normalized policy hand-off', () => {
+  const policy = {
+    version: 1,
+    language: 'en-GB',
+    pathInstructions: [{
+      policyRef: 'reviews.path_instructions[0]',
+      path: '**/*.ts',
+      instructions: 'Keep types explicit.',
+    }],
+    customChecks: [{
+      gateId: 'gate-001-tests',
+      name: 'Tests',
+      blocking: true,
+      command: 'make test',
+    }],
+    ignoredKeys: ['early_access'],
+  }
+  const config = resolveWorkflowConfig({ policy })
+
+  assert.equal(config.policyValid, true)
+  assert.deepEqual(config.reviewPolicy, policy)
+  assert.notEqual(config.reviewPolicy, policy)
+  assert.equal(Object.isFrozen(config.reviewPolicy), true)
+  assert.equal(Object.isFrozen(config.reviewPolicy.pathInstructions), true)
+  assert.equal(Object.isFrozen(config.reviewPolicy.pathInstructions[0]), true)
+  assert.equal(Object.isFrozen(config.reviewPolicy.customChecks), true)
+})
+
+test('resolveWorkflowConfig marks malformed normalized policy as invalid', () => {
+  for (const policy of [
+    null,
+    { version: 2, pathInstructions: [], customChecks: [], ignoredKeys: [] },
+    { version: 1, pathInstructions: 'wrong', customChecks: [], ignoredKeys: [] },
+    {
+      version: 1,
+      pathInstructions: [{ path: '**/*.ts', instructions: 'missing policyRef' }],
+      customChecks: [],
+      ignoredKeys: [],
+    },
+  ]) {
+    const config = resolveWorkflowConfig({ policy })
+    assert.equal(config.policyValid, false)
+    assert.deepEqual(config.reviewPolicy, {
+      version: 1,
+      pathInstructions: [],
+      customChecks: [],
+      ignoredKeys: [],
+    })
+  }
 })
 
 test('positive limits floor values, cap extremes, and reject invalid input', () => {
@@ -36,6 +199,26 @@ test('positive limits floor values, cap extremes, and reject invalid input', () 
   assert.equal(config.maxCandidates, 2)
   assert.equal(config.maxFindings, 200)
   assert.equal(config.maxTasks, 8)
+})
+
+test('maxAuditCandidates defaults, floors, caps at 100, and rejects invalid input', () => {
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 12 }).maxAuditCandidates, 12)
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 4.9 }).maxAuditCandidates, 4)
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 999 }).maxAuditCandidates, 100)
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 0 }).maxAuditCandidates, 30)
+  assert.equal(resolveWorkflowConfig({ maxAuditCandidates: 'nope' }).maxAuditCandidates, 30)
+})
+
+test('routingPolicy clamps every non-live value to the sole live policy', () => {
+  // Only 'deterministic-flex-v1' is a live routing policy; any other value —
+  // including a non-blank but unknown string — clamps to it so an unknown
+  // policy is never recorded in metrics nor used to suppress warnings.
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 'deterministic-flex-v1' }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 'legacy' }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 'bogus' }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({ routingPolicy: '   ' }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({ routingPolicy: 42 }).routingPolicy, 'deterministic-flex-v1')
+  assert.equal(resolveWorkflowConfig({}).routingPolicy, 'deterministic-flex-v1')
 })
 
 test('valid custom models replace defaults while malformed entries are discarded', () => {
@@ -106,5 +289,7 @@ test('configuration resolution is total for JSON-compatible external input', () 
     assert.ok(config.maxTasks >= 1 && config.maxTasks <= 64)
     assert.ok(config.maxCandidates >= 1 && config.maxCandidates <= 1_000)
     assert.ok(config.maxFindings >= 1 && config.maxFindings <= 200)
+    assert.ok(config.maxAuditCandidates >= 1 && config.maxAuditCandidates <= 100)
+    assert.equal(typeof config.routingPolicy, 'string')
   }))
 })

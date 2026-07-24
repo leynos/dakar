@@ -22,7 +22,7 @@ On each repeated installer run, `install.sh` first executes
 installation from leaving duplicate `dakar` entries while keeping the shared
 Bun lockfile and other global packages intact.
 
-If you prefer to call Bun directly, use an absolute path or `file:` URL:
+For direct Bun invocation, use an absolute path or `file:` URL:
 
 ```bash
 bun install -g "$PWD"
@@ -46,16 +46,32 @@ The CLI runs the installed Dakar workflow and passes the reviewed checkout as
 `repoRoot`, which is required because ODW normally gives agents copied
 workspaces without `.git`.
 
-The equivalent direct ODW invocation is:
+Before invoking ODW, the CLI resolves configuration and prepares the review
+range itself, host-side, with no model calls: it calls
+`scripts/review-state.mjs prepare` in-process and passes the result as the
+workflow's `prepared` argument. If nothing is unreviewed, the CLI prints the
+skip result and exits without invoking ODW at all. The equivalent direct ODW
+invocation therefore also needs a `prepared` object built the same way; it is
+shown here for illustration only, and `dakar-review` is the supported path:
 
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar"}'
+odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
+           "repoRoot":"/path/to/dakar","prepared":{"...":"see prepare output"}}'
 ```
 
 `workflows/dakar-review.js` is a pre-generated runtime artefact included with
 Dakar. Running the CLI or invoking that file directly does not require
 TypeScript, esbuild, or a contributor build step.
+
+Set `OPENAI_API_KEY` before running a live review. The default
+`deterministic-flex-v1` route dispatches finder and audit calls through the
+`pi` coding agent (`@earendil-works/pi-coding-agent`) with Dakar's own
+`adapters/pi/` extension and provider catalogue; `pi` must be installed and
+on `PATH`. The CLI sets `PI_CODING_AGENT_DIR` to point `pi` at that
+catalogue and warns on stderr, without failing, if `OPENAI_API_KEY` is
+unset. ADR 002's staged-cutover guideline for this default was superseded
+by a recorded operator decision (see roadmap task 7.5.3).
 
 The `config` argument points at the CodeRabbit YAML file whose review tone,
 path instructions, and pre-merge checks should guide the review. The `base`
@@ -75,13 +91,23 @@ checkout being reviewed.
   `origin/main`.
 - `--head <ref>` selects the head ref to review. The default is `HEAD`.
 - `--state-root <path>` overrides the review-history root.
-- `--max-tasks <number>`, `--max-candidates <number>`, and
-  `--max-findings <number>` override the workflow limits described below.
-- `--synthesis-model <model>` selects the synthesis model. The default is
-  `gpt-5.5`.
-- `--synthesis-reasoning <level>` selects `low`, `medium`, or `high` reasoning
-  for synthesis. The default is `high`.
-- `--timeout <seconds>` sets the ODW wait timeout. The default is `900`.
+- `--max-tasks <number>` caps the planned review tasks. Under the
+  `deterministic-flex-v1` route it composes with `--max-luna-calls`: the
+  effective finder-pack cap is the smaller of the two, so `--max-tasks 1
+  --max-luna-calls 4` dispatches at most one finder pack. See the review-tuning
+  flags below.
+- `--max-candidates <number>` and `--max-findings <number>` override the
+  workflow limits described below.
+- `--synthesis-model <model>` and `--synthesis-reasoning <level>` are
+  accepted for backward compatibility and still appear in the dry-run
+  contract's `synthesisModel`/`synthesisAdapter` fields, but under the
+  `deterministic-flex-v1` route the audit call always runs on the fixed
+  Terra Flex lane (`gpt-5.6-terra`, medium reasoning); these flags no
+  longer change which model or adapter performs the audit.
+- `--timeout <seconds>` sets the ODW wait timeout. The default is `3600`.
+  Operators overriding this should keep it above the review's
+  `worstCaseReviewSeconds` (2,020 s at default limits; see the dry-run
+  example below), the worst-case wall clock the retry schedule can take.
 - `--runs-root <path>` selects the ODW runs directory used for the run, logs,
   and result.
 - `--format <json|markdown>` selects the output format. The default is `json`.
@@ -90,6 +116,39 @@ checkout being reviewed.
   result on standard output.
 - `--dry-run` returns the workflow contract without launching review agents.
 - `--help` prints command usage, and `--version` prints the Dakar version.
+
+The following review-tuning flags forward directly to the workflow arguments.
+The CLI only parses and forwards them; the workflow enforces every bound, so
+values outside the documented range clamp to the nearest permitted value rather
+than fail. See "Cost, budget, and the ledger" and "Retries, downgrades, and
+deferral" below for what each knob controls.
+
+- `--budget-gbp <number>` sets the hard admission budget in GBP. The default is
+  `0.1`.
+- `--max-luna-calls <number>` caps the Luna Flex finder calls. The default is
+  `4`. It composes with `--max-tasks`: the effective finder-pack cap is the
+  smaller of the two.
+- `--transaction-max-files <number>` sets the maximum files per finder pack. The
+  default is `5`.
+- `--transaction-max-input-tokens <number>` and
+  `--transaction-max-output-tokens <number>` set the per-finder token estimates
+  used for admission. The defaults are `12000` and `750`.
+- `--terra-max-input-tokens <number>` and `--terra-max-output-tokens <number>`
+  set the audit-call token estimates. The defaults are `48000` and `2500`.
+- `--adapter-overhead-tokens <number>` sets the per-call adapter overhead added
+  to every admission estimate. The default is `13000`; raising it towards
+  `28000` better models the cache pi's agentic loop writes on first,
+  uncached calls.
+- `--max-audit-candidates <number>` caps the candidates forwarded to the audit.
+  The default is `30`.
+- `--luna-reasoning <low|medium>` selects the Luna finder reasoning effort. The
+  default is `low`.
+- `--routing-policy <policy>` selects the routing policy. The default and sole
+  live value is `deterministic-flex-v1`.
+- `--flex-attempts <number>` sets the Flex retry attempts per call. The default
+  is `3`.
+- `--per-call-timeout <seconds>` sets the per-model-call timeout. The default is
+  `300`.
 
 When `--config` is omitted, Dakar resolves review configuration in this order:
 
@@ -105,6 +164,63 @@ The user-level config is treated as the current repository's CodeRabbit config
 only when no repository-local CodeRabbit YAML exists. It is useful for agents
 that should apply one house review policy across repositories without copying a
 `.coderabbit.yaml` into every checkout.
+
+### How much of the CodeRabbit format is honoured
+
+Dakar uses the resolved file at two boundaries. Host code deterministically
+discovers the path, safely parses the YAML without constructing custom tags,
+and validates Dakar's supported policy subset before preparation or any ODW,
+Luna, or Terra dispatch. The normalized serializable policy is then passed to
+the workflow. Models never parse the YAML file.
+
+The host rejects a missing explicit `--config` path, malformed YAML, and an
+invalid shape or value for any supported field. Diagnostics identify both the
+resolved configuration path and the invalid field. Unsupported keys are
+reported in the result's `ignoredPolicyKeys` list and have no routing, gating,
+budget, retry, or recording effect.
+
+| Support level | What it covers |
+| - | - |
+| Host-enforced | Path discovery and precedence; safe YAML parsing; supported-field validation; fail-closed handling of missing explicit paths and malformed policy; deterministic changed-path matching for `reviews.path_instructions`; per-finder-pack instruction slicing; and `pre_merge_checks.custom_checks[].command` execution. An omitted mode or `mode: error` blocks on failure; `mode: warning` is non-blocking. Review limits, budget, and ranges remain Dakar CLI and workflow arguments rather than CodeRabbit keys. |
+| Model-mediated | `language`, `tone_instructions`, `reviews.profile`, path-instruction prose selected by the host for the current evidence pack, and custom-check `instructions`. These fields guide judgement and phrasing; their semantic interpretation remains model-mediated. |
+| Ignored | Unsupported keys including `early_access`; `chat.integrations`; `knowledge_base`; `issue_enrichment`; `code_generation`; pull-request surface options such as `auto_title_instructions`, `high_level_summary_*`, walkthrough and labelling options, `request_changes_workflow`, `abort_on_close`, `auto_review`, and `estimate_code_review_effort`; and `tools` integrations such as github-checks, languagetool, clippy, and presidio. They are reported as ignored and do not affect deterministic execution. |
+
+_Table: CodeRabbit configuration support levels in the current route._
+
+Executable custom checks use this validated subset:
+
+```yaml
+pre_merge_checks:
+  custom_checks:
+    - name: Test
+      mode: error
+      command: make test
+    - name: Advisory analysis
+      mode: warning
+      command: make advisory
+```
+
+Commands run in configuration order from the reviewed repository after range
+preparation and before ODW starts. A failed `mode: error` check returns
+`stage: "deterministic-gates"` with redacted evidence and launches no Luna or
+Terra calls; a failed non-error check is retained in SARIF and semantic review
+continues. Commands must not embed credentials. Output is bounded, common
+credential forms and sensitive environment values are redacted, and full
+streams are represented by SHA-256 digests.
+
+For repository-local configuration, executable commands are loaded from the
+prepared trusted base commit, not the head under review. A pull request cannot
+grant itself host command execution by adding or changing a custom check.
+User-level and bundled configurations are outside the reviewed repository and
+are read from their resolved operator-controlled paths.
+
+Each `reviews.path_instructions` entry requires non-empty string `path` and
+`instructions` fields. Dakar matches the glob against normalized changed paths
+and includes an instruction only in finder packs containing a matching path.
+General language, tone, profile, and natural-language custom-check guidance is
+included without exposing executable commands or ignored keys. A root
+`AGENTS.md` is loaded through its own dedicated path (described below),
+independently of unsupported `knowledge_base.code_guidelines` patterns.
 
 ODW normally runs agents in copied workspaces. Those copies may not contain
 the repository's `.git` directory, so live review runs should pass `repoRoot`
@@ -157,10 +273,12 @@ When `XDG_STATE_HOME` is unset, Dakar uses:
 ~/.local/state/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml
 ```
 
-The workflow records the reviewed head commit after synthesis. A later run on
-the same branch reviews only commits after the last recorded head. If the
-current `HEAD` has already been recorded, the workflow returns `skipped: true`
-and does not launch review agents.
+The CLI records the reviewed head commit in-process, after the workflow
+returns a completed result, stamping `recorded.recordedBy: "dakar-review"`.
+A later run on the same branch reviews only commits after the last recorded
+head. If the current `HEAD` has already been recorded, the CLI's host-side
+prepare step detects this before invoking ODW at all: it prints the skip
+result (`skipped: true`) directly and never launches a model call.
 
 To isolate a trial run from normal review history, pass `stateRoot`:
 
@@ -171,11 +289,14 @@ dakar-review \
   --state-root /tmp/dakar-review-state
 ```
 
-The equivalent direct ODW invocation is:
+The equivalent direct ODW invocation, once a matching `prepared` object has
+been produced by `scripts/review-state.mjs prepare`, is:
 
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state"}'
+odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
+           "repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state",
+           "prepared":{"...":"see prepare output"}}'
 ```
 
 ## What the workflow returns
@@ -186,30 +307,41 @@ fields are:
 
 - `ok`: whether the workflow itself completed.
 - `workflowVersion`: the machine-readable workflow contract version.
+- `verdict`: `changes-requested` when at least one finding was accepted,
+  otherwise `pass`.
 - `config`: the CodeRabbit-compatible config file used for the run.
-- `resolvedConfig`: config resolution audit data, including `source` and
-  checked paths.
-- `stateFile`: review-history file used for this branch.
-- `reviewBase` and `headCommit`: reviewed commit range.
+- `reviewBase`, `headCommit`, and `commitCount`: the reviewed commit range.
 - `changedFiles`: files covered by the review.
+- `sarif`: the canonical SARIF 2.1.0 evidence document. Semantic candidates,
+  Terra dispositions, deterministic gates, provenance, lane/tier data, and
+  estimated/reported usage metadata live under namespaced `properties.dakar`.
 - `reportMarkdown`: the human-readable review report.
-- `findings`: accepted findings that survived high-reasoning verification.
-- `discarded`: rejected candidate findings with discard reasons.
-- `taskGraph`: the bounded review tasks planned for the change set.
-- `taskResults`, `candidates`, and `verdicts`: audit data from fan-out and
-  verification.
-- `metrics`: counts for tasks, candidates, accepted findings, discarded
-  findings, model assignments, and warnings.
-- `recordAttempts`: the number of workflow attempts made to record review
-  history, from one through three.
-- `recorded`: the review-history write result.
+- `findings`: compatibility projection of accepted SARIF results.
+- `discarded`: compatibility projection of suppressed/rejected SARIF results.
+- `taskGraph`, `taskResults`, `candidates`, and `verdicts`: audit data from
+  the finder fan-out and the audit call.
+- `admissionRefusals`: finder packs the budget controller refused before
+  dispatch, each with a reason and its estimated worst-case cost.
+- `lunaDowngrades`: finder packs whose Flex retries were exhausted; the
+  review continues with the surviving candidates rather than failing.
+- `metrics`: counts for tasks, candidates, accepted and discarded findings,
+  model assignments, the cost ledger, and audit-routing tallies (see
+  "Cost, budget, and the ledger" below).
+- `recordInput`: the deterministic data the CLI records to review history;
+  present only until the CLI has appended it.
+- `recordWithheld`: the reason and coverage counts when truncated, refused,
+  or downgraded finder coverage makes a successful review ineligible for
+  recording; `recordInput` is absent in this case.
+- `recorded`: stamped by the CLI, not the workflow, after a successful
+  append: `{ ok, stateFile, headCommit, recordedBy: "dakar-review" }`.
 
-Only `findings` should be treated as actionable review output. The `discarded`
-array is an audit trail showing what the workflow rejected. `reportMarkdown`
-is presentation text, not a deterministic schema; automation should consume
-`findings`, `discarded`, `metrics`, `verdicts`, and `recorded`.
+`sarif` is the authoritative automation contract. The `findings`, `discarded`,
+and `reportMarkdown` fields remain for existing CLI consumers, but are derived
+from that document and must not evolve independently. Raw `candidates`,
+`verdicts`, and task data remain compatibility/debug evidence.
 
-If the branch has already been reviewed, output still uses JSON:
+If the branch has already been reviewed, the CLI's host-side prepare step
+prints the skip result without invoking ODW:
 
 ```json
 {
@@ -217,7 +349,6 @@ If the branch has already been reviewed, output still uses JSON:
   "skipped": true,
   "reason": "No unreviewed commits remain for this branch.",
   "config": ".../config.yaml",
-  "resolvedConfig": { "source": "user" },
   "stateFile": ".../reviews.toml",
   "headCommit": "..."
 }
@@ -241,8 +372,50 @@ Dry-run output is also JSON, but it describes the contract instead of a review:
   ],
   "synthesisModel": "gpt-5.5/high",
   "synthesisAdapter": "codex-high",
+  "routingPolicy": "deterministic-flex-v1",
   "taskKinds": ["docs", "config", "tests", "source", "review-summary"],
-  "limits": { "maxTasks": 8, "maxCandidates": 30, "maxFindings": 20 },
+  "limits": {
+    "maxTasks": 8,
+    "maxCandidates": 30,
+    "maxFindings": 20,
+    "maxAuditCandidates": 30
+  },
+  "lanes": {
+    "luna": {
+      "role": "luna", "model": "gpt-5.6-luna",
+      "adapter": "pi-luna-flex", "serviceTier": "flex", "reasoning": "low"
+    },
+    "luna-medium": {
+      "role": "luna-medium", "model": "gpt-5.6-luna",
+      "adapter": "pi-luna-flex-medium", "serviceTier": "flex",
+      "reasoning": "medium"
+    },
+    "terra": {
+      "role": "terra", "model": "gpt-5.6-terra",
+      "adapter": "pi-terra-flex", "serviceTier": "flex", "reasoning": "medium"
+    }
+  },
+  "budgetGbp": 0.1,
+  "budgetUsd": 0.127,
+  "pricingTableVersion": "2026-07-18",
+  "reservedAuditUsd": 0.1140625,
+  "flexLimits": {
+    "maxLunaFlexCalls": 4,
+    "transactionMaxFiles": 5,
+    "transactionMaxInputTokens": 12000,
+    "transactionMaxOutputTokens": 750,
+    "terraMaxInputTokens": 48000,
+    "terraMaxOutputTokens": 2500,
+    "adapterOverheadTokens": 13000
+  },
+  "flexRetry": {
+    "flexAttempts": 3,
+    "flexInitialBackoffSeconds": 30,
+    "flexMaxBackoffSeconds": 120,
+    "flexJitterSeconds": 10,
+    "perCallTimeoutSeconds": 300
+  },
+  "worstCaseReviewSeconds": 2020,
   "defaultTaskGraph": [
     {
       "taskId": "source-1",
@@ -253,77 +426,22 @@ Dry-run output is also JSON, but it describes the contract instead of a review:
       "role": "high",
       "maxFindings": 6,
       "verificationPolicy": "verify-all"
-    },
-    {
-      "taskId": "review-summary-1",
-      "kind": "review-summary",
-      "assignedModel": "gpt-5.3-codex-spark/medium",
-      "adapter": "codex-medium",
-      "model": "gpt-5.3-codex-spark",
-      "role": "spark",
-      "maxFindings": 3,
-      "verificationPolicy": "verify-non-low-and-sampled-low"
     }
   ],
-  "candidateSchema": {
-    "type": "object",
-    "properties": {
-      "taskId": { "type": "string" },
-      "summary": { "type": "string" },
-      "candidates": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "title": { "type": "string" },
-            "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
-            "path": { "type": "string" },
-            "line": { "type": "integer" },
-            "detail": { "type": "string" },
-            "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
-          }
-        }
-      }
-    }
-  },
-  "verdictSchema": {
-    "type": "object",
-    "properties": {
-      "candidateId": { "type": "string" },
-      "status": {
-        "type": "string",
-        "enum": [
-          "accepted",
-          "duplicate",
-          "out_of_scope",
-          "not_applicable",
-          "insufficient_evidence",
-          "speculative",
-          "tool_false_positive",
-          "severity_downgraded",
-          "needs_human"
-        ]
-      },
-      "reason": { "type": "string" },
-      "evidenceChecked": { "type": "string" }
-    }
-  },
-  "synthesisSchema": {
-    "type": "object",
-    "properties": {
-      "verdict": { "type": "string" },
-      "summary": { "type": "string" },
-      "reportMarkdown": { "type": "string" },
-      "findings": { "type": "array" }
-    }
-  }
+  "candidateSchema": { "type": "object" },
+  "verdictSchema": { "type": "object" },
+  "auditSchema": { "type": "object" }
 }
 ```
 
-The schemas and task graph above are shown abbreviated; the real dry-run emits
-the full `candidateSchema`, `verdictSchema`, and `synthesisSchema`, plus one
-task per changed-file group (source, tests, config, docs) followed by the
-mandatory `review-summary` task.
+The schemas, lanes, and task graph above are shown abbreviated; the real
+dry-run emits the full `candidateSchema`, `verdictSchema`, and `auditSchema`,
+plus one task per changed-file group (source, tests, config, docs). The
+dry-run no longer includes `synthesisSchema`: the report is rendered by
+deterministic host code, not a model call. `synthesisModel` and
+`synthesisAdapter` remain in the dry run for the `--synthesis-model` and
+`--synthesis-reasoning` flags, but, as noted above, they no longer select
+the model or adapter used for the audit call.
 
 `dakar-review --format markdown` prints `reportMarkdown` when a live result has
 one. Machine users should prefer the default `--format json`.
@@ -343,46 +461,160 @@ If the workflow returns `ok: false`, the CLI prints that workflow JSON and exits
 non-zero. Accepted findings do not make the CLI exit non-zero; they mean the
 review succeeded and found actionable issues.
 
-If ODW completes the review but the workflow's record phase fails, the CLI
-attempts one deterministic local recovery by calling Dakar's state helper
-directly. A recovered result has `recorded.recoveredBy: "dakar-review"` and
-`metrics.recordRecoveredByCli: true`. If recovery also fails, the result keeps
-`stage: "record"` and exits non-zero so the caller knows the same commit range
-may be reviewed again. The workflow result's `recordAttempts` field reports how
-many of its three bounded recording attempts ran before that CLI fallback. The
-fallback derives the destination from the CLI's trusted repository and state
-root; it does not accept a workflow-supplied state-file path.
+Recording is now CLI-owned, not workflow-owned: after ODW returns a
+successful, non-skipped result, the CLI calls Dakar's state helper directly
+and stamps `recorded: { ok, stateFile, headCommit, recordedBy:
+"dakar-review" }` onto the result before printing it. If that append fails,
+the CLI sets `ok: false` and `stage: "record"` on the result, exits non-zero,
+and preserves `recordInput` so the review can be recorded manually later; the
+same commit range will be reviewed again on the next run because the history
+file was not updated. The destination is always derived from the CLI's
+trusted `repo-root`/`state-root`, never from workflow-supplied data.
+
+A successful partial-coverage result is not appended. If files were truncated
+or a finder pack was refused or downgraded, the result contains
+`recordWithheld` rather than `recordInput`; the CLI leaves review history
+unchanged. The same head remains eligible and is reviewed again on a later
+run.
 
 ## Routing and limits
 
-The first routed workflow groups changed files into `source`, `tests`,
-`config`, `docs`, and `review-summary` tasks. Smaller or faster agents propose
-bounded candidate findings. `gpt-5.5` high verifies candidates before final
-synthesis.
+The workflow groups changed files into bounded finder evidence packs
+(`buildFlexFinderPlan`) of at most `transactionMaxFiles` files each, up to
+`maxLunaFlexCalls` packs. Each admitted pack is reviewed by the Luna Flex
+lane (`gpt-5.6-luna`, low reasoning by default, escalating to the
+pre-registered `pi-luna-flex-medium` medium-reasoning adapter when
+`lunaReasoning` is set to `medium`). Files beyond the
+`maxLunaFlexCalls x transactionMaxFiles` coverage window are not packed and
+are listed in `metrics.truncatedFiles`. Deterministic host code then
+deduplicates and severity-orders the resulting candidates and caps them at
+`maxAuditCandidates`; the surviving set goes to a single Terra Flex audit
+call (`gpt-5.6-terra`, medium reasoning) that returns one verdict per
+candidate. Findings that survive the audit are accepted; the rest are
+discarded with a reason.
 
 The following optional limits are supported:
 
-- `maxTasks`: maximum planned tasks, default `8`.
-- `maxCandidates`: maximum candidates sent to verification, default `30`.
+- `maxTasks`: maximum planned finder tasks, default `8`.
+- `maxCandidates`: maximum candidates kept after normalization, default `30`.
 - `maxFindings`: maximum accepted findings in the final result, default `20`.
+- `maxAuditCandidates`: maximum candidates sent to the single audit call,
+  default `30`; candidates beyond the cap are discarded with reason
+  `over_audit_cap`.
+- `maxLunaFlexCalls`: maximum finder evidence packs, default `4`.
+- `transactionMaxFiles`: maximum files per finder pack, default `5`.
+- `budgetGbp`: hard per-review budget in GBP, default `0.10`, converted to
+  USD through the pricing table's `usdPerGbp` snapshot.
+- `routingPolicy`: recorded in metrics and the dry run; the only supported
+  value is `deterministic-flex-v1`.
+- `lunaReasoning`: `low` (default) or `medium`, selecting the Luna
+  escalation adapter.
+- `flexAttempts`, `flexInitialBackoffSeconds`, `flexMaxBackoffSeconds`,
+  `flexJitterSeconds`, and `perCallTimeoutSeconds`: the Flex retry schedule
+  (see "Retries, downgrades, and deferral" below).
+- `transactionMaxInputTokens`, `transactionMaxOutputTokens`,
+  `terraMaxInputTokens`, `terraMaxOutputTokens`, and
+  `adapterOverheadTokens`: token bounds feeding the cost estimator.
 
 Example:
 
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 900 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main","repoRoot":"/path/to/dakar","maxTasks":4,"maxFindings":5}'
+odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
+  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
+           "repoRoot":"/path/to/dakar","prepared":{"...":"see prepare output"},
+           "maxTasks":4,"maxFindings":5}'
 ```
+
+## Cost, budget, and the ledger
+
+Every finder and audit call runs through an admission controller that
+enforces the hard `budgetGbp` before any model call is dispatched. The
+audit's worst-case cost is reserved first, before any Luna finder call, so
+an unaffordable review refuses outright (`stage: "admission"`) rather than
+spending on finders it cannot afford to conclude. Refused finder packs are
+listed in `admissionRefusals` and never consume any budget.
+
+Retries are not free: each retry attempt is admitted against the remaining
+budget before it runs, and every admitted attempt is charged to the ledger.
+The reserve-first audit reservation stays one attempt's worst case, so the
+ordinary defaults keep working, while the hard ceiling still bounds the
+actual worst-case spend including retries. A retry refused by the remaining
+budget stops retrying: the finder pack downgrades or the audit defers rather
+than exceeding the ceiling (see "Retries, downgrades, and deferral" below).
+
+Because admission refuses any finder pack beyond the ordinary budget, a gate
+reviewing a large task branch may need to raise `--budget-gbp` to admit more
+finder packs and so cover the full diff. The ordinary default deliberately
+forces refusals on multi-pack large reviews; lift the budget only for the runs
+that warrant the extra coverage.
+
+`metrics` carries the cost accounting:
+
+- `ledger`: one entry per admitted call, with `lane`, `model`,
+  `serviceTier`, `reasoningEffort`, `estimatedWorstCaseUsd`,
+  `pricingTableVersion`, and `attempts`. `estimatedWorstCaseUsd` is the
+  total admitted for the call across its attempts, so a call that retried
+  carries the summed worst case of each admitted attempt while `attempts`
+  records the observed count.
+- `ledgerTotalEstimatedUsd`: the sum of admitted worst-case estimates.
+- `budgetUsd`, `reservedAuditUsd`, and `spentUsd`: the admission trail for
+  this run.
+- `routingPolicy` and `pricingTableVersion`: which routing policy and
+  pricing snapshot produced this ledger.
+- `auditCandidateCount`, `overAuditCapCount`, `unknownAuditVerdictCount`,
+  and `duplicateAuditVerdictCount`: audit compaction and verdict-pairing
+  tallies.
+- `lunaDowngradeCount` and `truncatedFiles`: partial-coverage indicators.
+
+## Retries, downgrades, and deferral
+
+Flex calls retry under bounded exponential backoff (`flexAttempts`, default
+`3`; backoff from `flexInitialBackoffSeconds` (`30`) up to
+`flexMaxBackoffSeconds` (`120`), with up to `flexJitterSeconds` (`10`) of
+deterministic jitter). Each retry attempt is admitted against the remaining
+budget before it runs and charged when admitted, so retries can stop for
+either of two reasons: exhausting the attempt count, or the remaining budget
+refusing the next attempt.
+
+A finder pack that exhausts its retries — or whose next retry the budget
+refuses — downgrades: it is recorded in `lunaDowngrades` and
+`metrics.lunaDowngradeCount`, and the review continues with the surviving
+candidates. An audit call that exhausts its retries, or whose next retry the
+budget refuses, defers the whole review instead: the result is `ok: false`,
+`stage: "deferred"`, no `recordInput` is present, and the CLI exits non-zero
+without recording anything, so the head remains unreviewed. A budget-refused
+retry keeps the actual spend within the hard ceiling rather than overrunning
+it; the deferral or downgrade reason names the budget so operators can tell
+it apart from a capacity exhaustion.
+
+The dry run reports `reservedAuditChainUsd` alongside `reservedAuditUsd`: the
+former is the audit's chain-level worst case (one attempt's reserve times
+`flexAttempts`), shown so operators can see the full retry cost, while
+admission only ever reserves the single-attempt `reservedAuditUsd`.
+
+A deferred review retried later re-pays its Luna finder calls: Luna output
+is not cached across separate `dakar-review` invocations, so a retry after
+a deferral repeats the finder phase's spend (roughly USD 0.04 worst case at
+default limits). Operators should space retries after a deferral rather
+than tight-looping them.
+
+`worstCaseReviewSeconds` (2,020 s at default limits, shown in the dry run)
+is the worst-case wall clock for one review's finder and audit retry
+chains. Operators overriding `--timeout` should keep it above this figure.
 
 ## Error and skip behaviour
 
-If a direct agent call fails during configuration resolution, range preparation,
-or report synthesis, the workflow returns `ok: false` with stage `config`,
-`prepare`, or `synthesize`, respectively, and includes the failure message.
-If recording fails after synthesis, the returned review is still visible in
-the ODW result; the CLI first attempts its one-shot local recovery (see the
-record-phase recovery behaviour described above). Only if that recovery also
-fails will a later run review the same commits again because the history file
-was not updated.
+Configuration resolution and range preparation are deterministic host code
+run by the CLI before ODW is invoked; a failure there is reported by the CLI
+with stage `config` or `prepare` and never launches ODW. Within the
+workflow, an admission refusal for the audit's own reservation returns
+`stage: "admission"` before any model call; an incomplete audit (a missing
+or invalid verdict) fails closed with `stage: "audit"` so nothing is
+recorded; an exhausted audit retry defers with `stage: "deferred"` (see
+above). If the CLI's own append to review history fails after a completed
+review, the result carries `stage: "record"` with `recordInput` preserved
+for manual retry, and the same commit range will be reviewed again on the
+next run.
 
 If `origin/main` is not available, pass a different `base`. If prepare reports
 that the workspace is not a git repository, pass `repoRoot` as an absolute path

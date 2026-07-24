@@ -1,0 +1,13 @@
+{
+  "providers": {
+    "openai-flex": {
+      "baseUrl": "https://api.openai.com/v1",
+      "api": "openai-responses",
+      "apiKey": "$OPENAI_API_KEY",
+      "models": [
+        { "id": "gpt-5.6-luna", "reasoning": true },
+        { "id": "gpt-5.6-terra", "reasoning": true }
+      ]
+    }
+  }
+}

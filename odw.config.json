@@ -16,7 +16,9 @@
       ],
       "stdin": "{prompt}",
       "flags": {
-        "model": ["--model"]
+        "model": [
+          "--model"
+        ]
       }
     },
     "codex-medium": {
@@ -35,7 +37,9 @@
       ],
       "stdin": "{prompt}",
       "flags": {
-        "model": ["--model"]
+        "model": [
+          "--model"
+        ]
       }
     },
     "codex-high": {
@@ -54,8 +58,55 @@
       ],
       "stdin": "{prompt}",
       "flags": {
-        "model": ["--model"]
+        "model": [
+          "--model"
+        ]
       }
+    },
+    "pi-luna-flex": {
+      "label": "pi coding agent, Luna, Flex processing, low reasoning",
+      "command": [
+        "pi",
+        "-p",
+        "--no-session",
+        "--provider",
+        "openai-flex",
+        "--model",
+        "gpt-5.6-luna",
+        "--thinking",
+        "low"
+      ],
+      "stdin": "{prompt}"
+    },
+    "pi-luna-flex-medium": {
+      "label": "pi coding agent, Luna, Flex processing, medium reasoning",
+      "command": [
+        "pi",
+        "-p",
+        "--no-session",
+        "--provider",
+        "openai-flex",
+        "--model",
+        "gpt-5.6-luna",
+        "--thinking",
+        "medium"
+      ],
+      "stdin": "{prompt}"
+    },
+    "pi-terra-flex": {
+      "label": "pi coding agent, Terra, Flex processing, medium reasoning",
+      "command": [
+        "pi",
+        "-p",
+        "--no-session",
+        "--provider",
+        "openai-flex",
+        "--model",
+        "gpt-5.6-terra",
+        "--thinking",
+        "medium"
+      ],
+      "stdin": "{prompt}"
     }
   }
 }

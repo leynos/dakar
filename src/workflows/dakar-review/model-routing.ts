@@ -76,3 +76,37 @@ export function modelForRole(role: string, reviewModels: readonly Readonly<Model
 export function isReasoning(value: unknown): value is Reasoning {
   return value === 'low' || value === 'medium' || value === 'high'
 }
+
+/** Pins one Flex execution lane to its model, adapter, service tier, and effort. */
+export interface FlexLaneSpec {
+  role: string
+  model: string
+  adapter: string
+  serviceTier: 'flex'
+  reasoning: Reasoning
+}
+
+/**
+ * Maps each Flex lane role to its host-selected model and pi adapter. The host,
+ * not an agent prompt, chooses the lane; agents cannot promote themselves to a
+ * more expensive model or service tier (ADR 002). `luna-medium` is the
+ * pre-registered escalation lane for the Luna finder.
+ */
+export const FLEX_LANE_ROLES: Readonly<Record<'luna' | 'luna-medium' | 'terra', Readonly<FlexLaneSpec>>> = Object.freeze({
+  luna: Object.freeze({ role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low' }),
+  'luna-medium': Object.freeze({ role: 'luna-medium', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-medium', serviceTier: 'flex', reasoning: 'medium' }),
+  terra: Object.freeze({ role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex', serviceTier: 'flex', reasoning: 'medium' }),
+})
+
+/**
+ * Resolves a Flex lane role to its pinned lane specification.
+ *
+ * @param role - One of `luna`, `luna-medium`, or `terra`.
+ * @returns The frozen lane specification for that role.
+ * @throws {Error} When the role is not a registered Flex lane.
+ */
+export function flexLaneRole(role: string): Readonly<FlexLaneSpec> {
+  const spec = (FLEX_LANE_ROLES as Record<string, Readonly<FlexLaneSpec>>)[role]
+  if (spec === undefined) throw new Error(`unknown flex lane role: ${role}`)
+  return spec
+}
