@@ -2,7 +2,7 @@
 
 import { readFile } from 'node:fs/promises'
 
-import { buildAgentMock, FixtureFailure } from './mock-agents.mjs'
+import { FixtureFailure } from './mock-agents.mjs'
 
 const WORKFLOW_URL = new URL('../../workflows/dakar-review.js', import.meta.url)
 
@@ -44,38 +44,54 @@ function nullOnFixtureFailure(error) {
 }
 
 /**
- * Execute the compiled workflow against scripted agent responders.
+ * Execute the compiled workflow with caller-supplied deterministic primitives.
  *
  * The parallel and pipeline mocks preserve ODW's null-slot failure semantics.
  * `nullParallelSlots` additionally simulates a scheduler-aborted thunk whose
- * own retry code never completes. All inputs and captures are local; this
+ * own retry code never completes. Defaults are local and deterministic; this
  * helper never starts ODW, pi, or a provider.
  *
  * @param {object} options Simulation controls and fixture state.
- * @param {Array<object>} options.responders Ordered mock-agent responders.
- * @param {object} options.prepared Host-prepared review range and gate results.
- * @param {object} [options.args] Workflow arguments outside tuning knobs.
- * @param {object} [options.knobs] Workflow tuning arguments merged last.
+ * @param {Function} options.agent Caller-supplied deterministic agent mock.
+ * @param {object} [options.args] Complete workflow argument object.
+ * @param {object} [options.budget] Injected budget primitive.
+ * @param {Function} [options.workflow] Injected nested-workflow primitive.
+ * @param {Function} [options.validate] Injected validation primitive.
+ * @param {Function} [options.phase] Optional phase hook replacing collection.
+ * @param {Function} [options.log] Optional log hook replacing collection.
+ * @param {Function} [options.sleep] Optional sleep hook replacing collection.
+ * @param {string[]} [options.phases] Mutable phase-name capture.
+ * @param {string[]} [options.logs] Mutable log-message capture.
  * @param {Array<object>} [options.agentCalls] Mutable agent-call capture.
  * @param {number[]} [options.sleepDelays] Mutable retry-delay capture.
  * @param {number[]} [options.nullParallelSlots] Parallel slots forced to null.
  * @returns {Promise<object>} The result and deterministic harness captures.
  */
 export async function runCompiledWorkflow({
-  responders,
-  prepared,
+  agent,
   args = {},
-  knobs = {},
+  budget = { total: null, spent: () => 0, remaining: () => 0 },
+  workflow = async () => null,
+  validate = () => ({ ok: true, meta: null, errors: [], warnings: [] }),
+  phase,
+  log,
+  sleep,
+  phases = [],
+  logs = [],
   agentCalls = [],
   sleepDelays = [],
   nullParallelSlots = [],
 }) {
   const body = await loadWorkflowBody()
-  const prompts = new Map()
-  const agentLabels = []
-  const phases = []
-  const logs = []
-  const agent = buildAgentMock(responders, { prompts, agentLabels, agentCalls })
+  const recordingAgent = async (prompt, options = {}) => {
+    agentCalls.push({
+      label: options.label,
+      adapter: options.adapter,
+      model: options.model,
+      phase: options.phase,
+    })
+    return agent(prompt, options)
+  }
   const parallel = (thunks) =>
     Promise.all(
       thunks.map((thunk, index) =>
@@ -97,18 +113,18 @@ export async function runCompiledWorkflow({
       }),
     )
   const result = await body(
-    agent,
+    recordingAgent,
     parallel,
     pipeline,
-    (name) => phases.push(name),
-    (message) => logs.push(message),
-    { ...args, prepared, ...knobs },
-    { total: null, spent: () => 0, remaining: () => 0 },
-    async () => null,
-    () => ({ ok: true, meta: null, errors: [], warnings: [] }),
-    async (milliseconds) => {
+    phase || ((name) => phases.push(name)),
+    log || ((message) => logs.push(message)),
+    args,
+    budget,
+    workflow,
+    validate,
+    sleep || (async (milliseconds) => {
       sleepDelays.push(milliseconds)
-    },
+    }),
   )
-  return { agentLabels, agentCalls, logs, phases, prompts, result, sleepDelays }
+  return { agentCalls, logs, phases, result, sleepDelays }
 }

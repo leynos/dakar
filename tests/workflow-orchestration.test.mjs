@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { extractAuditCandidates, extractTaskFiles, FixtureFailure } from './helpers/mock-agents.mjs'
+import { buildAgentMock, extractAuditCandidates, extractTaskFiles, FixtureFailure } from './helpers/mock-agents.mjs'
 import { runCompiledWorkflow } from './helpers/run-workflow.mjs'
 import { deterministicJitter } from '../src/workflows/dakar-review/retry.ts'
 
@@ -78,8 +78,10 @@ async function runWorkflow({
   const base = 'a'.repeat(commitLength)
   const prepared = { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
     commitCount: 1, changedFiles, diffStat: '1 file changed', warnings: [], deterministicGates }
-  return runCompiledWorkflow({
-    responders: defaultResponders({
+  const prompts = new Map()
+  const agentLabels = []
+  const agent = buildAgentMock(
+    defaultResponders({
       failedLabel,
       nullLabel,
       finderTitles,
@@ -90,13 +92,16 @@ async function runWorkflow({
       auditFailures,
       finderFailLabel,
     }),
-    prepared,
-    args: { config, ...(repoRoot === undefined ? {} : { repoRoot }) },
-    knobs,
+    { prompts, agentLabels },
+  )
+  const harness = await runCompiledWorkflow({
+    agent,
+    args: { config, prepared, ...(repoRoot === undefined ? {} : { repoRoot }), ...knobs },
     agentCalls,
     sleepDelays,
     nullParallelSlots,
   })
+  return { ...harness, agentLabels, prompts }
 }
 
 const finderLabels = (labels) => labels.filter((label) => /^luna-flex-\d+$/u.test(label))

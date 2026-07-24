@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { extractAuditCandidates } from './helpers/mock-agents.mjs'
+import { buildAgentMock, extractAuditCandidates } from './helpers/mock-agents.mjs'
 import { runCompiledWorkflow } from './helpers/run-workflow.mjs'
 
 function renderingResponders() {
@@ -37,11 +37,13 @@ async function renderOnce() {
   const base = 'a'.repeat(40)
   const prepared = { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
     commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }
-  return runCompiledWorkflow({
-    responders: renderingResponders(),
-    prepared,
-    args: { config: '/distinct/policy.yaml', stateRoot: '' },
+  const agentLabels = []
+  const agent = buildAgentMock(renderingResponders(), { prompts: new Map(), agentLabels })
+  const harness = await runCompiledWorkflow({
+    agent,
+    args: { config: '/distinct/policy.yaml', stateRoot: '', prepared },
   })
+  return { ...harness, agentLabels }
 }
 
 test('deterministic rendering is byte-stable across identical runs', async () => {
