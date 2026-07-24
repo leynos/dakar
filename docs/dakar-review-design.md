@@ -279,6 +279,12 @@ ancestors again. Record failure must be visible.
 > }`. `recorded.recoveredBy` and `metrics.recordRecoveredByCli` no longer
 > exist. On append failure the CLI sets `ok: false`, `stage: "record"`,
 > and preserves `recordInput` for manual retry.
+>
+> A successful result with incomplete planned finder coverage is deliberately
+> exempt from that automatic append. Truncated files, admission-refused packs,
+> or downgraded packs produce `recordWithheld` instead of `recordInput`; the CLI
+> returns the result without writing review history, so the same head is
+> reviewed again later.
 
 ## 8. Telemetry and cost accounting
 
@@ -379,6 +385,9 @@ The workflow result contains (post-ADR 002; see the superseded notes in §4,
 - `metrics`: run metrics, model assignment data, and the cost ledger (§8);
 - `recordInput`: the deterministic review data the CLI records to review
   history; present until the CLI has appended it.
+- `recordWithheld`: the reason and coverage counts for a successful review
+  whose truncated, refused, or downgraded finder coverage makes it ineligible
+  for recording; these results contain no `recordInput`.
 
 The workflow no longer returns `resolvedConfig`, `recordAttempts`, or a
 `recorded` field of its own; the CLI stamps `recorded` after a successful

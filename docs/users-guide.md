@@ -296,6 +296,9 @@ fields are:
   "Cost, budget, and the ledger" below).
 - `recordInput`: the deterministic data the CLI records to review history;
   present only until the CLI has appended it.
+- `recordWithheld`: the reason and coverage counts when truncated, refused,
+  or downgraded finder coverage makes a successful review ineligible for
+  recording; `recordInput` is absent in this case.
 - `recorded`: stamped by the CLI, not the workflow, after a successful
   append: `{ ok, stateFile, headCommit, recordedBy: "dakar-review" }`.
 
@@ -434,6 +437,12 @@ and preserves `recordInput` so the review can be recorded manually later; the
 same commit range will be reviewed again on the next run because the history
 file was not updated. The destination is always derived from the CLI's
 trusted `repo-root`/`state-root`, never from workflow-supplied data.
+
+A successful partial-coverage result is not appended. If files were truncated
+or a finder pack was refused or downgraded, the result contains
+`recordWithheld` rather than `recordInput`; the CLI leaves review history
+unchanged. The same head remains eligible and is reviewed again on a later
+run.
 
 ## Routing and limits
 

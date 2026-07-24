@@ -387,6 +387,19 @@ the conflict in `Decision Log`, and escalate.
     observability); and the 59% docstring-coverage claim (the gate
     reports 123/123 at 100%, `/tmp/check-dakar-r2.out:95`). 250/250
     tests; full `make check` green via scrutineer.
+  - [x] (2026-07-24) Post-rebase documentation review reconciled the
+    completed M4 operating guidance with pi's
+    `PI_CODING_AGENT_DIR/extensions/` auto-discovery contract, moved the
+    M0 auth-header cleanup trap ahead of file creation, documented the
+    successful `recordWithheld` partial-coverage path across the design,
+    developer, and user contracts, and corrected the source workflow
+    metadata to name the pi Flex Luna and Terra lanes. Live code confirmed
+    that deterministic report rendering remains in `main.ts`; the requested
+    SARIF envelope and deterministic-gate short-circuit remain explicitly
+    deferred roadmap 7.5 work rather than changes to this completed slice.
+    Scrutineer then passed `make check-fmt`, `make lint`, `make typecheck`,
+    `make test` (275/275), and the full `make check`, including 100% docstring
+    coverage, workflow freshness, and the ODW dry run.
 
 ## Surprises & discoveries
 
@@ -964,7 +977,7 @@ phase and the new caps.
 ### Milestone M4: Flex adapters and lane routing
 
 Create the Dakar-owned pi adapter assets under `adapters/pi/`:
-`flex-tier.ts` (the pi extension that returns
+`extensions/flex-tier.ts` (the pi extension that returns
 `{ ...event.payload, service_tier: "flex" }` from
 `before_provider_request` and logs the assistant message's usage object
 to stderr from `message_end`) and `models.json` (custom `openai-flex`
@@ -973,11 +986,14 @@ provider, `baseUrl` `https://api.openai.com/v1`, `api`
 and `gpt-5.6-terra`). Add `pi-luna-flex`, `pi-luna-flex-medium` (the
 pre-registered escalation adapter), and `pi-terra-flex` adapters to
 `odw.config.json`, each invoking
-`pi -p --no-session -e adapters/pi/flex-tier.ts --provider openai-flex`
-with the lane's `--model` and `--thinking` pinned, `{prompt}` on stdin,
-and `PI_CODING_AGENT_DIR` pointing at `adapters/pi/` so the catalogue is
-Dakar's own (a model missing from the provider catalogue makes pi hang,
-so the pinned provider and declared models are load-bearing). Per-call
+`pi -p --no-session --provider openai-flex` with the lane's `--model` and
+`--thinking` pinned and `{prompt}` on stdin. Point `PI_CODING_AGENT_DIR`
+at `adapters/pi/` so pi auto-discovers `extensions/flex-tier.ts` and uses
+Dakar's own catalogue (a model missing from the provider catalogue makes
+pi hang, so the pinned provider and declared models are load-bearing).
+Do not pass the extension through `-e`: its relative path would resolve
+against the invoking process's working directory rather than the package
+root. Per-call
 timeouts are sized from M0 measurements. Extend `model-routing.ts` with
 `luna` and `terra` roles
 carrying model, adapter, service tier, and reasoning effort. In
@@ -993,8 +1009,10 @@ Red first: routing tests prove finder tasks receive the Luna adapter and
 never exceed four calls; orchestration tests prove admission refusal of
 the audit aborts before any Luna spend (reserve-first) and that a refused
 optional Luna call is skipped with a structured reason; an adapter test
-asserts the `odw.config.json` command lines pin the extension, provider,
-model, and thinking level per lane, and that `adapters/pi/flex-tier.ts`
+asserts the `odw.config.json` command lines pin the provider, model, and
+thinking level per lane, that they rely on `PI_CODING_AGENT_DIR` extension
+auto-discovery rather than `-e`, and that
+`adapters/pi/extensions/flex-tier.ts`
 sets `service_tier` (cheap regression guards — the authoritative
 effective-configuration evidence is the M0 capture-server and live-probe
 transcripts, cited in `Artefacts and notes`, satisfying ADR 002's
@@ -1108,9 +1126,9 @@ header-file form is the supported pattern):
 
 ```sh
 umask 077
+trap 'rm -f "$SCRATCHPAD/auth-header"' EXIT
 printf 'Authorization: Bearer %s\n' "$(cat ~/dakar-api-key.txt)" \
   > "$SCRATCHPAD/auth-header"
-trap 'rm -f "$SCRATCHPAD/auth-header"' EXIT
 curl -s https://api.openai.com/v1/responses \
   -H @"$SCRATCHPAD/auth-header" \
   -H "Content-Type: application/json" \

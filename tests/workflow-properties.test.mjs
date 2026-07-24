@@ -123,3 +123,23 @@ test('compactForAudit caps to the deduped count, preserves the deduped set, and 
     }),
   )
 })
+
+test('compactForAudit fills the audit set to the cap when candidate keys are unique', () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.constantFrom('critical', 'high', 'medium', 'low'), { maxLength: 40 }),
+      fc.integer({ min: 1, max: 60 }),
+      (severities, cap) => {
+        const input = severities.map((severity, index) => ({
+          candidateId: `c-${index}`, taskId: 'source-1', taskKind: 'source', sourceModel: 'gpt-5.5/high',
+          verificationPolicy: 'verify-all', title: `finding-${index}`, severity, path: `src/file-${index}.js`,
+          line: index + 1, detail: 'detail', evidence: 'evidence', confidence: 'high', policyRefs: [],
+        }))
+
+        const { auditCandidates } = compactForAudit(input, cap)
+
+        assert.equal(auditCandidates.length, Math.min(input.length, cap))
+      },
+    ),
+  )
+})

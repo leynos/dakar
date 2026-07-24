@@ -210,6 +210,12 @@ longer performs an agent-mediated record phase and has no
 the destination from its trusted `repo-root`/`state-root` and ignores any
 state-file path in workflow output.
 
+Successful partial-coverage results are the exception to automatic recording.
+If files were truncated or a finder pack was refused or downgraded, the
+workflow emits `recordWithheld` with coverage counts and omits `recordInput`.
+The CLI treats that as an intentional, successful unrecorded result and does
+not append review history; a later run therefore reviews the same head again.
+
 `--telemetry` is the only supported live-progress mode. It starts ODW in the
 background, follows `odw logs <run-id> --follow`, writes that stream to
 standard error, then fetches `odw result <run-id>` for the final output. Keep
