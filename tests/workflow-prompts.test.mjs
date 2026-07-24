@@ -7,7 +7,6 @@ import {
   agentInstructionsBlock,
   auditPrompt,
   taskPrompt,
-  verificationPrompt,
 } from '../src/workflows/dakar-review/prompts.ts'
 
 const CONTEXT = {
@@ -183,15 +182,4 @@ test('auditPrompt applies policy guidance matched beyond the 40-path display cap
 
   assert.doesNotMatch(line, /src\/file-50\.ts/u, 'the display remains capped')
   assert.match(prompt, /Apply the beyond-cap rule\./u)
-})
-
-test('dynamic verifier data follows stable instructions and uses resolved policy', () => {
-  const prepared = { reviewBase: 'base-sha', headCommit: 'head-sha', changedFiles: ['src/a.ts'] }
-  const candidate = {
-    candidateId: 'source-1:key', taskId: 'source-1', taskKind: 'source', sourceModel: 'gpt-5.5/high',
-    verificationPolicy: 'verify-all', title: 'Bug', path: 'src/a.ts', line: 1, policyRefs: [],
-  }
-  const verify = verificationPrompt(candidate, prepared, CONTEXT)
-  assert.ok(verify.indexOf('Verification rules:') < verify.indexOf('Candidate JSON:'))
-  assert.match(verify, /CodeRabbit YAML: \.coderabbit\.yaml/u)
 })
