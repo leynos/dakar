@@ -1138,8 +1138,8 @@ If reviews complete but findings are vacuous, switch Luna finders to
 
 ## Concrete steps
 
-All commands run from the repository root
-`/home/leynos/Projects/dakar.worktrees/api-key-support` unless stated.
+All commands run from the repository root reported by `$(pwd)` after entering
+the checkout, unless stated.
 
 Gate runs (every milestone, via scrutineer; manual equivalent shown):
 
