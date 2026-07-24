@@ -1,4 +1,4 @@
-/** @file Test dependency-free deterministic gate configuration and execution. */
+/** @file Test normalized deterministic gate configuration and execution. */
 
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -6,24 +6,26 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { loadAndRunDeterministicGates, parseDeterministicGates } from '../scripts/deterministic-gates.mjs'
+import { deterministicGateDefinitions, loadAndRunDeterministicGates } from '../scripts/deterministic-gates.mjs'
+import { parseReviewPolicy } from '../scripts/review-config.mjs'
 
-test('parseDeterministicGates extracts only explicit executable custom checks', () => {
-  const gates = parseDeterministicGates(`
+test('deterministicGateDefinitions selects only executable normalized checks', () => {
+  const policy = parseReviewPolicy(`
 reviews:
   profile: assertive
-  pre_merge_checks:
-    custom_checks:
-      - mode: error
-        name: Unit tests
-        command: "node --test"
-      - mode: warning
-        name: Advisory lint
-        command: npm run lint
-      - mode: error
-        name: Model-only policy
-        instructions: inspect this semantically
-`)
+pre_merge_checks:
+  custom_checks:
+    - mode: error
+      name: Unit tests
+      command: "node --test"
+    - mode: warning
+      name: Advisory lint
+      command: npm run lint
+    - mode: error
+      name: Model-only policy
+      instructions: inspect this semantically
+`, { configPath: '/repo/policy.yaml' })
+  const gates = deterministicGateDefinitions(policy)
 
   assert.deepEqual(gates, [
     { gateId: 'gate-001-unit-tests', name: 'Unit tests', command: 'node --test', blocking: true },

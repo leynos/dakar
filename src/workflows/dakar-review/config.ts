@@ -1,7 +1,16 @@
 /** @file Validate workflow arguments and resolve immutable runtime configuration. */
 
 import { adapterForReasoning, baseModel, DEFAULT_REVIEW_MODELS, isReasoning, modelName, reasoningFromModel } from './model-routing.ts'
-import type { AgentInstructions, ModelSpec, PreparedReview, Reasoning, UnknownObject } from './types.ts'
+import type {
+  AgentInstructions,
+  ModelSpec,
+  NormalizedReviewPolicy,
+  PolicyCustomCheck,
+  PolicyPathInstruction,
+  PreparedReview,
+  Reasoning,
+  UnknownObject,
+} from './types.ts'
 
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
@@ -18,6 +27,7 @@ export interface WorkflowConfig {
   readonly headRef: string
   readonly lunaReasoning: 'low' | 'medium'
   readonly perCallTimeoutSeconds: number
+  readonly policyValid: boolean
   readonly maxAuditCandidates: number
   readonly maxCandidates: number
   readonly maxFindings: number
@@ -25,6 +35,7 @@ export interface WorkflowConfig {
   readonly maxTasks: number
   readonly prepared: PreparedReview | undefined
   readonly repoRoot: string
+  readonly reviewPolicy: Readonly<NormalizedReviewPolicy>
   readonly reviewModels: readonly Readonly<ModelSpec>[]
   readonly routingPolicy: string
   readonly stateRoot: string
@@ -142,6 +153,94 @@ function configuredAgentInstructions(value: unknown): AgentInstructions | null {
   })
 }
 
+/** Empty normalized policy used when direct workflow callers omit the hand-off. */
+const EMPTY_REVIEW_POLICY: Readonly<NormalizedReviewPolicy> = Object.freeze({
+  version: 1,
+  pathInstructions: Object.freeze([]),
+  customChecks: Object.freeze([]),
+  ignoredKeys: Object.freeze([]),
+})
+
+/** Tests whether an object contains only the normalized contract's named keys. */
+function hasOnlyKeys(value: UnknownObject, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed)
+  return Object.keys(value).every((key) => allowedKeys.has(key))
+}
+
+/** Validates one normalized path-instruction entry. */
+function configuredPathInstruction(value: unknown): PolicyPathInstruction | null {
+  if (
+    !isObject(value) ||
+    !hasOnlyKeys(value, ['instructions', 'path', 'policyRef']) ||
+    typeof value.instructions !== 'string' ||
+    typeof value.path !== 'string' ||
+    typeof value.policyRef !== 'string'
+  ) return null
+  return Object.freeze({ instructions: value.instructions, path: value.path, policyRef: value.policyRef })
+}
+
+/** Validates one normalized deterministic or model-mediated custom check. */
+function configuredCustomCheck(value: unknown): PolicyCustomCheck | null {
+  if (
+    !isObject(value) ||
+    !hasOnlyKeys(value, ['blocking', 'command', 'gateId', 'instructions', 'name']) ||
+    typeof value.blocking !== 'boolean' ||
+    typeof value.gateId !== 'string' ||
+    typeof value.name !== 'string' ||
+    (value.command !== undefined && typeof value.command !== 'string') ||
+    (value.instructions !== undefined && typeof value.instructions !== 'string')
+  ) return null
+  return Object.freeze({
+    blocking: value.blocking,
+    gateId: value.gateId,
+    name: value.name,
+    ...(value.command === undefined ? {} : { command: value.command }),
+    ...(value.instructions === undefined ? {} : { instructions: value.instructions }),
+  })
+}
+
+/**
+ * Validate the normalized review-policy hand-off supplied by the CLI.
+ *
+ * @param value - untrusted workflow argument.
+ * @returns Frozen policy and a validity flag; omission is a valid empty policy.
+ */
+function configuredReviewPolicy(value: unknown): {
+  policy: Readonly<NormalizedReviewPolicy>
+  valid: boolean
+} {
+  if (value === undefined) return { policy: EMPTY_REVIEW_POLICY, valid: true }
+  if (
+    !isObject(value) ||
+    !hasOnlyKeys(value, ['customChecks', 'ignoredKeys', 'language', 'pathInstructions', 'profile', 'toneInstructions', 'version']) ||
+    value.version !== 1 ||
+    !Array.isArray(value.pathInstructions) ||
+    !Array.isArray(value.customChecks) ||
+    !Array.isArray(value.ignoredKeys) ||
+    !value.ignoredKeys.every((entry) => typeof entry === 'string') ||
+    (value.language !== undefined && typeof value.language !== 'string') ||
+    (value.profile !== undefined && typeof value.profile !== 'string') ||
+    (value.toneInstructions !== undefined && typeof value.toneInstructions !== 'string')
+  ) return { policy: EMPTY_REVIEW_POLICY, valid: false }
+  const pathInstructions = value.pathInstructions.map(configuredPathInstruction)
+  const customChecks = value.customChecks.map(configuredCustomCheck)
+  if (pathInstructions.includes(null) || customChecks.includes(null)) {
+    return { policy: EMPTY_REVIEW_POLICY, valid: false }
+  }
+  return {
+    valid: true,
+    policy: Object.freeze({
+      version: 1,
+      ...(value.language === undefined ? {} : { language: value.language }),
+      ...(value.toneInstructions === undefined ? {} : { toneInstructions: value.toneInstructions }),
+      ...(value.profile === undefined ? {} : { profile: value.profile }),
+      pathInstructions: Object.freeze(pathInstructions) as readonly PolicyPathInstruction[],
+      customChecks: Object.freeze(customChecks) as readonly PolicyCustomCheck[],
+      ignoredKeys: Object.freeze([...value.ignoredKeys]),
+    }),
+  }
+}
+
 /**
  * Checks a model identifier and its optional reasoning suffix.
  *
@@ -181,6 +280,7 @@ function configuredModels(value: unknown): ModelSpec[] {
  */
 export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
   const args = isObject(value) ? value : {}
+  const policy = configuredReviewPolicy(args.policy)
   const customModels = configuredModels(args.models)
   const reviewModels: readonly Readonly<ModelSpec>[] = customModels.length > 0
     ? Object.freeze(customModels.map((model) => Object.freeze({ ...model })))
@@ -217,10 +317,12 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     maxLunaFlexCalls: positiveLimit(args.maxLunaFlexCalls, 4, 16),
     maxTasks: positiveLimit(args.maxTasks, 8, 64),
     perCallTimeoutSeconds: boundedInteger(args.perCallTimeoutSeconds, 300, 30, 900),
+    policyValid: policy.valid,
     // Unvalidated passthrough: the CLI prepares the review range host-side and
     // main.ts validates these fields fail-closed before any downstream use.
     prepared: isObject(args.prepared) ? (args.prepared as PreparedReview) : undefined,
     repoRoot: nonBlankString(args.repoRoot, '.'),
+    reviewPolicy: policy.policy,
     reviewModels,
     // Recorded in metrics and used (via the CLI) to gate the OPENAI_API_KEY
     // warning. Only 'deterministic-flex-v1' is a live policy, so any other value

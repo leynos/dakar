@@ -70,7 +70,7 @@ function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts
 async function runWorkflow({
   failedLabel, nullLabel, changedFiles = ['src/a.js'], config = '/distinct/policy.yaml', commitLength = 40, repoRoot,
   finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures, finderFailLabel,
-  nullParallelSlots = [], deterministicGates = [], knobs = {},
+  nullParallelSlots = [], deterministicGates = [], policy, knobs = {},
 } = {}) {
   const agentCalls = []
   const sleepDelays = []
@@ -96,7 +96,13 @@ async function runWorkflow({
   )
   const harness = await runCompiledWorkflow({
     agent,
-    args: { config, prepared, ...(repoRoot === undefined ? {} : { repoRoot }), ...knobs },
+    args: {
+      config,
+      prepared,
+      ...(policy === undefined ? {} : { policy }),
+      ...(repoRoot === undefined ? {} : { repoRoot }),
+      ...knobs,
+    },
     agentCalls,
     sleepDelays,
     nullParallelSlots,
@@ -260,6 +266,51 @@ test('the resolved policy path threads through every finder and audit prompt', a
   for (const [label, prompt] of prompts) {
     assert.match(prompt, /\/distinct\/policy\.yaml/u, `${label} should receive the resolved policy path`)
   }
+})
+
+test('normalized path instructions are sliced to each finder evidence pack', async () => {
+  const policy = {
+    version: 1,
+    pathInstructions: [
+      {
+        policyRef: 'reviews.path_instructions[0]',
+        path: '**/*.js',
+        instructions: 'JavaScript pack rule.',
+      },
+      {
+        policyRef: 'reviews.path_instructions[1]',
+        path: '**/*.md',
+        instructions: 'Markdown pack rule.',
+      },
+    ],
+    customChecks: [],
+    ignoredKeys: ['early_access'],
+  }
+  const { prompts, result } = await runWorkflow({
+    changedFiles: ['src/a.js', 'docs/guide.md'],
+    policy,
+  })
+  const finderPrompts = [...prompts.entries()].filter(([label]) => /^luna-flex-\d+$/u.test(label))
+  const javascriptPrompt = finderPrompts.find(([, prompt]) => prompt.includes('src/a.js'))?.[1] || ''
+  const markdownPrompt = finderPrompts.find(([, prompt]) => prompt.includes('docs/guide.md'))?.[1] || ''
+
+  assert.equal(result.ok, true)
+  assert.match(javascriptPrompt, /JavaScript pack rule/u)
+  assert.doesNotMatch(javascriptPrompt, /Markdown pack rule/u)
+  assert.match(markdownPrompt, /Markdown pack rule/u)
+  assert.doesNotMatch(markdownPrompt, /JavaScript pack rule/u)
+  assert.doesNotMatch(`${javascriptPrompt}\n${markdownPrompt}`, /early_access/u)
+})
+
+test('malformed normalized policy fails before planning or agent dispatch', async () => {
+  const { agentCalls, phases, result } = await runWorkflow({
+    policy: { version: 1, pathInstructions: 'wrong', customChecks: [], ignoredKeys: [] },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.stage, 'config')
+  assert.deepEqual(agentCalls, [])
+  assert.deepEqual(phases, [])
 })
 
 test('the workflow defers recording to the CLI and emits recordInput', async () => {

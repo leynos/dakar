@@ -159,7 +159,7 @@ underlying design cause.
 
 After range preparation, the CLI executes each explicit scalar
 `pre_merge_checks.custom_checks[].command` in configuration order. `mode:
-error` is blocking; other modes are non-blocking. A blocking failure returns
+error` is blocking; `mode: warning` is non-blocking. A blocking failure returns
 `stage: "deterministic-gates"` before ODW starts, with SARIF evidence, an empty
 Flex ledger, zero spend, and zero audit reservation. Passing and non-blocking
 outcomes continue through the unchanged Luna-to-Terra route.

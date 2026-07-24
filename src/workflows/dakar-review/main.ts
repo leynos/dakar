@@ -154,6 +154,7 @@ const {
   headRef: HEAD_REF,
   lunaReasoning: LUNA_REASONING,
   perCallTimeoutSeconds: PER_CALL_TIMEOUT_SECONDS,
+  policyValid: POLICY_VALID,
   maxAuditCandidates: MAX_AUDIT_CANDIDATES,
   maxCandidates: MAX_CANDIDATES,
   maxFindings: MAX_FINDINGS,
@@ -161,6 +162,7 @@ const {
   maxTasks: MAX_TASKS,
   prepared: PREPARED,
   repoRoot: REPO_ROOT,
+  reviewPolicy: REVIEW_POLICY,
   reviewModels: REVIEW_MODELS,
   routingPolicy: ROUTING_POLICY,
   synthesisAdapter: SYNTHESIS_ADAPTER,
@@ -203,6 +205,7 @@ const FLEX_LANES = Object.freeze({ luna: flexLaneRole('luna'), 'luna-medium': fl
 const CODE_RABBIT_CONFIG = CONFIG_ARG || 'auto'
 const promptContext: PromptContext = Object.freeze({
   agentInstructions: AGENT_INSTRUCTIONS,
+  policy: REVIEW_POLICY,
   policyPath: CODE_RABBIT_CONFIG,
   repoRoot: REPO_ROOT,
 })
@@ -210,6 +213,15 @@ const promptContext: PromptContext = Object.freeze({
 // it is the final model call and is not rewarded for issue volume.
 const REMAINING_BUDGET_NOTE =
   'Remaining budget: this issue-set audit is the only remaining model call for this review; you are not rewarded for issue volume.'
+
+if (!POLICY_VALID) {
+  return {
+    ok: false,
+    stage: 'config',
+    error: 'normalized review policy failed workflow-boundary validation',
+    config: CODE_RABBIT_CONFIG,
+  }
+}
 
 if (DRY_RUN) {
   return {
@@ -224,6 +236,7 @@ if (DRY_RUN) {
     synthesisModel: SYNTHESIS_MODEL_NAME,
     synthesisAdapter: SYNTHESIS_ADAPTER,
     routingPolicy: ROUTING_POLICY,
+    policy: REVIEW_POLICY,
     taskKinds: TASK_KINDS,
     limits: {
       maxTasks: MAX_TASKS,
@@ -747,6 +760,7 @@ const metrics = {
   unknownAuditVerdictCount,
   duplicateAuditVerdictCount,
   routingPolicy: ROUTING_POLICY,
+  ignoredPolicyKeys: REVIEW_POLICY.ignoredKeys,
   confirmedFindings: accepted.length,
   discardedFindings: discarded.length,
   discardReasonCounts: discardReasonCounts(discarded),
@@ -824,6 +838,7 @@ return {
   workflowVersion: WORKFLOW_VERSION,
   verdict: finalVerdict,
   config: CODE_RABBIT_CONFIG,
+  ignoredPolicyKeys: REVIEW_POLICY.ignoredKeys,
   reviewBase: prepared.reviewBase,
   headCommit: prepared.headCommit,
   commitCount: prepared.commitCount,

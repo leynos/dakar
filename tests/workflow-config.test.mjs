@@ -19,6 +19,13 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   assert.equal(config.maxTasks, 8)
   assert.equal(config.maxAuditCandidates, 30)
   assert.equal(config.routingPolicy, 'deterministic-flex-v1')
+  assert.equal(config.policyValid, true)
+  assert.deepEqual(config.reviewPolicy, {
+    version: 1,
+    pathInstructions: [],
+    customChecks: [],
+    ignoredKeys: [],
+  })
   assert.equal(config.reviewModels, DEFAULT_REVIEW_MODELS)
   assert.equal(config.synthesisModelName, 'gpt-5.5/high')
   assert.equal(config.synthesisAdapter, 'codex-high')
@@ -129,6 +136,57 @@ test('resolveWorkflowConfig passes the prepared review through unvalidated', () 
   assert.deepEqual(config.prepared, prepared)
   assert.equal(resolveWorkflowConfig({}).prepared, undefined)
   assert.equal(resolveWorkflowConfig(undefined).prepared, undefined)
+})
+
+test('resolveWorkflowConfig validates and freezes the normalized policy hand-off', () => {
+  const policy = {
+    version: 1,
+    language: 'en-GB',
+    pathInstructions: [{
+      policyRef: 'reviews.path_instructions[0]',
+      path: '**/*.ts',
+      instructions: 'Keep types explicit.',
+    }],
+    customChecks: [{
+      gateId: 'gate-001-tests',
+      name: 'Tests',
+      blocking: true,
+      command: 'make test',
+    }],
+    ignoredKeys: ['early_access'],
+  }
+  const config = resolveWorkflowConfig({ policy })
+
+  assert.equal(config.policyValid, true)
+  assert.deepEqual(config.reviewPolicy, policy)
+  assert.notEqual(config.reviewPolicy, policy)
+  assert.equal(Object.isFrozen(config.reviewPolicy), true)
+  assert.equal(Object.isFrozen(config.reviewPolicy.pathInstructions), true)
+  assert.equal(Object.isFrozen(config.reviewPolicy.pathInstructions[0]), true)
+  assert.equal(Object.isFrozen(config.reviewPolicy.customChecks), true)
+})
+
+test('resolveWorkflowConfig marks malformed normalized policy as invalid', () => {
+  for (const policy of [
+    null,
+    { version: 2, pathInstructions: [], customChecks: [], ignoredKeys: [] },
+    { version: 1, pathInstructions: 'wrong', customChecks: [], ignoredKeys: [] },
+    {
+      version: 1,
+      pathInstructions: [{ path: '**/*.ts', instructions: 'missing policyRef' }],
+      customChecks: [],
+      ignoredKeys: [],
+    },
+  ]) {
+    const config = resolveWorkflowConfig({ policy })
+    assert.equal(config.policyValid, false)
+    assert.deepEqual(config.reviewPolicy, {
+      version: 1,
+      pathInstructions: [],
+      customChecks: [],
+      ignoredKeys: [],
+    })
+  }
 })
 
 test('positive limits floor values, cap extremes, and reject invalid input', () => {

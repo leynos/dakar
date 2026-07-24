@@ -20,6 +20,7 @@ const RUNTIME_MODULES = [
   'main.ts',
   'model-routing.ts',
   'pricing.ts',
+  'policy.ts',
   'prompts.ts',
   'retry.ts',
   'sarif.ts',

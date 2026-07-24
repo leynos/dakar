@@ -12,6 +12,12 @@ import {
 
 const CONTEXT = {
   agentInstructions: null,
+  policy: {
+    version: 1,
+    pathInstructions: [],
+    customChecks: [],
+    ignoredKeys: [],
+  },
   policyPath: '.coderabbit.yaml',
   repoRoot: '/tmp/repo with spaces',
 }
@@ -55,6 +61,43 @@ test('taskPrompt limits review commands to the assigned files', () => {
   assert.match(prompt, /diff 'base-sha\.\.head-sha' -- 'src\/a\.ts' 'src\/file with spaces\.ts'/u)
   assert.match(prompt, /Inspect only the changed range and files assigned to this task\./u)
   assert.ok(prompt.indexOf('Instructions:') < prompt.indexOf('Task id: source-1'))
+})
+
+test('taskPrompt receives only policy instructions matching its evidence pack', () => {
+  const context = {
+    ...CONTEXT,
+    policy: {
+      version: 1,
+      language: 'en-GB',
+      pathInstructions: [
+        {
+          policyRef: 'reviews.path_instructions[0]',
+          path: '**/*.ts',
+          instructions: 'TypeScript-only rule.',
+        },
+        {
+          policyRef: 'reviews.path_instructions[1]',
+          path: '**/*.md',
+          instructions: 'Markdown-only rule.',
+        },
+      ],
+      customChecks: [],
+      ignoredKeys: ['early_access'],
+    },
+  }
+  const prompt = taskPrompt({
+    taskId: 'source-1',
+    kind: 'source',
+    files: ['src/a.ts'],
+    assignedModel: 'gpt-5.6-luna/low',
+    modelLabel: 'pi-luna-flex',
+    maxFindings: 6,
+  }, { reviewBase: 'base-sha', headCommit: 'head-sha' }, context)
+
+  assert.match(prompt, /TypeScript-only rule/u)
+  assert.doesNotMatch(prompt, /Markdown-only rule/u)
+  assert.doesNotMatch(prompt, /early_access/u)
+  assert.doesNotMatch(prompt, /parse.*YAML/iu)
 })
 
 test('taskPrompt omits the unscoped diff command for an empty task', () => {

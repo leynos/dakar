@@ -7,6 +7,9 @@
   "bin": {
     "dakar-review": "./bin/dakar-review.mjs"
   },
+  "dependencies": {
+    "js-yaml": "4.1.1"
+  },
   "scripts": {
     "docstrings": "node scripts/check-docstrings.mjs",
     "markdownlint": "markdownlint-cli2 $(git ls-files '*.md')",

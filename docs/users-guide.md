@@ -168,28 +168,26 @@ that should apply one house review policy across repositories without copying a
 ### How much of the CodeRabbit format is honoured
 
 Dakar uses the resolved file at two boundaries. Host code deterministically
-discovers the path and parses the supported executable-check subset before any
-Luna or Terra call. It then supplies the resolved path to every finder and
-audit prompt as policy context; the agents interpret the supported
-natural-language review controls and are instructed to cite policy rules as
-evidence.
+discovers the path, safely parses the YAML without constructing custom tags,
+and validates Dakar's supported policy subset before preparation or any ODW,
+Luna, or Terra dispatch. The normalized serializable policy is then passed to
+the workflow. Models never parse the YAML file.
 
-The host rejects a missing explicit `--config` path before semantic review. Its
-dependency-free parser deliberately is not a general YAML validator and does
-not promise to reject malformed YAML; only the documented scalar custom-check
-subset has host semantics. Unsupported keys have no host-side effect. Operators
-should validate the complete CodeRabbit document separately when they require
-general YAML diagnostics.
+The host rejects a missing explicit `--config` path, malformed YAML, and an
+invalid shape or value for any supported field. Diagnostics identify both the
+resolved configuration path and the invalid field. Unsupported keys are
+reported in the result's `ignoredPolicyKeys` list and have no routing, gating,
+budget, retry, or recording effect.
 
 | Support level | What it covers |
 | - | - |
-| Host-enforced | Path discovery and precedence; fail-closed handling of a missing explicit `--config` path; explicit scalar `pre_merge_checks.custom_checks[].command` entries, with an omitted mode or `mode: error` blocking and every other mode non-blocking. Review limits, budget, and ranges come from Dakar's own CLI and workflow arguments rather than CodeRabbit keys. |
-| Agent-interpreted | `tone_instructions`, `language`, `reviews.profile`, `reviews.path_instructions`, and custom-check `instructions` without a command. Adherence is interpretive, not guaranteed, and host code does not slice instructions per changed path. |
-| Unsupported | `early_access`; `chat.integrations`; `knowledge_base`; `issue_enrichment`; `code_generation`; pull-request surface options including `auto_title_instructions`, `high_level_summary_*`, walkthrough and labelling options, `request_changes_workflow`, `abort_on_close`, `auto_review`, and `estimate_code_review_effort`; and `tools` integrations such as github-checks, languagetool, clippy, and presidio. Dakar does not validate or translate these keys, so they have no host-side routing, gating, budget, retry, or recording effect. |
+| Host-enforced | Path discovery and precedence; safe YAML parsing; supported-field validation; fail-closed handling of missing explicit paths and malformed policy; deterministic changed-path matching for `reviews.path_instructions`; per-finder-pack instruction slicing; and `pre_merge_checks.custom_checks[].command` execution. An omitted mode or `mode: error` blocks on failure; `mode: warning` is non-blocking. Review limits, budget, and ranges remain Dakar CLI and workflow arguments rather than CodeRabbit keys. |
+| Model-mediated | `language`, `tone_instructions`, `reviews.profile`, path-instruction prose selected by the host for the current evidence pack, and custom-check `instructions`. These fields guide judgement and phrasing; their semantic interpretation remains model-mediated. |
+| Ignored | Unsupported keys including `early_access`; `chat.integrations`; `knowledge_base`; `issue_enrichment`; `code_generation`; pull-request surface options such as `auto_title_instructions`, `high_level_summary_*`, walkthrough and labelling options, `request_changes_workflow`, `abort_on_close`, `auto_review`, and `estimate_code_review_effort`; and `tools` integrations such as github-checks, languagetool, clippy, and presidio. They are reported as ignored and do not affect deterministic execution. |
 
 _Table: CodeRabbit configuration support levels in the current route._
 
-Executable custom checks use this dependency-free subset:
+Executable custom checks use this validated subset:
 
 ```yaml
 pre_merge_checks:
@@ -216,11 +214,13 @@ grant itself host command execution by adding or changing a custom check.
 User-level and bundled configurations are outside the reviewed repository and
 are read from their resolved operator-controlled paths.
 
-Host-enforced interpretation of `path_instructions` remains planned work; see
-roadmap items 2.3 and 6.2. Note that a root
-`AGENTS.md` is loaded through its own dedicated path (described below)
-independently of any `knowledge_base.code_guidelines` patterns in the
-CodeRabbit file.
+Each `reviews.path_instructions` entry requires non-empty string `path` and
+`instructions` fields. Dakar matches the glob against normalized changed paths
+and includes an instruction only in finder packs containing a matching path.
+General language, tone, profile, and natural-language custom-check guidance is
+included without exposing executable commands or ignored keys. A root
+`AGENTS.md` is loaded through its own dedicated path (described below),
+independently of unsupported `knowledge_base.code_guidelines` patterns.
 
 ODW normally runs agents in copied workspaces. Those copies may not contain
 the repository's `.git` directory, so live review runs should pass `repoRoot`

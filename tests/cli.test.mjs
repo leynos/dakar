@@ -253,6 +253,67 @@ for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
   })
 }
 
+test('CLI passes normalized policy rather than YAML-only prompt context', () => {
+  const { targetRepo, runsRoot, fakeOdw } = setUpArgsCaptureRepo()
+  const config = join(targetRepo, 'policy.yaml')
+  writeFileSync(config, `
+language: en-GB
+early_access: true
+reviews:
+  path_instructions:
+    - path: "**/*.mjs"
+      instructions: Keep modules deterministic.
+`)
+  const result = JSON.parse(runCli([
+    '--dry-run',
+    '--repo-root', targetRepo,
+    '--base', 'HEAD',
+    '--config', config,
+    '--runs-root', runsRoot,
+    '--odw-bin', fakeOdw,
+  ]))
+
+  assert.equal(result.receivedArgs.config, config)
+  assert.deepEqual(result.receivedArgs.policy, {
+    version: 1,
+    language: 'en-GB',
+    pathInstructions: [{
+      policyRef: 'reviews.path_instructions[0]',
+      path: '**/*.mjs',
+      instructions: 'Keep modules deterministic.',
+    }],
+    customChecks: [],
+    ignoredKeys: ['early_access'],
+  })
+})
+
+test('malformed or invalid supported YAML fails before ODW invocation', () => {
+  for (const [source, expected] of [
+    ['reviews: [', /invalid YAML/u],
+    ['reviews:\\n  path_instructions: wrong', /invalid reviews\.path_instructions/u],
+  ]) {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-invalid-policy-'))
+    const config = join(tempRoot, 'policy.yaml')
+    const marker = join(tempRoot, 'odw-invoked')
+    const fakeOdw = join(tempRoot, 'odw')
+    writeFileSync(config, source.replaceAll('\\n', '\n'))
+    writeFileSync(fakeOdw, `#!/bin/sh\ntouch '${marker}'\n`)
+    chmodSync(fakeOdw, 0o755)
+
+    const completed = spawnSync(
+      process.execPath,
+      [cliPath, '--repo-root', tempRoot, '--config', config, '--odw-bin', fakeOdw, '--dry-run'],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+
+    assert.equal(completed.status, 1)
+    assert.equal(completed.stdout, '')
+    assert.match(completed.stderr, expected)
+    assert.match(completed.stderr, new RegExp(config.replaceAll('/', '\\/'), 'u'))
+    assert.equal(existsSync(marker), false)
+  }
+})
+
 test('CLI rejects a non-numeric value for a numeric review-tuning flag', () => {
   const result = spawnSync(
     process.execPath,

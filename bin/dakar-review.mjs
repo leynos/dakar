@@ -15,7 +15,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { deriveOdwConfig } from '../scripts/odw-config.mjs'
 import { runDeterministicGates } from '../scripts/deterministic-gates.mjs'
-import { resolveReviewConfig } from '../scripts/review-config.mjs'
+import { parseReviewPolicy, resolveReviewConfig } from '../scripts/review-config.mjs'
 import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
 import { worstCaseReviewSeconds } from '../src/workflows/dakar-review/retry.ts'
 import {
@@ -348,6 +348,7 @@ function buildWorkflowArgs(options, repoRoot) {
   const agentInstructions = readAgentInstructions(repoRoot, options.base || 'origin/main')
   const workflowArgs = {
     config: resolvedConfig.config,
+    policy: resolvedConfig.policy,
     repoRoot,
   }
   if (agentInstructions) {
@@ -953,7 +954,11 @@ async function run(argv) {
     }
     workflowArgs.prepared = preparation.prepared
     const gateConfig = readTrustedGateConfig(workflowArgs.config, repoRoot, workflowArgs.prepared.reviewBase)
-    const deterministicGates = runDeterministicGates(gateConfig, repoRoot)
+    const trustedPolicy = parseReviewPolicy(gateConfig, {
+      configPath: `${workflowArgs.config} (trusted review base ${workflowArgs.prepared.reviewBase})`,
+    })
+    workflowArgs.policy = trustedPolicy
+    const deterministicGates = runDeterministicGates(trustedPolicy, repoRoot)
     workflowArgs.prepared.deterministicGates = deterministicGates
     if (deterministicGates.some((gate) => gate.blocking && gate.status !== 'passed')) {
       printWorkflowOutput(blockingGateResult(deterministicGates, workflowArgs.config, workflowArgs.prepared), format)

@@ -1,113 +1,34 @@
 /**
- * @file Parse and execute explicit deterministic pre-merge checks.
+ * @file Execute normalized deterministic pre-merge checks.
  *
- * Dakar intentionally supports a small dependency-free YAML subset:
- * `pre_merge_checks.custom_checks[]` entries with scalar `name`, `mode`, and
- * `command` fields. Natural-language checks without a command remain policy
- * context and are not executed.
+ * YAML parsing and policy validation belong to `review-config.mjs`. This module
+ * accepts only that normalized contract, executes command-bearing checks, and
+ * retains bounded redacted evidence without exposing environment secrets.
  */
 
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { loadReviewPolicy } from './review-config.mjs'
 
 /** Maximum retained characters per redacted command-output stream. */
 const MAX_EVIDENCE_CHARS = 4000
 
-/** Returns the leading-space indentation of one YAML source line. */
-function indentation(line) {
-  return line.match(/^ */u)?.[0].length || 0
-}
-
-/** Decodes the plain, single-quoted, or double-quoted scalar subset Dakar accepts. */
-function scalar(value) {
-  const trimmed = value.trim()
-  if (trimmed === '' || /^[>|]/u.test(trimmed)) return ''
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    try {
-      return JSON.parse(trimmed)
-    } catch {
-      return ''
-    }
-  }
-  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
-    return trimmed.slice(1, -1).replace(/''/gu, "'")
-  }
-  return trimmed.replace(/\s+#.*$/u, '').trim()
-}
-
-/** Parses one YAML mapping line into a supported scalar key and value. */
-function mapping(line) {
-  const match = line.trim().match(/^-?\s*([A-Za-z][\w-]*):\s*(.*)$/u)
-  return match ? { key: match[1], value: scalar(match[2]) } : null
-}
-
-/** Converts a human gate name into a stable identifier segment. */
-function slug(value) {
-  return value
-    .normalize('NFKC')
-    .toLocaleLowerCase('und')
-    .replace(/[^\p{L}\p{N}]+/gu, '-')
-    .replace(/^-|-$/gu, '') || 'check'
-}
-
 /**
- * Parses explicit executable checks from a CodeRabbit-compatible YAML string.
+ * Selects executable checks from a normalized review policy.
  *
- * `mode: error` (or an omitted mode) is blocking; every other mode is
- * non-blocking. Entries without a scalar `command` remain model policy only.
- *
- * @param source - Resolved review configuration text.
+ * @param {object} policy - policy returned by `loadReviewPolicy`.
  * @returns Stable executable gate definitions in configuration order.
  */
-export function parseDeterministicGates(source) {
-  const lines = source.split(/\r?\n/u)
-  const preMergeIndex = lines.findIndex((line) => line.trim() === 'pre_merge_checks:')
-  if (preMergeIndex === -1) return []
-  const preMergeIndent = indentation(lines[preMergeIndex])
-  let customIndex = -1
-  for (let index = preMergeIndex + 1; index < lines.length; index += 1) {
-    if (lines[index].trim() === '') continue
-    if (indentation(lines[index]) <= preMergeIndent) break
-    if (lines[index].trim() === 'custom_checks:') {
-      customIndex = index
-      break
-    }
-  }
-  if (customIndex === -1) return []
-
-  const customIndent = indentation(lines[customIndex])
-  const entries = []
-  let current = null
-  const finish = () => {
-    if (current) entries.push(current)
-    current = null
-  }
-  for (let index = customIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index]
-    if (line.trim() === '') continue
-    const indent = indentation(line)
-    if (indent <= customIndent) break
-    if (/^\s*-\s+/u.test(line)) {
-      finish()
-      current = {}
-    }
-    if (!current) continue
-    const pair = mapping(line)
-    if (pair) current[pair.key] = pair.value
-  }
-  finish()
-
-  return entries.flatMap((entry, index) => {
-    if (!entry.command) return []
-    const name = entry.name || `Gate ${index + 1}`
-    return [{
-      gateId: `gate-${String(index + 1).padStart(3, '0')}-${slug(name)}`,
-      name,
-      command: entry.command,
-      blocking: !entry.mode || entry.mode === 'error',
-    }]
-  })
+export function deterministicGateDefinitions(policy) {
+  return policy.customChecks.flatMap((check) =>
+    check.command === undefined
+      ? []
+      : [{
+          gateId: check.gateId,
+          name: check.name,
+          command: check.command,
+          blocking: check.blocking,
+        }])
 }
 
 /** Computes a non-reversible digest for complete command output. */
@@ -145,18 +66,18 @@ function redactEvidence(value) {
  * @returns Deterministic gate results in configuration order.
  */
 export function loadAndRunDeterministicGates(configPath, repoRoot) {
-  return runDeterministicGates(readFileSync(configPath, 'utf8'), repoRoot)
+  return runDeterministicGates(loadReviewPolicy(configPath), repoRoot)
 }
 
 /**
- * Executes gate definitions parsed from trusted configuration text.
+ * Executes gate definitions selected from trusted normalized policy.
  *
- * @param source - Trusted configuration text selected by the host boundary.
+ * @param {object} policy - trusted normalized review policy.
  * @param repoRoot - Reviewed repository used as each command's working directory.
  * @returns Deterministic gate results in configuration order.
  */
-export function runDeterministicGates(source, repoRoot) {
-  const definitions = parseDeterministicGates(source)
+export function runDeterministicGates(policy, repoRoot) {
+  const definitions = deterministicGateDefinitions(policy)
   return definitions.map((gate) => {
     const completed = spawnSync(gate.command, {
       cwd: repoRoot,

@@ -21,6 +21,33 @@ export interface AgentInstructions {
   truncated?: boolean
 }
 
+/** Describes one validated path-scoped instruction from review policy. */
+export interface PolicyPathInstruction {
+  instructions: string
+  path: string
+  policyRef: string
+}
+
+/** Describes one validated deterministic or model-mediated custom check. */
+export interface PolicyCustomCheck {
+  blocking: boolean
+  command?: string
+  gateId: string
+  instructions?: string
+  name: string
+}
+
+/** Carries the normalized, serializable CodeRabbit policy subset. */
+export interface NormalizedReviewPolicy {
+  customChecks: readonly PolicyCustomCheck[]
+  ignoredKeys: readonly string[]
+  language?: string
+  pathInstructions: readonly PolicyPathInstruction[]
+  profile?: string
+  toneInstructions?: string
+  version: 1
+}
+
 /** Describes untrusted external arguments accepted by the workflow entry. */
 export interface WorkflowArgs {
   adapterOverheadTokens?: unknown
@@ -42,6 +69,7 @@ export interface WorkflowArgs {
   maxTasks?: unknown
   models?: unknown
   perCallTimeoutSeconds?: unknown
+  policy?: unknown
   prepared?: PreparedReview
   repoRoot?: string
   routingPolicy?: unknown
@@ -184,6 +212,7 @@ export interface Discarded {
 /** Bundles trusted repository, policy, and instruction data for prompt builders. */
 export interface PromptContext {
   agentInstructions: AgentInstructions | null
+  policy: NormalizedReviewPolicy
   policyPath: string
   repoRoot: string
 }

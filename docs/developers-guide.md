@@ -96,22 +96,26 @@ The source tree has these responsibilities:
   (`compactForAudit()`: dedup, severity ranking, `over_audit_cap`
   discards), and verdict reduction; and
 - `prompts.ts`: stable prompt prefixes and dynamic prompt tails, including
-  `auditPrompt()`.
+  `auditPrompt()`; and
+- `policy.ts`: deterministic CodeRabbit path-glob matching and prompt guidance
+  slicing over the normalized policy hand-off.
 
-The CLI runs `scripts/deterministic-gates.mjs` after `prepare()` and before
-creating an ODW run. Its dependency-free parser deliberately recognizes only
-scalar `name`, `mode`, and `command` fields under
-`pre_merge_checks.custom_checks`; natural-language entries remain prompt
-policy. Blocking failures return canonical SARIF directly with no workflow,
-agent, reservation, ledger, or recording side effect. The workflow repeats the
-guard before `phase("Plan")` for callers that invoke the artefact directly.
-Repository-local executable policy is read with `git show` from the prepared
-trusted base; never execute a gate command introduced by the head under review.
+`scripts/review-config.mjs` owns precedence, safe YAML parsing, supported-field
+validation, normalization, and the auditable ignored-key list. The CLI passes
+that serializable policy alongside its resolved path. It runs
+`scripts/deterministic-gates.mjs` after `prepare()` and before creating an ODW
+run. Blocking failures return canonical SARIF directly with no workflow, agent,
+reservation, ledger, or recording side effect. The workflow validates the
+normalized hand-off and repeats the gate guard before `phase("Plan")` for
+callers that invoke the artefact directly. Repository-local executable policy
+is read with `git show` from the prepared trusted base; never execute a gate
+command introduced by the head under review.
 
 The internally facing interfaces follow the same ownership boundaries.
 `resolveWorkflowConfig()` returns the frozen `WorkflowConfig` passed into
-routing and planning; it also carries the ADR 002 Flex knobs (budget, Flex
-limits, retry schedule) alongside the existing task and candidate limits.
+routing and planning; it validates and freezes the normalized policy hand-off
+and carries the ADR 002 Flex knobs (budget, Flex limits, retry schedule)
+alongside the existing task and candidate limits.
 `modelForRole()`, `flexLaneRole()`, and the other model-routing helpers map
 that configuration to model, adapter, and service-tier selections. The host
 selects each Flex lane; agents may not promote themselves to a costlier

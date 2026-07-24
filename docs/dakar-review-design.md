@@ -247,12 +247,20 @@ Explicit config paths must exist. Silent acceptance of a missing policy file is
 a review integrity bug because agents then appear to follow a policy they never
 loaded.
 
+The CLI safely parses the selected YAML, rejects malformed documents and
+invalid supported fields, and passes a normalized serializable policy to the
+workflow. Deterministic workflow code matches `reviews.path_instructions`
+against each finder pack's changed paths, so models receive only applicable
+instructions and never parse the YAML themselves. Unsupported keys are
+reported as ignored and have no execution effect. Executable repository-local
+custom checks are reloaded from the trusted review base before they run.
+
 The CLI reads a root `AGENTS.md` from the reviewed repository and passes it as
-`agentInstructions`. Finder, verifier, and synthesis prompts include that text
-as context. Dakar workflow schema rules, output contracts, and safety rules
-take precedence over repository instructions. Future work should support
-path-scoped `AGENTS.md` files, but the root file is enough to make the first
-review pass aware of repository-level conventions.
+`agentInstructions`. Finder and audit prompts include that text as context.
+Dakar workflow schema rules, output contracts, and safety rules take precedence
+over repository instructions. Future work should support path-scoped
+`AGENTS.md` files, but the root file is enough to make the first review pass
+aware of repository-level conventions.
 
 ## 7. Review-history state
 
