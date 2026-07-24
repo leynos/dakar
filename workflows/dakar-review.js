@@ -618,7 +618,7 @@ ${JSON.stringify(candidates, null, 2)}`,
     `Review range: ${prepared.reviewBase}..${prepared.headCommit}`,
     `CodeRabbit YAML: ${context.policyPath}`,
     "",
-    policyGuidanceBlock(context.policy, listedPaths),
+    policyGuidanceBlock(context.policy, candidatePaths),
     "",
     agentInstructionsBlock(context),
     "",
@@ -1155,7 +1155,7 @@ async function workflowMain() {
   const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
     model: TERRA_LANE.model,
     serviceTier: TERRA_LANE.serviceTier,
-    inputTokens: TERRA_MAX_INPUT_TOKENS,
+    inputTokens: TERRA_MAX_INPUT_TOKENS + ADAPTER_OVERHEAD_TOKENS,
     cachedInputTokens: 0,
     maxOutputTokens: TERRA_MAX_OUTPUT_TOKENS
   });

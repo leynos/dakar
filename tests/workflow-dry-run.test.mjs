@@ -85,8 +85,8 @@ test('dry-run reports the Flex lanes, budget, and reserved audit estimate', () =
   })
   assert.equal(result.budgetGbp, 0.1)
   assert.equal(result.pricingTableVersion, '2026-07-18')
-  // Reserved Terra audit worst case: 48000 x 1.5625/1e6 + 2500 x 7.5/1e6 = 0.09375.
-  assert.ok(Math.abs(result.reservedAuditUsd - 0.09375) < 1e-9, `reservedAuditUsd was ${result.reservedAuditUsd}`)
+  // Reserved Terra audit worst case: (48000 + 13000) x 1.5625/1e6 + 2500 x 7.5/1e6 = 0.1140625.
+  assert.ok(Math.abs(result.reservedAuditUsd - 0.1140625) < 1e-9, `reservedAuditUsd was ${result.reservedAuditUsd}`)
   // The chain-level worst case surfaces the full retry cost of the audit for
   // operators without admission reserving it: one attempt's reserve times the
   // Flex attempt count.

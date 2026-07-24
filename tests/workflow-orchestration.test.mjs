@@ -170,7 +170,7 @@ test('the finder plan never exceeds maxLunaFlexCalls and surfaces truncation', a
     changedFiles,
     // Deterministic per-call worst case: cap input at 1 token so the flat
     // overhead dominates; a generous budget admits all four packs.
-    knobs: { budgetGbp: 0.12, transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 },
+    knobs: { budgetGbp: 0.5, transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 },
   })
 
   assert.equal(result.ok, true)
@@ -192,7 +192,7 @@ test('a refused Luna pack is skipped with a structured refusal while the audit s
   const { agentLabels, result } = await runWorkflow({
     changedFiles: ['src/a.js', 'src/b.js'],
     // Budget fits the reserve plus exactly one deterministic Luna pack.
-    knobs: { budgetGbp: 0.085, transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 },
+    knobs: { budgetGbp: 0.105, transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 },
   })
 
   assert.equal(result.ok, true)
@@ -210,9 +210,9 @@ test('a plan whose every finder pack is refused fails closed without recording',
   // admitted ones, or a zero-file review records the head as a clean pass.
   const { agentLabels, result } = await runWorkflow({
     changedFiles: ['src/a.js', 'src/b.js'],
-    // budgetGbp 0.075 -> USD 0.09525: the reserve (USD 0.09375) fits, but the
-    // remaining USD 0.0015 cannot admit even one Luna pack (>= USD 0.0104 each).
-    knobs: { budgetGbp: 0.075, transactionMaxFiles: 1 },
+    // budgetGbp 0.092 -> USD 0.11684: the reserve (USD 0.1140625) fits, but the
+    // remainder cannot admit even one Luna pack (>= USD 0.0104 each).
+    knobs: { budgetGbp: 0.092, transactionMaxFiles: 1 },
   })
 
   assert.equal(result.ok, false)
@@ -289,6 +289,7 @@ test('normalized path instructions are sliced to each finder evidence pack', asy
   const { prompts, result } = await runWorkflow({
     changedFiles: ['src/a.js', 'docs/guide.md'],
     policy,
+    knobs: { budgetGbp: 0.5 },
   })
   const finderPrompts = [...prompts.entries()].filter(([label]) => /^luna-flex-\d+$/u.test(label))
   const javascriptPrompt = finderPrompts.find(([, prompt]) => prompt.includes('src/a.js'))?.[1] || ''
@@ -427,7 +428,7 @@ test('accepted overflow beyond maxFindings is discarded after reconciliation', a
   // maxFindings caps the confirmed set at one and discards the reconciled rest.
   const { result } = await runWorkflow({
     changedFiles: ['src/a.js', 'src/b.js'],
-    knobs: { maxFindings: 1, transactionMaxFiles: 1 },
+    knobs: { budgetGbp: 0.5, maxFindings: 1, transactionMaxFiles: 1 },
   })
 
   assert.equal(result.findings.length, 1)
@@ -490,7 +491,7 @@ test('a finder pack resolving null is retried and then downgraded', async () => 
   const { agentCalls, result } = await runWorkflow({
     changedFiles: ['src/a.js', 'src/b.js'],
     nullLabel: 'luna-flex-1',
-    knobs: { transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000, budgetGbp: 0.12 },
+    knobs: { transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000, budgetGbp: 0.5 },
   })
 
   assert.equal(result.ok, true, 'the surviving sibling keeps the review alive')
@@ -599,10 +600,10 @@ test('recordInput.models is derived from the ledger of completed calls', async (
 // Deterministic per-call worst cases at transactionMaxInputTokens 1 and
 // adapterOverheadTokens 13000: one Luna finder pack prices at USD 0.010375625
 // (13001 input tokens x cache-write 0.625/MTok + 750 output x 3.0/MTok) and the
-// Terra audit reserve at USD 0.09375. The retry-admission fixtures below are
+// Terra audit reserve at USD 0.1140625. The retry-admission fixtures below are
 // derived from these two figures.
 const PACK_WORST_CASE_USD = (13001 * 0.625) / 1e6 + (750 * 3.0) / 1e6
-const AUDIT_RESERVE_USD = 0.09375
+const AUDIT_RESERVE_USD = 0.1140625
 const RETRY_KNOB_BASE = { transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 }
 const approx = (actual, expected, message) =>
   assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: ${actual} vs ${expected}`)
@@ -643,9 +644,9 @@ test('admitted retries are charged: spentUsd and ledger estimates grow per attem
 
 test('a Luna retry refused by the budget stops retrying and downgrades', async () => {
   // Budget fits both packs' first attempts plus the audit reserve (2P + R =
-  // USD 0.11450) but not a single Luna retry (which would need 3P + R =
-  // USD 0.12488). budgetGbp 0.093 -> USD 0.11811 sits between the two.
-  const budgetUsd = 0.093 * 1.27
+  // USD 0.13481) but not a single Luna retry (which would need 3P + R =
+  // USD 0.14519). budgetGbp 0.11 -> USD 0.1397 sits between the two.
+  const budgetUsd = 0.11 * 1.27
   assert.ok(budgetUsd >= 2 * PACK_WORST_CASE_USD + AUDIT_RESERVE_USD, 'first attempts must fit')
   assert.ok(budgetUsd < 3 * PACK_WORST_CASE_USD + AUDIT_RESERVE_USD, 'one retry must not fit')
 
@@ -654,7 +655,7 @@ test('a Luna retry refused by the budget stops retrying and downgrades', async (
     // Only the first pack fails transiently; its sibling survives on attempt 1.
     finderFailures: 2,
     finderFailLabel: 'luna-flex-1',
-    knobs: { budgetGbp: 0.093, transactionMaxFiles: 1, ...RETRY_KNOB_BASE },
+    knobs: { budgetGbp: 0.11, transactionMaxFiles: 1, ...RETRY_KNOB_BASE },
   })
 
   assert.equal(result.ok, true, 'the surviving sibling keeps the review alive')
@@ -669,8 +670,8 @@ test('a Luna retry refused by the budget stops retrying and downgrades', async (
 })
 
 test('an audit retry refused by the budget defers', async () => {
-  // Budget fits one finder pack plus one audit attempt (P + R = USD 0.10413)
-  // but not a second audit attempt (P + 2R = USD 0.19788). budgetGbp 0.11 ->
+  // Budget fits one finder pack plus one audit attempt (P + R = USD 0.12444)
+  // but not a second audit attempt (P + 2R = USD 0.23850). budgetGbp 0.11 ->
   // USD 0.1397 admits the audit once, then refuses its retry.
   const budgetUsd = 0.11 * 1.27
   assert.ok(budgetUsd >= PACK_WORST_CASE_USD + AUDIT_RESERVE_USD, 'the audit must be admitted once')
@@ -734,7 +735,7 @@ test('an admission refusal withholds recordInput while the review completes', as
   const { result } = await runWorkflow({
     changedFiles,
     // A budget admitting the audit and some, but not all, of the three packs.
-    knobs: { budgetGbp: 0.095, transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 },
+    knobs: { budgetGbp: 0.11, transactionMaxFiles: 1, transactionMaxInputTokens: 1, adapterOverheadTokens: 13000 },
   })
 
   assert.equal(result.ok, true)

@@ -167,6 +167,24 @@ test('auditPrompt caps the listed candidate paths at 40 and still counts the tot
   assert.match(line, /\(60 changed files in range; 20 not listed\)/u)
 })
 
+test('auditPrompt applies policy guidance matched beyond the 40-path display cap', () => {
+  const changedFiles = Array.from({ length: 60 }, (_, index) => `src/file-${index}.ts`)
+  const prepared = { reviewBase: 'base-sha', headCommit: 'head-sha', changedFiles }
+  const candidates = changedFiles.map((path, index) => auditCandidate({ candidateId: `source-1:${path}:${index}:x`, path }))
+  const context = {
+    ...CONTEXT,
+    policy: {
+      ...CONTEXT.policy,
+      pathInstructions: [{ policyRef: 'reviews.path_instructions[0]', path: 'src/file-50.ts', instructions: 'Apply the beyond-cap rule.' }],
+    },
+  }
+  const prompt = auditPrompt(candidates, prepared, context, 'note')
+  const line = prompt.split('\nChanged files: ')[1].split('\n')[0]
+
+  assert.doesNotMatch(line, /src\/file-50\.ts/u, 'the display remains capped')
+  assert.match(prompt, /Apply the beyond-cap rule\./u)
+})
+
 test('dynamic verifier data follows stable instructions and uses resolved policy', () => {
   const prepared = { reviewBase: 'base-sha', headCommit: 'head-sha', changedFiles: ['src/a.ts'] }
   const candidate = {

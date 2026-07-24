@@ -896,9 +896,10 @@ function blockingGateResult(gates, config, prepared) {
  *
  * A pull request may edit its own working-tree configuration, so executing that
  * text would grant the reviewed head command execution. Repository-local gate
- * policy is therefore loaded from `prepared.reviewBase`; a file absent there
- * contributes no executable gates. User-level and bundled configurations live
- * outside the reviewed repository and are read from their resolved paths.
+ * policy is therefore loaded from `prepared.reviewBase`. A failed trusted-base
+ * lookup aborts the review so repository gates cannot disappear silently.
+ * User-level and bundled configurations live outside the reviewed repository
+ * and are read from their resolved paths.
  *
  * @param {string} configPath - resolved review configuration path.
  * @param {string} repoRoot - absolute reviewed repository root.
@@ -908,11 +909,18 @@ function blockingGateResult(gates, config, prepared) {
 function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
   const relativePath = relative(repoRoot, configPath)
   if (!isAbsolute(relativePath) && relativePath !== '..' && !relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
-    const result = spawnSync('git', ['-C', repoRoot, 'show', `${reviewBase}:${relativePath}`], {
+    const revisionPath = relativePath.replaceAll('\\', '/')
+    const revision = `${reviewBase}:${revisionPath}`
+    const result = spawnSync('git', ['-C', repoRoot, 'show', revision], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    return result.status === 0 ? result.stdout : ''
+    if (result.error) throw new Error(`cannot read trusted review configuration ${revision}: ${result.error.message}`)
+    if (result.status !== 0) {
+      const detail = result.stderr.trim() || `git show exited with status ${result.status ?? 'unknown'}`
+      throw new Error(`cannot read trusted review configuration ${revision}: ${detail}`)
+    }
+    return result.stdout
   }
   return readFileSync(configPath, 'utf8')
 }

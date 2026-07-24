@@ -149,7 +149,7 @@ export function auditPrompt(
     `Repository root: ${context.repoRoot}`,
     `Review range: ${prepared.reviewBase}..${prepared.headCommit}`,
     `CodeRabbit YAML: ${context.policyPath}`, '',
-    policyGuidanceBlock(context.policy, listedPaths), '',
+    policyGuidanceBlock(context.policy, candidatePaths), '',
     agentInstructionsBlock(context), '',
     remainingBudgetNote,
   ].join('\n')

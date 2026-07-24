@@ -1043,7 +1043,7 @@ pre_merge_checks:
   assert.match(result.reportMarkdown, /Blocking fixture/u)
 })
 
-test('repository gate commands are loaded from the trusted base, not the reviewed head', () => {
+test('a repository configuration absent from the trusted base fails closed', () => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
   const marker = join(tempRoot, 'odw-invoked')
   const fakeOdw = join(tempRoot, 'odw.mjs')
@@ -1058,18 +1058,23 @@ pre_merge_checks:
   execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'untrusted config change'])
   writePreparedEchoOdw(fakeOdw, { bodyPrefix: `appendFileSync('${marker}', 'yes')` })
 
-  const output = JSON.parse(
-    runCli([
+  const completed = spawnSync(
+    process.execPath,
+    [cliPath,
       '--repo-root', targetRepo,
       '--base', base,
       '--state-root', join(tempRoot, 'state'),
       '--odw-bin', fakeOdw,
       '--runs-root', join(tempRoot, 'runs'),
-    ]),
+    ],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   )
 
-  assert.equal(output.ok, true)
-  assert.equal(existsSync(marker), true)
+  assert.equal(completed.status, 1)
+  assert.equal(completed.stdout, '')
+  assert.match(completed.stderr, /cannot read trusted review configuration/u)
+  assert.match(completed.stderr, /\.coderabbit\.yaml/u)
+  assert.equal(existsSync(marker), false, 'ODW must not run after a trusted-base lookup failure')
 })
 
 test('package installs a callable CLI with Bun global install', (t) => {
