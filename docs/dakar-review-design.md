@@ -376,8 +376,11 @@ telemetry, and process-level errors.
 The workflow result contains (post-ADR 002; see the superseded notes in §4,
 §7, and §8 for what changed):
 
-- `findings`: actionable findings accepted by the audit;
-- `discarded`: rejected candidates with reasons;
+- `sarif`: the canonical SARIF 2.1.0 run containing normalized candidates,
+  Terra decisions, deterministic gate evidence, provenance, dispositions,
+  lane/tier metadata, cost ledger, reported usage, and pricing-table version;
+- `findings`: compatibility projection of actionable SARIF results;
+- `discarded`: compatibility projection of suppressed SARIF results;
 - `verdicts`: audit decisions;
 - `admissionRefusals`: finder packs refused by the budget controller before
   dispatch;
@@ -394,14 +397,20 @@ The workflow no longer returns `resolvedConfig`, `recordAttempts`, or a
 in-process append, deriving the destination from its trusted repository and
 state root rather than accepting a state-file path from workflow output.
 
-`reportMarkdown` is presentation text, rendered by deterministic host code
-in `main.ts` rather than a model call. It has no deterministic schema.
+`reportMarkdown` is a deterministic projection rendered from `sarif`; it is
+not an independent evidence contract. Future GitHub annotations must project
+from the same SARIF document. Existing raw candidates, verdicts, findings, and
+discards remain only at the CLI compatibility/debug boundary.
 
 ## 11. Failure modes
 
 - Missing explicit config, or range preparation failing: both run as CLI
   host code before ODW is invoked, and the CLI reports `stage: "config"` or
   `stage: "prepare"` without launching a model call.
+- A configured blocking deterministic gate fails: the CLI returns
+  `stage: "deterministic-gates"` with SARIF remediation evidence before ODW
+  starts. The Flex ledger, spend, and audit reservation are all zero, and the
+  head is not recorded. Passing and non-blocking outcomes continue normally.
 - The audit's own admission reservation is unaffordable: the workflow
   returns `stage: "admission"` before any model call, including finder
   dispatch.

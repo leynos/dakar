@@ -409,6 +409,20 @@ the conflict in `Decision Log`, and escalate.
     58,505-byte artefact fresh; and `make check` passed 276/276 tests. Tracing,
     metrics, and alerting remain intentionally unchanged here and tracked by
     existing issue #2.
+  - [x] (2026-07-24) Completed deferred roadmap 7.5.1 and 7.5.2. The canonical
+    result is now deterministic SARIF 2.1.0 with immutable Luna evidence,
+    identifier-bound Terra decisions, gate/provenance/disposition data, and
+    versioned ledger metadata; findings, discards, and Markdown are compatibility
+    projections. Explicit configured commands run host-side after preparation.
+    Blocking failures return before ODW with no agent calls, ledger rows, spend,
+    audit reservation, or recording; passing and non-blocking outcomes retain
+    the Luna-to-Terra route. Red tests first failed on the absent `sarif.ts` and
+    `deterministic-gates.mjs` modules; focused SARIF and gate/orchestration tests
+    then passed 93/93. The final `make check` passed all formatting,
+    markdownlint, diagram, type-check, workflow-freshness, ODW dry-run,
+    documentation, and test gates: docstring coverage was 206/206 (100.00%,
+    threshold 80.00%), the generated 68,667-byte workflow was fresh, and the
+    Node suite passed 287/287.
 
 ## Surprises & discoveries
 

@@ -4,7 +4,8 @@
 
 Accepted (2026-07-18): adopt the deterministic-first review pipeline with a
 Luna Flex transactional lane, a Terra Flex issue-set audit lane, host-selected
-routing, and hard cost admission control.
+routing, hard cost admission control, canonical SARIF 2.1.0 evidence, and
+host-executed deterministic gates before semantic review.
 
 ## Date
 
@@ -156,14 +157,18 @@ underlying design cause.
 
 ### Deterministic gate short-circuit
 
-In the default agentic-loop mode, a blocking deterministic failure stops the
-semantic review before Luna or Terra is called. The result contains the failed
-commands, structured findings, and enough evidence for the implementation agent
-to repair the branch. A later review evaluates the repaired head.
+After range preparation, the CLI executes each explicit scalar
+`pre_merge_checks.custom_checks[].command` in configuration order. `mode:
+error` is blocking; other modes are non-blocking. A blocking failure returns
+`stage: "deterministic-gates"` before ODW starts, with SARIF evidence, an empty
+Flex ledger, zero spend, and zero audit reservation. Passing and non-blocking
+outcomes continue through the unchanged Luna-to-Terra route.
 
-An operator may enable `reviewOnDeterministicFailure` for a human-oriented batch
-review, but the default remains `false`. The override and its extra spend must be
-visible in telemetry.
+Natural-language `instructions` without an explicit `command` remain policy
+context rather than executable shell. Gate output is bounded and redacted before
+retention; complete stdout and stderr are represented by SHA-256 digests.
+Repository-local commands are loaded from the prepared trusted base commit so
+the head under review cannot grant itself command execution.
 
 This mirrors the `df12-build` policy of running host gates before scarce
 reviewer agents and avoiding reviewer spend when cheaper evidence already
@@ -482,9 +487,9 @@ that ratio would reward issue manufacture.
 
 ## Findings and hand-off format
 
-Structured findings remain the durable inter-stage contract. Dakar should use
-SARIF 2.1.0 as the canonical evidence envelope and add namespaced properties for
-review deliberation.
+Structured findings remain the durable inter-stage contract. Dakar uses SARIF
+2.1.0 as the canonical evidence envelope with `properties.dakar` namespaced
+metadata for review deliberation.
 
 The host assigns and preserves:
 
@@ -498,10 +503,11 @@ The host assigns and preserves:
 - estimated and reported cost; and
 - pricing-table version.
 
-Agent outputs are immutable inputs to later stages. The Terra audit emits a new
-run or audit record that references candidate identifiers; it does not rewrite
-Luna history in place. Final Markdown, JSON, and GitHub annotations are
-deterministic projections of the consolidated SARIF data.
+Agent outputs are immutable inputs to later stages. The Terra audit record
+references candidate identifiers; it does not rewrite Luna history in place.
+Final Markdown and the compatibility `findings`/`discarded` JSON fields are
+deterministic projections of consolidated SARIF data; a future GitHub projection
+must use the same document.
 
 ## Consequences
 

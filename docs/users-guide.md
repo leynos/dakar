@@ -177,17 +177,41 @@ fails closed).
 
 | Support level | What it covers |
 | - | - |
-| Host-enforced | Path discovery and precedence; fail-closed handling of a missing explicit `--config` path. Review limits, budget, and ranges come from Dakar's own CLI and workflow arguments, never from this file. |
-| Model-mediated | Natural-language policy keys the agents can read and honour: `tone_instructions`, `language`, `reviews.profile`, `reviews.path_instructions`, and the `pre_merge_checks.custom_checks` bodies. Adherence is interpretive, not guaranteed, and instructions are not sliced per changed path. |
+| Host-enforced | Path discovery and precedence; fail-closed handling of a missing explicit `--config` path; explicit scalar `pre_merge_checks.custom_checks[].command` entries, with `mode: error` blocking and other modes non-blocking. Review limits, budget, and ranges come from Dakar's own CLI and workflow arguments. |
+| Model-mediated | Natural-language policy keys the agents can read and honour: `tone_instructions`, `language`, `reviews.profile`, `reviews.path_instructions`, and custom-check `instructions` without a command. Adherence is interpretive, not guaranteed, and instructions are not sliced per changed path. |
 | Ignored | CodeRabbit platform features: `early_access`, `chat.integrations`, `knowledge_base`, `issue_enrichment`, `code_generation`, pull-request surface options (`auto_title_instructions`, `high_level_summary_*`, walkthrough and labelling options, `request_changes_workflow`, `abort_on_close`, `auto_review`, `estimate_code_review_effort`), and `tools` integrations (github-checks, languagetool, clippy, presidio). |
 
 _Table: CodeRabbit configuration support levels in the current route._
 
-Host-enforced interpretation of `path_instructions` (sliced per evidence
-pack) and `pre_merge_checks` (run as deterministic gates before semantic
-review) are planned work; see roadmap items 2.3, 6.2, and 7.5.2, and the
-deterministic host boundary in
-[ADR 002](adr-002-deterministic-tiered-review-cost.md). Note that a root
+Executable custom checks use this dependency-free subset:
+
+```yaml
+pre_merge_checks:
+  custom_checks:
+    - name: Test
+      mode: error
+      command: make test
+    - name: Advisory analysis
+      mode: warning
+      command: make advisory
+```
+
+Commands run in configuration order from the reviewed repository after range
+preparation and before ODW starts. A failed `mode: error` check returns
+`stage: "deterministic-gates"` with redacted evidence and launches no Luna or
+Terra calls; a failed non-error check is retained in SARIF and semantic review
+continues. Commands must not embed credentials. Output is bounded, common
+credential forms and sensitive environment values are redacted, and full
+streams are represented by SHA-256 digests.
+
+For repository-local configuration, executable commands are loaded from the
+prepared trusted base commit, not the head under review. A pull request cannot
+grant itself host command execution by adding or changing a custom check.
+User-level and bundled configurations are outside the reviewed repository and
+are read from their resolved operator-controlled paths.
+
+Host-enforced interpretation of `path_instructions` remains planned work; see
+roadmap items 2.3 and 6.2. Note that a root
 `AGENTS.md` is loaded through its own dedicated path (described below)
 independently of any `knowledge_base.code_guidelines` patterns in the
 CodeRabbit file.
@@ -282,9 +306,12 @@ fields are:
 - `config`: the CodeRabbit-compatible config file used for the run.
 - `reviewBase`, `headCommit`, and `commitCount`: the reviewed commit range.
 - `changedFiles`: files covered by the review.
+- `sarif`: the canonical SARIF 2.1.0 evidence document. Semantic candidates,
+  Terra dispositions, deterministic gates, provenance, lane/tier data, and
+  estimated/reported usage metadata live under namespaced `properties.dakar`.
 - `reportMarkdown`: the human-readable review report.
-- `findings`: accepted findings that survived the audit.
-- `discarded`: rejected candidate findings with discard reasons.
+- `findings`: compatibility projection of accepted SARIF results.
+- `discarded`: compatibility projection of suppressed/rejected SARIF results.
 - `taskGraph`, `taskResults`, `candidates`, and `verdicts`: audit data from
   the finder fan-out and the audit call.
 - `admissionRefusals`: finder packs the budget controller refused before
@@ -302,10 +329,10 @@ fields are:
 - `recorded`: stamped by the CLI, not the workflow, after a successful
   append: `{ ok, stateFile, headCommit, recordedBy: "dakar-review" }`.
 
-Only `findings` should be treated as actionable review output. The `discarded`
-array is an audit trail showing what the workflow rejected. `reportMarkdown`
-is presentation text, not a deterministic schema; automation should consume
-`findings`, `discarded`, `metrics`, `verdicts`, and `recorded`.
+`sarif` is the authoritative automation contract. The `findings`, `discarded`,
+and `reportMarkdown` fields remain for existing CLI consumers, but are derived
+from that document and must not evolve independently. Raw `candidates`,
+`verdicts`, and task data remain compatibility/debug evidence.
 
 If the branch has already been reviewed, the CLI's host-side prepare step
 prints the skip result without invoking ODW:

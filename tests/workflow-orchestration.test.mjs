@@ -70,7 +70,7 @@ function defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts
 async function runWorkflow({
   failedLabel, nullLabel, changedFiles = ['src/a.js'], config = '/distinct/policy.yaml', commitLength = 40, repoRoot,
   finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures, finderFailLabel,
-  nullParallelSlots = [], knobs = {},
+  nullParallelSlots = [], deterministicGates = [], knobs = {},
 } = {}) {
   let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
   source = source.replace(/^export const meta\s*=/mu, 'const meta =')
@@ -85,7 +85,7 @@ async function runWorkflow({
   const head = 'b'.repeat(commitLength)
   const base = 'a'.repeat(commitLength)
   const prepared = { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
-    commitCount: 1, changedFiles, diffStat: '1 file changed', warnings: [] }
+    commitCount: 1, changedFiles, diffStat: '1 file changed', warnings: [], deterministicGates }
   const agent = buildAgentMock(defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures, finderFailLabel }),
     { prompts, agentLabels, agentCalls })
   const swallowFixtureFailure = (error) => {
@@ -116,6 +116,44 @@ async function runWorkflow({
 }
 
 const finderLabels = (labels) => labels.filter((label) => /^luna-flex-\d+$/u.test(label))
+
+test('a blocking deterministic gate spends no model budget and launches no agents', async () => {
+  const deterministicGates = [{
+    gateId: 'gate-001-tests', name: 'Tests', command: 'make test', blocking: true,
+    status: 'failed', exitCode: 2, stdout: '', stderr: 'failed',
+    stdoutSha256: '0'.repeat(64), stderrSha256: '1'.repeat(64),
+  }]
+  const { agentLabels, phases, result } = await runWorkflow({ deterministicGates })
+
+  assert.deepEqual(agentLabels, [])
+  assert.deepEqual(phases, [])
+  assert.equal(result.stage, 'deterministic-gates')
+  assert.deepEqual(result.metrics.ledger, [])
+  assert.equal(result.metrics.spentUsd, 0)
+  assert.equal(result.metrics.reservedAuditUsd, 0)
+  assert.equal(result.sarif.runs[0].results[0].properties.dakar.gate.gateId, 'gate-001-tests')
+})
+
+test('passing and non-blocking gate outcomes retain the Luna-to-Terra route', async () => {
+  const deterministicGates = [
+    {
+      gateId: 'gate-001-format', name: 'Format', command: 'make check-fmt', blocking: true,
+      status: 'passed', exitCode: 0, stdout: '', stderr: '',
+      stdoutSha256: '0'.repeat(64), stderrSha256: '0'.repeat(64),
+    },
+    {
+      gateId: 'gate-002-advisory', name: 'Advisory', command: 'make advisory', blocking: false,
+      status: 'failed', exitCode: 1, stdout: '', stderr: 'warning',
+      stdoutSha256: '0'.repeat(64), stderrSha256: '1'.repeat(64),
+    },
+  ]
+  const { agentLabels, result } = await runWorkflow({ deterministicGates })
+
+  assert.ok(finderLabels(agentLabels).length > 0)
+  assert.equal(agentLabels.at(-1), 'audit')
+  assert.ok(result.metrics.ledger.length > 0)
+  assert.equal(result.sarif.runs[0].invocations[0].properties.dakar.gates.length, 2)
+})
 
 test('finder packs route through the Luna adapter and the audit through Terra', async () => {
   const { agentCalls, phases, result } = await runWorkflow()

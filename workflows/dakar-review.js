@@ -541,6 +541,242 @@ function worstCaseReviewSeconds(config, perCallTimeoutSeconds) {
   return chain + chain;
 }
 
+// src/workflows/dakar-review/sarif.ts
+var SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
+function sarifLevel(severity) {
+  if (severity === "critical" || severity === "high") return "error";
+  if (severity === "medium") return "warning";
+  return "note";
+}
+function candidateEvidence(candidate) {
+  return {
+    candidateId: candidate.candidateId,
+    ..."taskId" in candidate ? {
+      taskId: candidate.taskId,
+      taskKind: candidate.taskKind,
+      sourceModel: candidate.sourceModel,
+      verificationPolicy: candidate.verificationPolicy,
+      title: candidate.title,
+      severity: candidate.severity,
+      path: candidate.path,
+      line: candidate.line,
+      detail: candidate.detail,
+      evidence: candidate.evidence,
+      confidence: candidate.confidence,
+      policyRefs: [...candidate.policyRefs]
+    } : {}
+  };
+}
+function locationsFor(candidate) {
+  if (!("path" in candidate) || !candidate.path) return [];
+  return [{
+    physicalLocation: {
+      artifactLocation: { uri: candidate.path },
+      region: candidate.line > 0 ? { startLine: candidate.line } : void 0
+    }
+  }];
+}
+function verdictFor(candidateId, verdicts) {
+  return verdicts.find((verdict) => verdict.candidateId === candidateId);
+}
+function ledgerFor(candidate, ledger) {
+  if (!("taskId" in candidate)) return void 0;
+  return ledger.find((entry) => entry.callId === candidate.taskId);
+}
+function assembleSarif(input) {
+  const candidates = [...input.candidates || []];
+  const acceptedById = new Map(
+    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
+  );
+  const verdicts = [...input.verdicts || []];
+  const ledger = [...input.ledger || []];
+  const discardById = new Map(
+    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
+  );
+  const semanticResults = candidates.map((candidate) => {
+    const accepted = acceptedById.get(candidate.candidateId);
+    const discard = discardById.get(candidate.candidateId);
+    const verdict = verdictFor(candidate.candidateId, verdicts);
+    const sourceLedger = ledgerFor(candidate, ledger);
+    const disposition = accepted ? {
+      status: verdict?.status || "accepted",
+      reason: verdict?.reason || "",
+      evidenceChecked: verdict?.evidenceChecked || "",
+      acceptedSeverity: accepted.severity
+    } : {
+      status: discard?.status || verdict?.status || "not_selected",
+      reason: discard?.reason || verdict?.reason || "",
+      evidenceChecked: discard?.evidenceChecked || verdict?.evidenceChecked || ""
+    };
+    return {
+      ruleId: `dakar/semantic/${candidate.candidateId}`,
+      level: sarifLevel(accepted?.severity || candidate.severity),
+      message: { text: candidate.title },
+      locations: locationsFor(candidate),
+      fingerprints: {
+        "dakar/candidateId": candidate.candidateId,
+        "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
+      },
+      ...accepted ? {} : { suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }] },
+      properties: {
+        dakar: {
+          kind: "semantic",
+          candidate: candidateEvidence(candidate),
+          provenance: {
+            taskId: candidate.taskId,
+            taskKind: candidate.taskKind,
+            model: candidate.sourceModel,
+            lane: sourceLedger?.lane || "luna-flex",
+            serviceTier: sourceLedger?.serviceTier || "flex",
+            reasoningEffort: sourceLedger?.reasoningEffort
+          },
+          audit: verdict ? { ...verdict } : null,
+          disposition,
+          clusterId: verdict?.clusterId,
+          cost: sourceLedger ? { ...sourceLedger } : null,
+          pricingTableVersion: input.pricingTableVersion
+        }
+      }
+    };
+  }).sort((left, right) => {
+    const leftId = left.fingerprints["dakar/candidateId"];
+    const rightId = right.fingerprints["dakar/candidateId"];
+    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
+  });
+  const knownCandidateIds = new Set(candidates.map((candidate) => candidate.candidateId));
+  const extraDiscards = (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => ({
+    ruleId: `dakar/semantic/${item.candidate.candidateId || "unknown"}`,
+    level: "note",
+    message: { text: item.reason },
+    locations: locationsFor(item.candidate),
+    fingerprints: { "dakar/candidateId": item.candidate.candidateId || "unknown" },
+    suppressions: [{ kind: "external", status: "accepted", justification: item.reason }],
+    properties: {
+      dakar: {
+        kind: "semantic",
+        candidate: candidateEvidence(item.candidate),
+        provenance: null,
+        audit: verdictFor(item.candidate.candidateId, verdicts) || null,
+        disposition: { status: item.status, reason: item.reason, evidenceChecked: item.evidenceChecked },
+        cost: null,
+        pricingTableVersion: input.pricingTableVersion
+      }
+    }
+  }));
+  const gateResults = (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
+    ruleId: `dakar/gate/${gate.gateId}`,
+    level: gate.blocking ? "error" : "warning",
+    message: { text: `${gate.name} ${gate.status}: ${gate.command}` },
+    fingerprints: { "dakar/gateId": gate.gateId },
+    properties: {
+      dakar: {
+        kind: "deterministic-gate",
+        gate: { ...gate },
+        disposition: { status: gate.blocking ? "blocking" : "non-blocking" },
+        pricingTableVersion: input.pricingTableVersion
+      }
+    }
+  }));
+  const results = [...gateResults, ...semanticResults, ...extraDiscards];
+  const ruleIds = [...new Set(results.map((result) => result.ruleId))].sort();
+  const gates = (input.gates || []).map((gate) => ({ ...gate }));
+  return {
+    $schema: SARIF_SCHEMA,
+    version: "2.1.0",
+    runs: [{
+      tool: {
+        driver: {
+          name: "Dakar",
+          version: "0.1.0",
+          rules: ruleIds.map((id) => ({ id, name: id }))
+        }
+      },
+      invocations: [{
+        executionSuccessful: gates.every((gate) => gate.status === "passed" || !gate.blocking),
+        properties: { dakar: { gates } }
+      }],
+      results,
+      properties: {
+        dakar: {
+          pricingTableVersion: input.pricingTableVersion,
+          ledger: ledger.map((entry) => ({ ...entry })),
+          auditVerdicts: verdicts.map((verdict) => ({ ...verdict }))
+        }
+      }
+    }]
+  };
+}
+function dakarProperties(result) {
+  const properties = result.properties;
+  if (!properties || typeof properties !== "object") return {};
+  const dakar = properties.dakar;
+  return dakar && typeof dakar === "object" ? dakar : {};
+}
+function projectFindingsFromSarif(sarif) {
+  const [run] = sarif.runs;
+  if (!run) return [];
+  return run.results.flatMap((result) => {
+    const dakar = dakarProperties(result);
+    if (dakar.kind !== "semantic") return [];
+    const disposition = dakar.disposition;
+    if (!["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
+    const candidate = dakar.candidate;
+    const audit = dakar.audit;
+    return [{
+      severity: disposition.acceptedSeverity || candidate.severity,
+      path: candidate.path,
+      line: Number(candidate.line) > 0 ? candidate.line : void 0,
+      title: candidate.title,
+      detail: candidate.detail || "",
+      evidence: candidate.evidence || "",
+      clusterId: audit?.clusterId || void 0,
+      sourceTasks: [candidate.taskId]
+    }];
+  });
+}
+function projectDiscardedFromSarif(sarif) {
+  const [run] = sarif.runs;
+  if (!run) return [];
+  return run.results.flatMap((result) => {
+    const dakar = dakarProperties(result);
+    if (dakar.kind !== "semantic") return [];
+    const disposition = dakar.disposition;
+    if (["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
+    return [{
+      candidate: dakar.candidate,
+      status: String(disposition?.status || ""),
+      reason: String(disposition?.reason || ""),
+      evidenceChecked: String(disposition?.evidenceChecked || "")
+    }];
+  });
+}
+function renderSarifMarkdown(sarif) {
+  const findings = projectFindingsFromSarif(sarif);
+  const [run] = sarif.runs;
+  const gateFailures = (run?.results || []).filter((result) => dakarProperties(result).kind === "deterministic-gate");
+  const blockingGateFailures = gateFailures.filter((result) => {
+    const disposition = dakarProperties(result).disposition;
+    return disposition && typeof disposition === "object" && disposition.status === "blocking";
+  });
+  const summary = blockingGateFailures.length > 0 ? `${blockingGateFailures.length} blocking deterministic gate failure${blockingGateFailures.length === 1 ? "" : "s"} require remediation.` : findings.length === 0 ? "No blocking findings were accepted." : `${findings.length} confirmed finding${findings.length === 1 ? "" : "s"} require changes.`;
+  return [
+    "# Dakar review",
+    "",
+    summary,
+    ...gateFailures.flatMap((result) => ["", `## deterministic gate: ${String(result.message.text)}`]),
+    ...findings.flatMap((finding) => [
+      "",
+      `## ${finding.severity}: ${finding.title}`,
+      "",
+      `${finding.path}${finding.line ? `:${finding.line}` : ""}`,
+      "",
+      String(finding.detail),
+      "",
+      `Evidence: ${finding.evidence}`
+    ])
+  ].join("\n");
+}
+
 // src/workflows/dakar-review/schemas.ts
 var CANDIDATE_SCHEMA = {
   type: "object",
@@ -887,6 +1123,36 @@ async function workflowMain() {
       headCommit: prepared.headCommit
     };
   }
+  const deterministicGates = prepared.deterministicGates || [];
+  const blockingGateFailures = deterministicGates.filter((gate) => gate.blocking && gate.status !== "passed");
+  if (blockingGateFailures.length > 0) {
+    const sarif2 = assembleSarif({
+      gates: deterministicGates,
+      pricingTableVersion: PRICING_TABLE.version
+    });
+    return {
+      ok: false,
+      stage: "deterministic-gates",
+      error: `${blockingGateFailures.length} blocking deterministic gate${blockingGateFailures.length === 1 ? "" : "s"} failed`,
+      config: CODE_RABBIT_CONFIG,
+      prepared,
+      sarif: sarif2,
+      findings: projectFindingsFromSarif(sarif2),
+      discarded: projectDiscardedFromSarif(sarif2),
+      reportMarkdown: renderSarifMarkdown(sarif2),
+      metrics: {
+        routingPolicy: ROUTING_POLICY,
+        ledger: [],
+        ledgerTotalEstimatedUsd: 0,
+        budgetUsd: BUDGET_USD,
+        reservedAuditUsd: 0,
+        spentUsd: 0,
+        pricingTableVersion: PRICING_TABLE.version,
+        deterministicGateCount: deterministicGates.length,
+        blockingGateFailureCount: blockingGateFailures.length
+      }
+    };
+  }
   const ledger = [];
   if (RESERVED_AUDIT_USD > BUDGET_USD) {
     return {
@@ -1188,33 +1454,20 @@ async function workflowMain() {
     reason: "Low-severity candidate was not selected by the task verification policy.",
     evidenceChecked: ""
   }));
-  const discarded = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut, ...overflow, ...overCap];
-  const authoritativeFindings = accepted.map((candidate) => ({
-    severity: candidate.severity,
-    path: candidate.path,
-    line: candidate.line || void 0,
-    title: candidate.title,
-    detail: candidate.detail || "",
-    evidence: candidate.evidence || "",
-    clusterId: candidate.clusterId || void 0,
-    sourceTasks: [candidate.taskId]
-  }));
+  const evidenceDiscards = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut, ...overflow, ...overCap];
+  const sarif = assembleSarif({
+    accepted,
+    candidates,
+    discarded: evidenceDiscards,
+    gates: deterministicGates,
+    ledger,
+    pricingTableVersion: PRICING_TABLE.version,
+    verdicts: rawVerdicts
+  });
+  const authoritativeFindings = projectFindingsFromSarif(sarif);
+  const discarded = projectDiscardedFromSarif(sarif);
   const authoritativeSummary = authoritativeFindings.length === 0 ? "No blocking findings were accepted." : `${authoritativeFindings.length} confirmed finding${authoritativeFindings.length === 1 ? "" : "s"} require changes.`;
-  const authoritativeReport = [
-    "# Dakar review",
-    "",
-    authoritativeSummary,
-    ...authoritativeFindings.flatMap((finding) => [
-      "",
-      `## ${finding.severity}: ${finding.title}`,
-      "",
-      `${finding.path}${finding.line ? `:${finding.line}` : ""}`,
-      "",
-      finding.detail,
-      "",
-      `Evidence: ${finding.evidence}`
-    ])
-  ].join("\n");
+  const authoritativeReport = renderSarifMarkdown(sarif);
   const finalVerdict = authoritativeFindings.length > 0 ? "changes-requested" : "pass";
   const ledgerTotalEstimatedUsd = ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0);
   const metrics = {
@@ -1298,6 +1551,7 @@ async function workflowMain() {
     verdicts,
     findings: authoritativeFindings,
     discarded,
+    sarif,
     admissionRefusals,
     lunaDowngrades,
     summary: authoritativeSummary,

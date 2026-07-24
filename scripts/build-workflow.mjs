@@ -22,6 +22,7 @@ const RUNTIME_MODULES = [
   'pricing.ts',
   'prompts.ts',
   'retry.ts',
+  'sarif.ts',
   'schemas.ts',
   'shell.ts',
   'task-graph.ts',

@@ -159,6 +159,10 @@ const result = {
   commitCount: prepared.commitCount,
   changedFiles: prepared.changedFiles,
   findings: [],
+  sarif: {
+    version: '2.1.0',
+    runs: [{ properties: { dakar: { pricingTableVersion: '2026-07-18' } } }],
+  },
   reportMarkdown: '# Dakar review\\n\\nNo blocking findings were accepted.',
   metrics: { taskCount: 2 },
   recordInput: {
@@ -654,6 +658,11 @@ appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-terra', usage: { input
   assert.equal(Array.isArray(output.metrics.reportedUsage), true)
   assert.equal(output.metrics.reportedUsage.length, 2)
   assert.deepEqual(output.metrics.reportedTokens, { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 })
+  assert.equal(output.sarif.runs[0].properties.dakar.reportedUsage.length, 2)
+  assert.deepEqual(
+    output.sarif.runs[0].properties.dakar.reportedTokens,
+    { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 },
+  )
   const stateText = readFileSync(output.stateFile, 'utf8')
   assert.match(stateText, /reportedTokens/u)
   assert.match(stateText, /41000/u)
@@ -930,6 +939,76 @@ test('CLI fails with a prepare envelope without invoking ODW when refs are inval
   assert.match(result.stderr, /"stage":\s*"prepare"/u)
   assert.match(result.stderr, /"ok":\s*false/u)
   assert.equal(existsSync(marker), false)
+})
+
+test('a blocking deterministic gate returns SARIF without invoking ODW', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const config = join(tempRoot, 'gates.yaml')
+  const marker = join(tempRoot, 'odw-invoked')
+  const fakeOdw = join(tempRoot, 'odw')
+  writeFileSync(config, `
+pre_merge_checks:
+  custom_checks:
+    - mode: error
+      name: Blocking fixture
+      command: node -e "process.stderr.write('repair this'); process.exit(7)"
+`)
+  writeFileSync(fakeOdw, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
+  chmodSync(fakeOdw, 0o755)
+
+  const completed = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      '--repo-root', targetRepo,
+      '--base', base,
+      '--config', config,
+      '--state-root', join(tempRoot, 'state'),
+      '--odw-bin', fakeOdw,
+      '--runs-root', join(tempRoot, 'runs'),
+    ],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  const result = JSON.parse(completed.stdout)
+
+  assert.equal(completed.status, 1)
+  assert.equal(existsSync(marker), false)
+  assert.equal(result.stage, 'deterministic-gates')
+  assert.deepEqual(result.metrics.ledger, [])
+  assert.equal(result.metrics.spentUsd, 0)
+  assert.equal(result.metrics.reservedAuditUsd, 0)
+  assert.equal(result.recordInput, undefined)
+  assert.equal(result.sarif.version, '2.1.0')
+  assert.match(result.reportMarkdown, /Blocking fixture/u)
+})
+
+test('repository gate commands are loaded from the trusted base, not the reviewed head', () => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  const marker = join(tempRoot, 'odw-invoked')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(join(targetRepo, '.coderabbit.yaml'), `
+pre_merge_checks:
+  custom_checks:
+    - mode: error
+      name: Untrusted head command
+      command: node -e "process.exit(9)"
+`)
+  execFileSync('git', ['-C', targetRepo, 'add', '.coderabbit.yaml'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'untrusted config change'])
+  writePreparedEchoOdw(fakeOdw, { bodyPrefix: `appendFileSync('${marker}', 'yes')` })
+
+  const output = JSON.parse(
+    runCli([
+      '--repo-root', targetRepo,
+      '--base', base,
+      '--state-root', join(tempRoot, 'state'),
+      '--odw-bin', fakeOdw,
+      '--runs-root', join(tempRoot, 'runs'),
+    ]),
+  )
+
+  assert.equal(output.ok, true)
+  assert.equal(existsSync(marker), true)
 })
 
 test('package installs a callable CLI with Bun global install', (t) => {

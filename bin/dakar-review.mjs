@@ -10,12 +10,20 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { deriveOdwConfig } from '../scripts/odw-config.mjs'
+import { runDeterministicGates } from '../scripts/deterministic-gates.mjs'
 import { resolveReviewConfig } from '../scripts/review-config.mjs'
+import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
 import { worstCaseReviewSeconds } from '../src/workflows/dakar-review/retry.ts'
+import {
+  assembleSarif,
+  projectDiscardedFromSarif,
+  projectFindingsFromSarif,
+  renderSarifMarkdown,
+} from '../src/workflows/dakar-review/sarif.ts'
 import { appendReview, prepare } from '../scripts/review-state.mjs'
 
 /** ODW's documented default per-model-call timeout in seconds. */
@@ -158,6 +166,11 @@ function attachReportedUsage(output) {
   output.metrics = output.metrics || {}
   output.metrics.reportedUsage = lines
   output.metrics.reportedTokens = totals
+  const sarifDakar = output.sarif?.runs?.[0]?.properties?.dakar
+  if (sarifDakar && typeof sarifDakar === 'object') {
+    sarifDakar.reportedUsage = lines
+    sarifDakar.reportedTokens = totals
+  }
   return output
 }
 
@@ -837,6 +850,73 @@ function prepareReview(options, repoRoot, resolvedConfig) {
 }
 
 /**
+ * Builds the zero-spend result returned for a blocking deterministic gate.
+ *
+ * The canonical SARIF document owns gate evidence and every compatibility
+ * projection. No record input is produced because the reviewed head remains
+ * eligible after remediation.
+ *
+ * @param {object[]} gates - host-executed deterministic gate outcomes.
+ * @param {string} config - resolved review configuration path.
+ * @param {object} prepared - trusted prepared review range.
+ * @returns {object} structured failure with an empty model ledger.
+ */
+function blockingGateResult(gates, config, prepared) {
+  const blocking = gates.filter((gate) => gate.blocking && gate.status !== 'passed')
+  const sarif = assembleSarif({ gates, pricingTableVersion: DEFAULT_PRICING_TABLE.version })
+  return {
+    ok: false,
+    stage: 'deterministic-gates',
+    error: `${blocking.length} blocking deterministic gate${blocking.length === 1 ? '' : 's'} failed`,
+    config,
+    reviewBase: prepared.reviewBase,
+    headCommit: prepared.headCommit,
+    commitCount: prepared.commitCount,
+    changedFiles: prepared.changedFiles,
+    sarif,
+    findings: projectFindingsFromSarif(sarif),
+    discarded: projectDiscardedFromSarif(sarif),
+    reportMarkdown: renderSarifMarkdown(sarif),
+    metrics: {
+      routingPolicy: 'deterministic-flex-v1',
+      ledger: [],
+      ledgerTotalEstimatedUsd: 0,
+      spentUsd: 0,
+      reservedAuditUsd: 0,
+      pricingTableVersion: DEFAULT_PRICING_TABLE.version,
+      deterministicGateCount: gates.length,
+      blockingGateFailureCount: blocking.length,
+    },
+  }
+}
+
+/**
+ * Reads executable gate policy from the trusted review base when repository-local.
+ *
+ * A pull request may edit its own working-tree configuration, so executing that
+ * text would grant the reviewed head command execution. Repository-local gate
+ * policy is therefore loaded from `prepared.reviewBase`; a file absent there
+ * contributes no executable gates. User-level and bundled configurations live
+ * outside the reviewed repository and are read from their resolved paths.
+ *
+ * @param {string} configPath - resolved review configuration path.
+ * @param {string} repoRoot - absolute reviewed repository root.
+ * @param {string} reviewBase - trusted prepared base commit.
+ * @returns {string} trusted configuration text for deterministic gate parsing.
+ */
+function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
+  const relativePath = relative(repoRoot, configPath)
+  if (!isAbsolute(relativePath) && relativePath !== '..' && !relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
+    const result = spawnSync('git', ['-C', repoRoot, 'show', `${reviewBase}:${relativePath}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    return result.status === 0 ? result.stdout : ''
+  }
+  return readFileSync(configPath, 'utf8')
+}
+
+/**
  * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
  *
  * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
@@ -872,6 +952,13 @@ async function run(argv) {
       return 0
     }
     workflowArgs.prepared = preparation.prepared
+    const gateConfig = readTrustedGateConfig(workflowArgs.config, repoRoot, workflowArgs.prepared.reviewBase)
+    const deterministicGates = runDeterministicGates(gateConfig, repoRoot)
+    workflowArgs.prepared.deterministicGates = deterministicGates
+    if (deterministicGates.some((gate) => gate.blocking && gate.status !== 'passed')) {
+      printWorkflowOutput(blockingGateResult(deterministicGates, workflowArgs.config, workflowArgs.prepared), format)
+      return 1
+    }
     // Every routing policy clamps to the live deterministic-flex-v1 lane
     // (config.ts), which dispatches through the pi Flex adapters that resolve the
     // API key from OPENAI_API_KEY. An unknown policy must not suppress this

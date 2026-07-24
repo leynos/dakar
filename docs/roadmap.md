@@ -441,10 +441,10 @@ real branches. See ADR 002 §"Verification".
 
 ### 7.5. Deferred ADR 002 completions
 
-- [ ] 7.5.1. Adopt SARIF 2.1.0 as the canonical findings envelope.
+- [x] 7.5.1. Adopt SARIF 2.1.0 as the canonical findings envelope.
   - Requires 7.3.3.
   - See ADR 002 §"Findings and hand-off format" and roadmap 6.1.1.
-- [ ] 7.5.2. Run configured deterministic gates with short-circuit before
+- [x] 7.5.2. Run configured deterministic gates with short-circuit before
   semantic review.
   - Requires 7.2.1.
   - See ADR 002 §"Deterministic gate short-circuit".

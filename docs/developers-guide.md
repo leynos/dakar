@@ -87,6 +87,8 @@ The source tree has these responsibilities:
 - `retry.ts`: the pure Flex retry schedule — deterministic FNV-1a jitter,
   exponential backoff, the conservative retryable classifier, and
   `worstCaseReviewSeconds()`;
+- `sarif.ts`: canonical SARIF 2.1.0 assembly plus the compatibility findings,
+  discard, and Markdown projections;
 - `shell.ts`: the shared shell-word quoting authority;
 - `task-graph.ts`: path classification, finder-pack bounding
   (`buildFlexFinderPlan()`), and task creation;
@@ -95,6 +97,16 @@ The source tree has these responsibilities:
   discards), and verdict reduction; and
 - `prompts.ts`: stable prompt prefixes and dynamic prompt tails, including
   `auditPrompt()`.
+
+The CLI runs `scripts/deterministic-gates.mjs` after `prepare()` and before
+creating an ODW run. Its dependency-free parser deliberately recognizes only
+scalar `name`, `mode`, and `command` fields under
+`pre_merge_checks.custom_checks`; natural-language entries remain prompt
+policy. Blocking failures return canonical SARIF directly with no workflow,
+agent, reservation, ledger, or recording side effect. The workflow repeats the
+guard before `phase("Plan")` for callers that invoke the artefact directly.
+Repository-local executable policy is read with `git show` from the prepared
+trusted base; never execute a gate command introduced by the head under review.
 
 The internally facing interfaces follow the same ownership boundaries.
 `resolveWorkflowConfig()` returns the frozen `WorkflowConfig` passed into
@@ -247,6 +259,13 @@ rather than silently dropped. Deterministic host code
 and caps the resulting candidates at `maxAuditCandidates` before the
 single Terra Flex audit call (`gpt-5.6-terra`, medium reasoning) returns
 one verdict per candidate.
+
+After reconciliation, `assembleSarif()` copies immutable Luna evidence and
+attaches Terra decisions by stable candidate identifier. It also records gate
+outcomes, lane/tier provenance, the complete estimated ledger, reported usage
+when the CLI enriches the result, and the pricing-table version.
+`projectFindingsFromSarif()`, `projectDiscardedFromSarif()`, and
+`renderSarifMarkdown()` are the only final projection paths.
 
 The Flex lanes are pinned in `model-routing.ts::FLEX_LANE_ROLES` and
 selected only by host code (`flexLaneRole()`); ADR 002 forbids an agent

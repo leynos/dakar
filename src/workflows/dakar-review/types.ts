@@ -66,6 +66,22 @@ export interface PreparedReview {
   reviewBase?: string
   stateFile?: string
   warnings?: string[]
+  deterministicGates?: DeterministicGateResult[]
+}
+
+/** Captures one host-executed deterministic check without secret-bearing environment data. */
+export interface DeterministicGateResult {
+  blocking: boolean
+  command: string
+  exitCode: number | null
+  gateId: string
+  name: string
+  signal?: string | null
+  status: 'passed' | 'failed' | 'error'
+  stderr: string
+  stderrSha256: string
+  stdout: string
+  stdoutSha256: string
 }
 
 /** Defines one bounded, model-routed unit of changed-file review work. */

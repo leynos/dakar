@@ -15,6 +15,12 @@ import { flexLaneRole, modelName } from './model-routing.ts'
 import { DEFAULT_PRICING_TABLE, estimateWorstCaseUsd } from './pricing.ts'
 import { auditPrompt, taskPrompt } from './prompts.ts'
 import { backoffSeconds, isRetryableFlexError, worstCaseReviewSeconds } from './retry.ts'
+import {
+  assembleSarif,
+  projectDiscardedFromSarif,
+  projectFindingsFromSarif,
+  renderSarifMarkdown,
+} from './sarif.ts'
 import { AUDIT_SCHEMA, CANDIDATE_SCHEMA, VERDICT_SCHEMA } from './schemas.ts'
 import { buildFlexFinderPlan, defaultTaskGraph } from './task-graph.ts'
 import type { FlexRetryConfig } from './retry.ts'
@@ -296,6 +302,37 @@ if (prepared.alreadyReviewed || prepared.commitCount === 0) {
     config: CODE_RABBIT_CONFIG,
     stateFile: prepared.stateFile,
     headCommit: prepared.headCommit,
+  }
+}
+
+const deterministicGates = prepared.deterministicGates || []
+const blockingGateFailures = deterministicGates.filter((gate) => gate.blocking && gate.status !== 'passed')
+if (blockingGateFailures.length > 0) {
+  const sarif = assembleSarif({
+    gates: deterministicGates,
+    pricingTableVersion: PRICING_TABLE.version,
+  })
+  return {
+    ok: false,
+    stage: 'deterministic-gates',
+    error: `${blockingGateFailures.length} blocking deterministic gate${blockingGateFailures.length === 1 ? '' : 's'} failed`,
+    config: CODE_RABBIT_CONFIG,
+    prepared,
+    sarif,
+    findings: projectFindingsFromSarif(sarif),
+    discarded: projectDiscardedFromSarif(sarif),
+    reportMarkdown: renderSarifMarkdown(sarif),
+    metrics: {
+      routingPolicy: ROUTING_POLICY,
+      ledger: [],
+      ledgerTotalEstimatedUsd: 0,
+      budgetUsd: BUDGET_USD,
+      reservedAuditUsd: 0,
+      spentUsd: 0,
+      pricingTableVersion: PRICING_TABLE.version,
+      deterministicGateCount: deterministicGates.length,
+      blockingGateFailureCount: blockingGateFailures.length,
+    },
   }
 }
 
@@ -667,36 +704,26 @@ const sampledOut = candidates
     reason: 'Low-severity candidate was not selected by the task verification policy.',
     evidenceChecked: '',
   }))
-const discarded = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut, ...overflow, ...overCap]
-const authoritativeFindings = accepted.map((candidate) => ({
-  severity: candidate.severity,
-  path: candidate.path,
-  line: candidate.line || undefined,
-  title: candidate.title,
-  detail: candidate.detail || '',
-  evidence: candidate.evidence || '',
-  clusterId: candidate.clusterId || undefined,
-  sourceTasks: [candidate.taskId],
-}))
+const evidenceDiscards = [...discardedFromVerdicts(candidates, verdicts), ...sampledOut, ...overflow, ...overCap]
+const sarif = assembleSarif({
+  accepted,
+  candidates,
+  discarded: evidenceDiscards,
+  gates: deterministicGates,
+  ledger,
+  pricingTableVersion: PRICING_TABLE.version,
+  verdicts: rawVerdicts,
+})
+// Existing CLI consumers still receive `findings`, `discarded`, and
+// `reportMarkdown`, but they are compatibility projections from canonical
+// SARIF rather than independently assembled result contracts.
+const authoritativeFindings = projectFindingsFromSarif(sarif)
+const discarded = projectDiscardedFromSarif(sarif)
 const authoritativeSummary =
   authoritativeFindings.length === 0
     ? 'No blocking findings were accepted.'
     : `${authoritativeFindings.length} confirmed finding${authoritativeFindings.length === 1 ? '' : 's'} require changes.`
-const authoritativeReport = [
-  '# Dakar review',
-  '',
-  authoritativeSummary,
-  ...authoritativeFindings.flatMap((finding) => [
-    '',
-    `## ${finding.severity}: ${finding.title}`,
-    '',
-    `${finding.path}${finding.line ? `:${finding.line}` : ''}`,
-    '',
-    finding.detail,
-    '',
-    `Evidence: ${finding.evidence}`,
-  ]),
-].join('\n')
+const authoritativeReport = renderSarifMarkdown(sarif)
 
 // Rendering is deterministic host code: authoritativeReport above is the only
 // rendering path. The former Synthesize agent call produced a report the
@@ -807,6 +834,7 @@ return {
   verdicts,
   findings: authoritativeFindings,
   discarded,
+  sarif,
   admissionRefusals,
   lunaDowngrades,
   summary: authoritativeSummary,
