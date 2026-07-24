@@ -423,6 +423,18 @@ the conflict in `Decision Log`, and escalate.
     documentation, and test gates: docstring coverage was 206/206 (100.00%,
     threshold 80.00%), the generated 68,667-byte workflow was fresh, and the
     Node suite passed 287/287.
+  - [x] (2026-07-24) Review follow-up corrected the ADR's migration wording,
+    distinguished CLI host responsibilities from model-free rendering inside
+    compiled `main.ts`, and documented the actual host-versus-agent
+    CodeRabbit-format boundary. The requested general malformed-YAML rejection
+    claim was not adopted because the dependency-free executable-check parser
+    is deliberately not a complete YAML validator. A hermetic live-harness
+    fixture now exercises the production Flex extension without pi, provider
+    access, or inherited API credentials, and the duplicated compiled-workflow
+    simulator now lives in `tests/helpers/run-workflow.mjs`. Scrutineer passed
+    the focused suite 71/71 and `make check` with 289/289 Node tests, 230/230
+    docstrings (100.00%, threshold 80.00%), and the 68,667-byte generated
+    workflow fresh.
 
 ## Surprises & discoveries
 

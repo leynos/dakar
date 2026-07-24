@@ -1,15 +1,16 @@
 /**
- * @file Verify the M7 live-review harness's pure and file-scoped helpers.
+ * @file Verify the M7 live-review harness and its local Flex telemetry boundary.
  *
  * These tests never touch the network or spend live provider budget: they
  * exercise `loadCorpusEntry`, the state-root escape guard, the SHA-pinning
  * comparison, the `DAKAR-USAGE:` stderr parser, and `summarize`'s output
- * shape against fixtures. Cloning and spawning `dakar-review` are exercised
- * only by the operator running the harness for real against the pinned
- * corpus.
+ * shape against fixtures. A hermetic child process also loads the production
+ * Flex extension against a fake pi host; it never starts pi or a provider.
+ * Cloning and spawning `dakar-review` remain live-operator-only activities.
  */
 
-import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -25,6 +26,85 @@ import {
   sumUsage,
   verifyPinnedHead,
 } from '../scripts/live-review-harness.mjs'
+
+const flexExtensionUrl = new URL('../adapters/pi/extensions/flex-tier.ts', import.meta.url)
+
+/**
+ * Load the production Flex extension in a child process with a fake pi host.
+ *
+ * The fixture records hook callbacks in memory and never launches pi or a
+ * provider. Removing the inherited API key makes accidental provider access
+ * fail closed, while the child boundary isolates environment and console state.
+ *
+ * @param {string} usageLog Path supplied as `DAKAR_USAGE_LOG`.
+ * @returns {{result: object, usageRecords: object[]}} Hook results and telemetry.
+ */
+function runFlexExtensionFixture(usageLog) {
+  const fixtureSource = `
+    import flexTier from ${JSON.stringify(flexExtensionUrl.href)}
+    const hooks = new Map()
+    flexTier({ on: (eventName, callback) => hooks.set(eventName, callback) })
+    const providerPayload = { model: 'gpt-5.6-luna', stream: true, unrelated: { keep: 'me' } }
+    const injected = hooks.get('before_provider_request')({ payload: providerPayload })
+    const record = {
+      model: 'gpt-5.6-luna',
+      usage: { input: 13, output: 5, cacheRead: 3, cacheWrite: 2 },
+    }
+    hooks.get('message_end')({ message: { role: 'assistant', ...record } })
+    hooks.get('message_end')({ message: { role: 'user', content: 'not telemetry' } })
+    process.stdout.write(JSON.stringify({ injected, continued: true }))
+  `
+  const env = { ...process.env, DAKAR_USAGE_LOG: usageLog }
+  delete env.OPENAI_API_KEY
+  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', fixtureSource], {
+    encoding: 'utf8',
+    env,
+  })
+  assert.equal(child.status, 0, child.stderr)
+  const usageRecords = child.stderr
+    .split('\n')
+    .filter((line) => line.startsWith('DAKAR-USAGE: '))
+    .map((line) => JSON.parse(line.slice('DAKAR-USAGE: '.length)))
+  return { result: JSON.parse(child.stdout), usageRecords }
+}
+
+test('Flex extension injects the tier and emits assistant usage to stderr and JSONL', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-live-flex-'))
+  const usageLog = join(tempRoot, 'usage.jsonl')
+  try {
+    const { result, usageRecords } = runFlexExtensionFixture(usageLog)
+
+    assert.deepEqual(result.injected, {
+      model: 'gpt-5.6-luna',
+      stream: true,
+      unrelated: { keep: 'me' },
+      service_tier: 'flex',
+    })
+    assert.equal(result.continued, true)
+    assert.deepEqual(usageRecords, [{
+      model: 'gpt-5.6-luna',
+      usage: { input: 13, output: 5, cacheRead: 3, cacheWrite: 2 },
+    }])
+    assert.deepEqual(
+      readFileSync(usageLog, 'utf8').trimEnd().split('\n').map((line) => JSON.parse(line)),
+      usageRecords,
+    )
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('Flex extension preserves review execution when JSONL append fails', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-live-flex-failure-'))
+  try {
+    const { result, usageRecords } = runFlexExtensionFixture(tempRoot)
+
+    assert.equal(result.continued, true)
+    assert.equal(usageRecords.length, 1)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
 
 test('loadCorpusEntry returns the pinned entry for a known repo and PR', () => {
   const entry = loadCorpusEntry('leynos/comenq', 140)

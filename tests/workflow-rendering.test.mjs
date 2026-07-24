@@ -9,9 +9,9 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { buildAgentMock, extractAuditCandidates, FixtureFailure } from './helpers/mock-agents.mjs'
+import { extractAuditCandidates } from './helpers/mock-agents.mjs'
+import { runCompiledWorkflow } from './helpers/run-workflow.mjs'
 
 function renderingResponders() {
   return [
@@ -33,36 +33,15 @@ function renderingResponders() {
 }
 
 async function renderOnce() {
-  let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
-  source = source.replace(/^export const meta\s*=/mu, 'const meta =')
-  const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
-  const body = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'args', 'budget', 'workflow', 'validate', 'sleep', source)
-  const prompts = new Map()
-  const agentLabels = []
   const head = 'b'.repeat(40)
   const base = 'a'.repeat(40)
   const prepared = { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
     commitCount: 1, changedFiles: ['src/a.js'], diffStat: '1 file changed', warnings: [] }
-  const agent = buildAgentMock(renderingResponders(), { prompts, agentLabels })
-  const swallowFixtureFailure = (error) => {
-    if (error instanceof FixtureFailure) return null
-    throw error
-  }
-  const parallel = (thunks) => Promise.all(thunks.map((thunk) => Promise.resolve().then(thunk).catch(swallowFixtureFailure)))
-  const pipeline = (items, ...stages) => Promise.all(items.map(async (item, index) => {
-    try {
-      let value = item
-      for (const stage of stages) value = await stage(value, item, index)
-      return value
-    } catch (error) {
-      return swallowFixtureFailure(error)
-    }
-  }))
-  const result = await body(agent, parallel, pipeline, () => {}, () => {},
-    { config: '/distinct/policy.yaml', stateRoot: '', prepared },
-    { total: null, spent: () => 0, remaining: () => 0 }, async () => null,
-    () => ({ ok: true, meta: null, errors: [], warnings: [] }), async () => {})
-  return { agentLabels, result }
+  return runCompiledWorkflow({
+    responders: renderingResponders(),
+    prepared,
+    args: { config: '/distinct/policy.yaml', stateRoot: '' },
+  })
 }
 
 test('deterministic rendering is byte-stable across identical runs', async () => {

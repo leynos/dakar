@@ -1,9 +1,9 @@
 /** @file Drive the generated Flex-lane workflow through injected primitives. */
 
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { buildAgentMock, extractAuditCandidates, extractTaskFiles, FixtureFailure } from './helpers/mock-agents.mjs'
+import { extractAuditCandidates, extractTaskFiles, FixtureFailure } from './helpers/mock-agents.mjs'
+import { runCompiledWorkflow } from './helpers/run-workflow.mjs'
 import { deterministicJitter } from '../src/workflows/dakar-review/retry.ts'
 
 // Finder packs (labels `luna-flex-<n>`) emit one candidate per assigned file by
@@ -72,47 +72,31 @@ async function runWorkflow({
   finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures, finderFailLabel,
   nullParallelSlots = [], deterministicGates = [], knobs = {},
 } = {}) {
-  let source = await readFile(new URL('../workflows/dakar-review.js', import.meta.url), 'utf8')
-  source = source.replace(/^export const meta\s*=/mu, 'const meta =')
-  const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
-  const body = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'args', 'budget', 'workflow', 'validate', 'sleep', source)
-  const prompts = new Map()
-  const agentLabels = []
   const agentCalls = []
-  const phases = []
-  const logs = []
   const sleepDelays = []
   const head = 'b'.repeat(commitLength)
   const base = 'a'.repeat(commitLength)
   const prepared = { ok: true, stateFile: '/tmp/reviews.toml', reviewBase: base, headCommit: head,
     commitCount: 1, changedFiles, diffStat: '1 file changed', warnings: [], deterministicGates }
-  const agent = buildAgentMock(defaultResponders({ failedLabel, nullLabel, finderTitles, auditVerdicts, auditFails, auditNulls, finderFailures, auditFailures, finderFailLabel }),
-    { prompts, agentLabels, agentCalls })
-  const swallowFixtureFailure = (error) => {
-    if (error instanceof FixtureFailure) return null
-    throw error
-  }
-  // `nullParallelSlots` simulates ODW aborting a thunk and resolving its slot
-  // to null without the thunk's own code (including the retry helper) running
-  // to completion — the semantics observed live in M7.
-  const parallel = (thunks) => Promise.all(thunks.map((thunk, index) =>
-    nullParallelSlots.includes(index)
-      ? Promise.resolve(null)
-      : Promise.resolve().then(thunk).catch(swallowFixtureFailure)))
-  const pipeline = (items, ...stages) => Promise.all(items.map(async (item, index) => {
-    try {
-      let value = item
-      for (const stage of stages) value = await stage(value, item, index)
-      return value
-    } catch (error) {
-      return swallowFixtureFailure(error)
-    }
-  }))
-  const result = await body(agent, parallel, pipeline, (name) => phases.push(name), (message) => logs.push(message),
-    { config, prepared, ...(repoRoot === undefined ? {} : { repoRoot }), ...knobs },
-    { total: null, spent: () => 0, remaining: () => 0 }, async () => null,
-    () => ({ ok: true, meta: null, errors: [], warnings: [] }), async (milliseconds) => { sleepDelays.push(milliseconds) })
-  return { agentLabels, agentCalls, logs, phases, prompts, result, sleepDelays }
+  return runCompiledWorkflow({
+    responders: defaultResponders({
+      failedLabel,
+      nullLabel,
+      finderTitles,
+      auditVerdicts,
+      auditFails,
+      auditNulls,
+      finderFailures,
+      auditFailures,
+      finderFailLabel,
+    }),
+    prepared,
+    args: { config, ...(repoRoot === undefined ? {} : { repoRoot }) },
+    knobs,
+    agentCalls,
+    sleepDelays,
+    nullParallelSlots,
+  })
 }
 
 const finderLabels = (labels) => labels.filter((label) => /^luna-flex-\d+$/u.test(label))

@@ -623,9 +623,8 @@ Implement the decision in independently testable steps:
 2. Move configuration resolution, range preparation, and history recording from
    agent calls into host code.
 3. Parse configured deterministic checks and import their structured results.
-4. Add explicit Luna Flex and Terra Flex Codex CLI adapters using
-   `-c 'service_tier="flex"'` (as amended: implemented with `pi-luna-flex`
-   and `pi-terra-flex` adapters; Codex CLI cannot transmit `service_tier`).
+4. Add explicit `pi-luna-flex` and `pi-terra-flex` adapters. Codex CLI cannot
+   transmit `service_tier`, so the pi extension injects the Flex tier.
 5. Add the bounded Flex work queue, concurrency controls, idempotency keys,
    backoff, and jitter.
 6. Replace per-candidate verifier fan-out with deterministic compaction followed

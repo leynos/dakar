@@ -167,19 +167,25 @@ that should apply one house review policy across repositories without copying a
 
 ### How much of the CodeRabbit format is honoured
 
-Dakar treats the resolved file as policy context for the review agents, not
-as a parsed configuration. The host discovers the path with the precedence
-above and injects it into every finder and audit prompt; the agents are
-instructed to prioritize explicit policy violations and cite policy rules as
-evidence. No key is parsed, validated, or enforced host-side yet, so a
-malformed file is not detected (only a missing explicit `--config` path
-fails closed).
+Dakar uses the resolved file at two boundaries. Host code deterministically
+discovers the path and parses the supported executable-check subset before any
+Luna or Terra call. It then supplies the resolved path to every finder and
+audit prompt as policy context; the agents interpret the supported
+natural-language review controls and are instructed to cite policy rules as
+evidence.
+
+The host rejects a missing explicit `--config` path before semantic review. Its
+dependency-free parser deliberately is not a general YAML validator and does
+not promise to reject malformed YAML; only the documented scalar custom-check
+subset has host semantics. Unsupported keys have no host-side effect. Operators
+should validate the complete CodeRabbit document separately when they require
+general YAML diagnostics.
 
 | Support level | What it covers |
 | - | - |
-| Host-enforced | Path discovery and precedence; fail-closed handling of a missing explicit `--config` path; explicit scalar `pre_merge_checks.custom_checks[].command` entries, with `mode: error` blocking and other modes non-blocking. Review limits, budget, and ranges come from Dakar's own CLI and workflow arguments. |
-| Model-mediated | Natural-language policy keys the agents can read and honour: `tone_instructions`, `language`, `reviews.profile`, `reviews.path_instructions`, and custom-check `instructions` without a command. Adherence is interpretive, not guaranteed, and instructions are not sliced per changed path. |
-| Ignored | CodeRabbit platform features: `early_access`, `chat.integrations`, `knowledge_base`, `issue_enrichment`, `code_generation`, pull-request surface options (`auto_title_instructions`, `high_level_summary_*`, walkthrough and labelling options, `request_changes_workflow`, `abort_on_close`, `auto_review`, `estimate_code_review_effort`), and `tools` integrations (github-checks, languagetool, clippy, presidio). |
+| Host-enforced | Path discovery and precedence; fail-closed handling of a missing explicit `--config` path; explicit scalar `pre_merge_checks.custom_checks[].command` entries, with an omitted mode or `mode: error` blocking and every other mode non-blocking. Review limits, budget, and ranges come from Dakar's own CLI and workflow arguments rather than CodeRabbit keys. |
+| Agent-interpreted | `tone_instructions`, `language`, `reviews.profile`, `reviews.path_instructions`, and custom-check `instructions` without a command. Adherence is interpretive, not guaranteed, and host code does not slice instructions per changed path. |
+| Unsupported | `early_access`; `chat.integrations`; `knowledge_base`; `issue_enrichment`; `code_generation`; pull-request surface options including `auto_title_instructions`, `high_level_summary_*`, walkthrough and labelling options, `request_changes_workflow`, `abort_on_close`, `auto_review`, and `estimate_code_review_effort`; and `tools` integrations such as github-checks, languagetool, clippy, and presidio. Dakar does not validate or translate these keys, so they have no host-side routing, gating, budget, retry, or recording effect. |
 
 _Table: CodeRabbit configuration support levels in the current route._
 
