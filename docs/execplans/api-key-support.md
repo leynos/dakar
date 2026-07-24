@@ -400,6 +400,15 @@ the conflict in `Decision Log`, and escalate.
     Scrutineer then passed `make check-fmt`, `make lint`, `make typecheck`,
     `make test` (275/275), and the full `make check`, including 100% docstring
     coverage, workflow freshness, and the ODW dry run.
+  - [x] (2026-07-24) Replaced the pi Flex extension's source-text assertions
+    with hermetic runtime hook tests. A fake pi host now proves request payload
+    preservation plus `service_tier: "flex"`, assistant-only stderr and JSONL
+    usage telemetry, and fail-open telemetry-file writes without invoking pi or
+    a provider. The focused adapter suite passed 5/5; `make docstrings` reported
+    203/203 (100.00%, threshold 80.00%); `make workflow-freshness` reported the
+    58,505-byte artefact fresh; and `make check` passed 276/276 tests. Tracing,
+    metrics, and alerting remain intentionally unchanged here and tracked by
+    existing issue #2.
 
 ## Surprises & discoveries
 

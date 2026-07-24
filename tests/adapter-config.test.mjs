@@ -9,15 +9,23 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
+import flexTier from '../adapters/pi/extensions/flex-tier.ts'
+
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const odwConfig = JSON.parse(readFileSync(join(repoRoot, 'odw.config.json'), 'utf8'))
 const models = JSON.parse(readFileSync(join(repoRoot, 'adapters', 'pi', 'models.json'), 'utf8'))
-const extension = readFileSync(join(repoRoot, 'adapters', 'pi', 'extensions', 'flex-tier.ts'), 'utf8')
+
+function registerFlexHooks() {
+  const hooks = new Map()
+  flexTier({ on: (eventName, callback) => hooks.set(eventName, callback) })
+  return hooks
+}
 
 function commandOf(name) {
   const adapter = odwConfig.adapters[name]
@@ -58,15 +66,68 @@ test('pi Flex adapters pin print mode, provider, model, and thinking per lane', 
   }
 })
 
-test('flex-tier extension injects the Flex service tier and logs usage', () => {
-  assert.match(extension, /service_tier:\s*'flex'/u, 'the extension must inject service_tier: flex')
-  assert.match(extension, /before_provider_request/u, 'the extension must hook before_provider_request')
-  assert.match(extension, /DAKAR-USAGE:/u, 'the extension must emit the DAKAR-USAGE stderr marker')
-  assert.match(extension, /console\.error/u, 'the DAKAR-USAGE marker must be written to stderr')
-  // ODW does not forward adapter stderr, so the usage-log file channel is the
-  // reported-usage path the CLI actually consumes (observed live, M7).
-  assert.match(extension, /DAKAR_USAGE_LOG/u, 'the extension must honour the DAKAR_USAGE_LOG file channel')
-  assert.match(extension, /model:\s*event\.message\.model/u, 'usage records must carry the model for pricing')
+test('flex-tier extension injects Flex and reports assistant usage', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-flex-tier-'))
+  const usageLog = join(tempRoot, 'usage.jsonl')
+  const previousUsageLog = process.env.DAKAR_USAGE_LOG
+  const previousConsoleError = console.error
+  const stderrRecords = []
+  try {
+    process.env.DAKAR_USAGE_LOG = usageLog
+    console.error = (...parts) => stderrRecords.push(parts.join(' '))
+    const hooks = registerFlexHooks()
+
+    const providerPayload = { model: 'gpt-5.6-luna', stream: true, custom: { keep: 'me' } }
+    assert.deepEqual(hooks.get('before_provider_request')({ payload: providerPayload }), {
+      ...providerPayload,
+      service_tier: 'flex',
+    })
+
+    const record = {
+      model: 'gpt-5.6-luna',
+      usage: { input: 13, output: 5, cacheRead: 3, cacheWrite: 2 },
+    }
+    hooks.get('message_end')({ message: { role: 'assistant', ...record } })
+    hooks.get('message_end')({ message: { role: 'user', content: 'not telemetry' } })
+
+    assert.equal(stderrRecords.length, 1)
+    assert.match(stderrRecords[0], /^DAKAR-USAGE: /u)
+    const stderrRecord = JSON.parse(stderrRecords[0].slice('DAKAR-USAGE: '.length))
+    assert.deepEqual(stderrRecord, record)
+    const fileRecords = readFileSync(usageLog, 'utf8').trimEnd().split('\n')
+    assert.equal(fileRecords.length, 1)
+    assert.deepEqual(JSON.parse(fileRecords[0]), stderrRecord)
+  } finally {
+    if (previousUsageLog === undefined) delete process.env.DAKAR_USAGE_LOG
+    else process.env.DAKAR_USAGE_LOG = previousUsageLog
+    console.error = previousConsoleError
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('flex-tier telemetry append failure does not interrupt the review', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-flex-tier-failure-'))
+  const previousUsageLog = process.env.DAKAR_USAGE_LOG
+  const previousConsoleError = console.error
+  const stderrRecords = []
+  try {
+    process.env.DAKAR_USAGE_LOG = tempRoot
+    console.error = (...parts) => stderrRecords.push(parts.join(' '))
+    const messageEnd = registerFlexHooks().get('message_end')
+
+    assert.doesNotThrow(() =>
+      messageEnd({
+        message: { role: 'assistant', model: 'gpt-5.6-terra', usage: { input: 8, output: 2 } },
+      }),
+    )
+    assert.equal(stderrRecords.length, 1)
+    assert.match(stderrRecords[0], /^DAKAR-USAGE: /u)
+  } finally {
+    if (previousUsageLog === undefined) delete process.env.DAKAR_USAGE_LOG
+    else process.env.DAKAR_USAGE_LOG = previousUsageLog
+    console.error = previousConsoleError
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
 })
 
 test('models.json declares both Flex models under the openai-flex provider', () => {
