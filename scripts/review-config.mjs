@@ -190,8 +190,8 @@ function withPolicy(result) {
  * search, retaining the full search trail so the workflow output stays
  * auditable.
  * @property {boolean} ok Whether a configuration file was found.
- * @property {string} config Path of the resolved configuration file; empty when `ok` is false.
- * @property {string} source Which search stage supplied the file (explicit argument, repository, XDG, bundled example).
+ * @property {string} config Path of the resolved configuration file, or the path that was attempted when `ok` is false.
+ * @property {string} source Search stage that supplied the file: one of `explicit`, `repository`, `user`, or `example`.
  * @property {string[]} checked Every path probed, in search order, including the winner.
  * @property {object} [policy] Normalized review policy parsed from the resolved config; present only when `ok` is true.
  * @property {string} [error] Reason the search failed; present only when `ok` is false.
