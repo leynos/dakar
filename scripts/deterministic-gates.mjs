@@ -1,9 +1,11 @@
 /**
- * @file Execute normalized deterministic pre-merge checks.
+ * Execute normalized deterministic pre-merge checks.
  *
  * YAML parsing and policy validation belong to `review-config.mjs`. This module
  * accepts only that normalized contract, executes command-bearing checks, and
  * retains bounded redacted evidence without exposing environment secrets.
+ *
+ * @module
  */
 
 import { spawnSync } from 'node:child_process'

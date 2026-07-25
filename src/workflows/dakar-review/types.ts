@@ -34,76 +34,109 @@ export interface AgentInstructions {
 
 /** Describes one validated path-scoped instruction from review policy. */
 export interface PolicyPathInstruction {
+  /** Instruction text applied to files matching `path`. */
   instructions: string
+  /** Glob pattern selecting the files this instruction applies to. */
   path: string
+  /** Policy reference identifying this instruction in prompt citations. */
   policyRef: string
 }
 
 /** Describes one validated deterministic or model-mediated custom check. */
 export interface PolicyCustomCheck {
+  /** Whether a failing check blocks the review outcome. */
   blocking: boolean
+  /** Shell command run for a deterministic host-executed check. */
   command?: string
+  /** Stable identifier correlating this check with its gate result. */
   gateId: string
+  /** Model-facing instructions for a model-mediated check. */
   instructions?: string
+  /** Human-readable check name. */
   name: string
 }
 
 /** Carries the normalized, serializable CodeRabbit policy subset. */
 export interface NormalizedReviewPolicy {
+  /** Validated custom checks, whether deterministic or model-mediated. */
   customChecks: readonly PolicyCustomCheck[]
+  /** Raw policy keys dropped during normalization, retained for provenance. */
   ignoredKeys: readonly string[]
+  /** Configured natural language for reviews, when specified. */
   language?: string
+  /** Validated path-scoped review instructions. */
   pathInstructions: readonly PolicyPathInstruction[]
+  /** CodeRabbit reviews profile, when specified. */
   profile?: string
+  /** Reviewer tone guidance, when specified. */
   toneInstructions?: string
+  /** Schema version literal for this normalized policy. */
   version: 1
 }
 
 /** Describes untrusted external arguments accepted by the workflow entry. */
 export interface WorkflowArgs {
+  /** Raw per-call adapter token overhead; validated and bounded during config resolution. */
   adapterOverheadTokens?: unknown
   /** Unvalidated instruction candidate; only trusted after `config.ts` field-checks it. */
   agentInstructions?: AgentInstructions
   /** Raw base ref argument, before falling back to the default when blank. */
   base?: string
-  /** Raw config path/name argument passed through to config resolution. */
+  /** Raw review budget in GBP; validated and bounded before use. */
   budgetGbp?: unknown
+  /** Raw CodeRabbit config path or name argument, passed through to config resolution. */
   config?: string
   /** Raw dry-run flag; only `true` (strict equality) enables dry-run mode. */
   dryRun?: boolean
-  /** Raw head ref argument, before falling back to `HEAD` when blank. */
+  /** Raw Flex-attempt count; validated and clamped by `positiveLimit` before use. */
   flexAttempts?: unknown
+  /** Raw initial Flex-retry backoff in seconds; validated and clamped before use. */
   flexInitialBackoffSeconds?: unknown
+  /** Raw Flex-retry jitter ceiling in seconds; validated and bounded before use. */
   flexJitterSeconds?: unknown
+  /** Raw maximum Flex-retry backoff in seconds; validated and clamped before use. */
   flexMaxBackoffSeconds?: unknown
+  /** Raw head ref argument, before falling back to `HEAD` when blank. */
   head?: string
-  /** Raw candidate cap; validated and clamped by `positiveLimit` before use. */
+  /** Raw Luna finder reasoning level; only `medium` overrides the `low` default. */
   lunaReasoning?: unknown
+  /** Raw audit-candidate cap; validated and clamped by `positiveLimit` before use. */
   maxAuditCandidates?: unknown
+  /** Raw candidate cap; validated and clamped by `positiveLimit` before use. */
   maxCandidates?: unknown
   /** Raw findings cap; validated and clamped by `positiveLimit` before use. */
   maxFindings?: unknown
-  /** Raw task-budget cap; validated and clamped by `positiveLimit` before use. */
+  /** Raw Luna Flex call cap; validated and clamped by `positiveLimit` before use. */
   maxLunaFlexCalls?: unknown
+  /** Raw task cap; validated and clamped by `positiveLimit` before use. */
   maxTasks?: unknown
   /** Raw model list; entries are individually validated by `configuredModels`. */
   models?: unknown
-  /** Raw repository root argument, before falling back to `.` when blank. */
+  /** Raw per-call timeout in seconds; validated and bounded before use. */
   perCallTimeoutSeconds?: unknown
+  /** Raw normalized review policy; validated at the workflow boundary before use. */
   policy?: unknown
+  /** Optional host-prepared review range, reused instead of recomputing the diff. */
   prepared?: PreparedReview
+  /** Raw repository root argument, before falling back to `.` when blank. */
   repoRoot?: string
-  /** Raw XDG state root argument used to locate review-history state. */
+  /** Raw live routing policy identifier; constrained to a known value before use. */
   routingPolicy?: unknown
+  /** Raw XDG state root argument used to locate review-history state. */
   stateRoot?: string
   /** Raw synthesis model identifier, validated against `validModelIdentifier`. */
   synthesisModel?: string
   /** Raw synthesis reasoning override, validated against the supported levels. */
   synthesisReasoning?: string
+  /** Raw input-token cap for the Terra audit lane; validated and bounded before use. */
   terraMaxInputTokens?: unknown
+  /** Raw output-token cap for the Terra audit lane; validated and bounded before use. */
   terraMaxOutputTokens?: unknown
+  /** Raw per-pack file cap for the Luna finder lane; validated and clamped before use. */
   transactionMaxFiles?: unknown
+  /** Raw input-token cap for the Luna finder lane; validated and bounded before use. */
   transactionMaxInputTokens?: unknown
+  /** Raw output-token cap for the Luna finder lane; validated and bounded before use. */
   transactionMaxOutputTokens?: unknown
 }
 
@@ -127,21 +160,33 @@ export interface PreparedReview {
   stateFile?: string
   /** Non-fatal prepare-stage warnings surfaced verbatim in the final run metrics. */
   warnings?: string[]
+  /** Host-executed deterministic gate results carried into the review. */
   deterministicGates?: DeterministicGateResult[]
 }
 
 /** Captures one host-executed deterministic check without secret-bearing environment data. */
 export interface DeterministicGateResult {
+  /** Whether a failing gate blocks the review outcome. */
   blocking: boolean
+  /** Shell command that was executed for this gate. */
   command: string
+  /** Process exit code, or null when the gate was terminated by a signal. */
   exitCode: number | null
+  /** Stable identifier for this gate, mirroring the policy check id. */
   gateId: string
+  /** Human-readable gate name. */
   name: string
+  /** Terminating signal name, or null when the process exited normally. */
   signal?: string | null
+  /** Gate outcome: passed, failed, or errored before completion. */
   status: 'passed' | 'failed' | 'error'
+  /** Captured standard-error output. */
   stderr: string
+  /** Hex SHA-256 digest of the captured standard-error output. */
   stderrSha256: string
+  /** Captured standard output. */
   stdout: string
+  /** Hex SHA-256 digest of the captured standard output. */
   stdoutSha256: string
 }
 
@@ -161,11 +206,13 @@ export interface ReviewTask {
   model: string
   /** Optional friendly label surfaced in dry-run and metrics output. */
   modelLabel?: string
-  /** Review role (`high`, `medium`, `mini`, or `spark`) that drove model selection and verification stringency. */
+  /** Reasoning effort from the assigned Flex lane, mirrored into task metrics. */
   reasoningEffort?: string
+  /** Logical review role (`high`, `medium`, `mini`, or `spark`) selected from the task kind. */
   role: string
-  /** Stable identifier correlating this task with its result, verdicts, and metrics. */
+  /** Service tier from the assigned Flex lane, mirrored into task metrics. */
   serviceTier?: string
+  /** Stable identifier correlating this task with its result, verdicts, and metrics. */
   taskId: string
   /** `verify-all` or `verify-non-low-and-sampled-low`, consumed by `candidatesForVerification`. */
   verificationPolicy: string
@@ -240,8 +287,9 @@ export interface Candidate extends RawCandidate {
   title: string
   /** Verification policy inherited from the originating task. */
   verificationPolicy: string
-  /** Evidence the verifier examined; set once a verdict has been reconciled. */
+  /** Remediation cluster assigned to the candidate once a verdict has been reconciled. */
   clusterId?: string
+  /** Evidence the verifier examined; set once a verdict has been reconciled. */
   evidenceChecked?: string
   /** Verifier's justification; set once a verdict has been reconciled. */
   verificationReason?: string
@@ -255,8 +303,9 @@ export interface Verdict {
   acceptedSeverity?: 'critical' | 'high' | 'medium' | 'low'
   /** Identifier of the scheduled candidate this verdict decides. */
   candidateId: string
-  /** Evidence the verifier examined to reach this decision; must be non-blank for a valid verdict. */
+  /** Remediation cluster this verdict was grouped into during audit reconciliation. */
   clusterId?: string
+  /** Evidence the verifier examined to reach this decision; must be non-blank for a valid verdict. */
   evidenceChecked: string
   /** Verifier's free-text justification; must be non-blank for a valid verdict. */
   reason: string
@@ -275,7 +324,9 @@ export interface Verdict {
 
 /** Captures the single issue-set audit response returned by the audit lane. */
 export interface AuditResult {
+  /** Verifier decisions for the audited candidates. */
   verdicts: Verdict[]
+  /** Optional natural-language summary of the audit. */
   summary?: string
 }
 
@@ -298,8 +349,9 @@ export interface Discarded {
 export interface PromptContext {
   /** Trusted-base instructions to weave into every prompt built from this context. */
   agentInstructions: AgentInstructions | null
-  /** Resolved review-policy/config path shared across prompts. */
+  /** Resolved, normalized review policy shared across prompts. */
   policy: NormalizedReviewPolicy
+  /** Resolved review-policy or config path shared across prompts. */
   policyPath: string
   /** Repository root shared across prompts. */
   repoRoot: string
@@ -307,28 +359,44 @@ export interface PromptContext {
 
 /** Records one refused model call and why admission control rejected it. */
 export interface AdmissionRefusal {
+  /** Identifier of the refused call. */
   callId: string
+  /** Which Flex lane the refused call belonged to. */
   kind: 'luna-transaction' | 'terra-audit'
+  /** Human-readable explanation for the refusal. */
   reason: string
+  /** Estimated worst-case cost in US dollars that would have exceeded the budget. */
   worstCaseUsd: number
 }
 
 /** Records one finder pack that exhausted its Flex retries and was downgraded. */
 export interface LunaDowngrade {
+  /** Identifier of the finder pack that was downgraded. */
   taskId: string
+  /** Human-readable explanation for the downgrade. */
   reason: string
+  /** Number of Flex attempts made before the pack was downgraded. */
   attempts: number
 }
 
 /** Records one priced, admitted call for the budget audit trail. */
 export interface LedgerEntry {
+  /** Identifier of the priced, admitted call. */
   callId: string
+  /** Workflow phase in which the call was made. */
   phase: string
+  /** Flex lane or standard tier the call was routed through. */
   lane: 'luna-flex' | 'terra-flex' | 'standard'
+  /** Model identifier used for the call. */
   model: string
+  /** Service tier the call was admitted under. */
   serviceTier: string
+  /** Reasoning level applied to the call. */
   reasoningEffort: string
+  /** Cumulative estimated worst-case cost in US dollars charged across the call's attempts. */
   estimatedWorstCaseUsd: number
+  /** Version of the pricing table used to estimate the cost. */
   pricingTableVersion: string
+  /** Number of attempts admitted and charged for the call. */
   attempts: number
 }

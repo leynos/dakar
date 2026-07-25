@@ -145,7 +145,12 @@ export function candidatesForVerification(candidates: Candidate[]): Candidate[] 
 export function compactForAudit(
   candidates: Candidate[],
   maxAuditCandidates: number,
-): { auditCandidates: Candidate[]; overCap: Discarded[] } {
+): {
+  /** Severity-ordered candidates retained within the audit cap. */
+  auditCandidates: Candidate[]
+  /** Candidates beyond the cap, returned as explicit over-cap discards. */
+  overCap: Discarded[]
+} {
   const seen = new Set<string>()
   const deduped: Candidate[] = []
   for (const candidate of candidates) {

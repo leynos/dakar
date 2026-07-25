@@ -1,4 +1,8 @@
-/** @file Assemble Dakar's canonical SARIF 2.1.0 evidence and projections. */
+/**
+ * Assemble Dakar's canonical SARIF 2.1.0 evidence and projections.
+ *
+ * @module
+ */
 
 import type { Candidate, DeterministicGateResult, Discarded, LedgerEntry, Verdict } from './types.ts'
 
@@ -7,24 +11,51 @@ export const SARIF_SCHEMA = 'https://json.schemastore.org/sarif-2.1.0.json'
 
 /** Minimal structural type for Dakar's SARIF result contract. */
 export interface DakarSarif {
+  /** SARIF schema URI, always set to {@link SARIF_SCHEMA}. */
   $schema: string
+  /** SARIF specification version this document conforms to. */
   version: '2.1.0'
+  /** One-element array holding Dakar's single deterministic review run. */
   runs: Array<{
-    tool: { driver: { name: string; version: string; rules: Array<Record<string, unknown>> } }
+    /** Tool component describing the Dakar driver and the rules it reported. */
+    tool: {
+      /** Driver metadata for the tool that produced the run. */
+      driver: {
+        /** Driver name, always `Dakar`. */
+        name: string
+        /** Driver version string. */
+        version: string
+        /** Rule descriptors, one per distinct rule id emitted in `results`. */
+        rules: Array<Record<string, unknown>>
+      }
+    }
+    /** Invocation records capturing overall execution success and gate provenance. */
     invocations: Array<Record<string, unknown>>
+    /** SARIF results for deterministic gate failures and semantic candidates. */
     results: Array<Record<string, unknown>>
-    properties: { dakar: Record<string, unknown> }
+    /** Run-level namespaced Dakar provenance such as ledger and audit verdicts. */
+    properties: {
+      /** Namespaced Dakar run properties (pricing table, ledger, audit verdicts). */
+      dakar: Record<string, unknown>
+    }
   }>
 }
 
 /** Inputs required to consolidate model and deterministic evidence. */
 export interface SarifAssemblyInput {
+  /** Candidates confirmed for reporting, keyed by candidate id to enrich results. */
   accepted?: Candidate[]
+  /** All proposed candidates projected into semantic SARIF results. */
   candidates?: Candidate[]
+  /** Candidates or unknown verdict references recorded as discards. */
   discarded?: Discarded[]
+  /** Deterministic gate outcomes; non-passing gates become SARIF results. */
   gates?: DeterministicGateResult[]
+  /** Priced call ledger supplying lane, tier, and cost provenance. */
   ledger?: LedgerEntry[]
+  /** Pricing table version stamped onto every emitted result. */
   pricingTableVersion: string
+  /** Verifier verdicts recorded as separate audit records per candidate. */
   verdicts?: Verdict[]
 }
 

@@ -83,10 +83,15 @@ export function isReasoning(value: unknown): value is Reasoning {
 
 /** Pins one Flex execution lane to its model, adapter, service tier, and effort. */
 export interface FlexLaneSpec {
+  /** Logical Flex lane role that selects this pinned specification. */
   role: string
+  /** Host-selected model identifier for the lane. */
   model: string
+  /** Provider-independent (pi) adapter that dispatches the lane's requests. */
   adapter: string
+  /** Service tier for the lane, always the Flex tier. */
   serviceTier: 'flex'
+  /** Reasoning effort applied to the lane's requests. */
   reasoning: Reasoning
 }
 

@@ -427,11 +427,6 @@ var DEFAULT_PRICING_TABLE = {
   }
 };
 
-// src/workflows/dakar-review/shell.ts
-function shellWord(value) {
-  return `'${String(value).replace(/'/g, `'"'"'`)}'`;
-}
-
 // src/workflows/dakar-review/policy.ts
 function escapeRegex(character) {
   return /[\\^$.*+?()[\]{}|]/u.test(character) ? `\\${character}` : character;
@@ -495,6 +490,11 @@ function policyGuidanceBlock(policy, paths) {
   }
   if (lines.length === 1) lines.push("- none");
   return lines.join("\n");
+}
+
+// src/workflows/dakar-review/shell.ts
+function shellWord(value) {
+  return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
 // src/workflows/dakar-review/prompts.ts

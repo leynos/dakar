@@ -1,4 +1,8 @@
-/** @file Orchestrate Dakar's ODW phases through the injected runtime primitives. */
+/**
+ * Orchestrate Dakar's ODW phases through the injected runtime primitives.
+ *
+ * @module
+ */
 
 import {
   acceptedFromVerdicts,

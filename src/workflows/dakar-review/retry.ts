@@ -1,5 +1,5 @@
 /**
- * @file Deterministic Flex retry schedule, jitter, and worst-case timeout budget.
+ * Deterministic Flex retry schedule, jitter, and worst-case timeout budget.
  *
  * ADR 002 ("Flex scheduling and failure policy") requires bounded exponential
  * backoff with positive jitter for Flex capacity failures, and forbids
@@ -8,13 +8,19 @@
  * `sleep()` calls that consume this schedule. Keeping the arithmetic pure makes
  * the backoff sequence, jitter determinism, and timeout budget directly
  * testable without driving the runtime.
+ *
+ * @module
  */
 
 /** The bounded retry knobs consumed by the Flex backoff schedule. */
 export interface FlexRetryConfig {
+  /** Total number of attempts allowed on the Flex lane. */
   readonly flexAttempts: number
+  /** Initial backoff in seconds before the first retry. */
   readonly flexInitialBackoffSeconds: number
+  /** Upper bound in seconds on the exponential backoff base. */
   readonly flexMaxBackoffSeconds: number
+  /** Inclusive upper bound in seconds for the positive jitter. */
   readonly flexJitterSeconds: number
 }
 
