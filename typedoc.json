@@ -5,7 +5,7 @@
   "entryPoints": ["bin", "scripts", "src/workflows/dakar-review"],
   "entryPointStrategy": "expand",
 
-  "exclude": ["**/*.d.ts", "**/meta.js", "scripts/tests/**"],
+  "exclude": ["**/*.d.ts", "scripts/tests/**"],
 
   "emit": "none",
   "commentStyle": "jsdoc",
