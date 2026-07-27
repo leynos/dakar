@@ -13,13 +13,13 @@ host-executed deterministic gates before semantic review.
 
 ## Context and problem statement
 
-Dakar must produce useful semantic code review while keeping the ordinary review
-cost below the effective CodeRabbit subscription benchmark of approximately
-£0.11 per fully utilized review. The first-pass workflow does not have a
-credible hard cost envelope. With its default limits, one run can invoke agents
-for configuration resolution, review-range preparation, up to eight finder
-tasks, up to thirty candidate verifications, synthesis, and review-history
-recording.
+Dakar must produce useful semantic code review while keeping the ordinary
+review cost below the effective CodeRabbit subscription benchmark of
+approximately £0.11 per fully utilized review. The first-pass workflow does not
+have a credible hard cost envelope. With its default limits, one run can invoke
+agents for configuration resolution, review-range preparation, up to eight
+finder tasks, up to thirty candidate verifications, synthesis, and
+review-history recording.
 
 The cost problem is structural rather than merely a matter of selecting a
 cheaper model. Three patterns create avoidable spend:
@@ -43,9 +43,9 @@ call.[^1] Dakar will adopt the same shape for review.
 OpenAI Flex processing charges Batch-equivalent token rates in exchange for
 slower responses and occasional resource unavailability. Both GPT-5.6 Luna and
 GPT-5.6 Terra receive a 50% reduction from standard processing at the decision
-date.[^2] This trade suits Dakar's dark-factory operating model: individual turn
-latency is secondary to fleet throughput per pound, and waiting work can coexist
-with other concurrent agent work.
+date.[^2] This trade suits Dakar's dark-factory operating model: individual
+turn latency is secondary to fleet throughput per pound, and waiting work can
+coexist with other concurrent agent work.
 
 ## Decision outcome
 
@@ -62,19 +62,19 @@ Standard processing is an exceptional acceleration tier. It is disabled by
 default and may be selected only by an explicit operator policy with a separate
 cost budget and telemetry marker.
 
-The workflow host, not an agent prompt, selects the lane. Agents may report that
-input is insufficient, but they may not promote themselves to a more expensive
-model or service tier.
+The workflow host, not an agent prompt, selects the lane. Agents may report
+that input is insufficient, but they may not promote themselves to a more
+expensive model or service tier.
 
 The normal pipeline becomes:
 
 For screen readers: the flowchart resolves the range and runs deterministic
 gates; a blocking failure stops the review, otherwise the workflow builds
 bounded evidence packs, runs Luna Flex transactional finder calls, and
-normalizes and compacts the candidates deterministically. If candidates
-remain, one Terra Flex issue-set audit runs; if none remain, the audit is
-skipped. Both paths converge on deterministic SARIF and report rendering,
-then deterministic state and cost-ledger persistence.
+normalizes and compacts the candidates deterministically. If candidates remain,
+one Terra Flex issue-set audit runs; if none remain, the audit is skipped. Both
+paths converge on deterministic SARIF and report rendering, then deterministic
+state and cost-ledger persistence.
 
 ```mermaid
 flowchart TD
@@ -158,17 +158,17 @@ underlying design cause.
 ### Deterministic gate short-circuit
 
 After range preparation, the CLI executes each explicit scalar
-`pre_merge_checks.custom_checks[].command` in configuration order. `mode:
-error` is blocking; `mode: warning` is non-blocking. A blocking failure returns
-`stage: "deterministic-gates"` before ODW starts, with SARIF evidence, an empty
-Flex ledger, zero spend, and zero audit reservation. Passing and non-blocking
-outcomes continue through the unchanged Luna-to-Terra route.
+`pre_merge_checks.custom_checks[].command` in configuration order.
+`mode: error` is blocking; `mode: warning` is non-blocking. A blocking failure
+returns `stage: "deterministic-gates"` before ODW starts, with SARIF evidence,
+an empty Flex ledger, zero spend, and zero audit reservation. Passing and
+non-blocking outcomes continue through the unchanged Luna-to-Terra route.
 
 Natural-language `instructions` without an explicit `command` remain policy
-context rather than executable shell. Gate output is bounded and redacted before
-retention; complete stdout and stderr are represented by SHA-256 digests.
-Repository-local commands are loaded from the prepared trusted base commit so
-the head under review cannot grant itself command execution.
+context rather than executable shell. Gate output is bounded and redacted
+before retention; complete stdout and stderr are represented by SHA-256
+digests. Repository-local commands are loaded from the prepared trusted base
+commit so the head under review cannot grant itself command execution.
 
 This mirrors the `df12-build` policy of running host gates before scarce
 reviewer agents and avoiding reviewer spend when cheaper evidence already
@@ -218,9 +218,9 @@ structured data. Prose is not the workflow contract.
 
 ## Terra Flex boundary
 
-Use `gpt-5.6-terra` with `service_tier = "flex"` for tasks whose value comes from
-holding a larger evidence graph in one deliberation. The default Terra task is
-the adversarial issue-set audit.
+Use `gpt-5.6-terra` with `service_tier = "flex"` for tasks whose value comes
+from holding a larger evidence graph in one deliberation. The default Terra
+task is the adversarial issue-set audit.
 
 The audit receives:
 
@@ -283,8 +283,8 @@ under the worst-case output estimate.
 > ExecPlan, milestones M0 and M4, for evidence and the adapter
 > specification.
 
-The ODW configuration defines three pi adapters, each pinning its lane's
-model and reasoning effort:
+The ODW configuration defines three pi adapters, each pinning its lane's model
+and reasoning effort:
 
 - `pi-luna-flex` — `gpt-5.6-luna` at low reasoning, the default finder
   lane;
@@ -294,33 +294,32 @@ model and reasoning effort:
   audit lane.
 
 Each adapter runs pi in print mode (`pi -p --no-session`) against the
-Dakar-owned `openai-flex` provider catalogue (`adapters/pi/models.json`),
-with the prompt on stdin. The Dakar-owned `flex-tier` extension
+Dakar-owned `openai-flex` provider catalogue (`adapters/pi/models.json`), with
+the prompt on stdin. The Dakar-owned `flex-tier` extension
 (`adapters/pi/extensions/flex-tier.ts`), auto-loaded from the
-`PI_CODING_AGENT_DIR` the CLI sets, injects `service_tier = "flex"`
-through pi's documented `before_provider_request` hook and reports each
-call's provider usage through the `DAKAR_USAGE_LOG` file channel. Distinct
-per-lane adapters remain necessary because the adapter flag surface
-exposes only the model argument and could not otherwise honour the
-differing per-lane reasoning defaults.
+`PI_CODING_AGENT_DIR` the CLI sets, injects `service_tier = "flex"` through
+pi's documented `before_provider_request` hook and reports each call's provider
+usage through the `DAKAR_USAGE_LOG` file channel. Distinct per-lane adapters
+remain necessary because the adapter flag surface exposes only the model
+argument and could not otherwise honour the differing per-lane reasoning
+defaults.
 
-The host must record the requested service tier, model, reasoning effort,
-and provider-reported usage for every call. Adapter contract tests must
-prove the committed adapter commands, catalogue, and extension keep their
-load-bearing shape, and wire validation must prove the provider request
-carries `service_tier = "flex"` on the pi path (the recorded
-capture-server and live-probe transcripts are the authoritative
-evidence).
+The host must record the requested service tier, model, reasoning effort, and
+provider-reported usage for every call. Adapter contract tests must prove the
+committed adapter commands, catalogue, and extension keep their load-bearing
+shape, and wire validation must prove the provider request carries
+`service_tier = "flex"` on the pi path (the recorded capture-server and
+live-probe transcripts are the authoritative evidence).
 
 ### Historical: the falsified Codex CLI adapter contract
 
 The original decision assumed Codex CLI exposed `service_tier` as a
 configuration value honoured through `-c key=value` overrides,[^3] and
-therefore that Dakar needed no bespoke Responses API wrapper to select
-Flex. Empirical verification falsified this: no tested Codex version
-transmits the field from `exec` mode. The representative adapters below
-are retained solely as the historical record of the falsified design and
-must not be read as a current implementation requirement.
+therefore that Dakar needed no bespoke Responses API wrapper to select Flex.
+Empirical verification falsified this: no tested Codex version transmits the
+field from `exec` mode. The representative adapters below are retained solely
+as the historical record of the falsified design and must not be read as a
+current implementation requirement.
 
 ```json
 {
@@ -441,8 +440,8 @@ result. They must not consume an unbounded number of partitions merely because
 the diff is large.
 
 The route planner reserves the required issue-set audit before dispatching
-optional Luna calls. Before each model request, it estimates the worst-case cost
-from:
+optional Luna calls. Before each model request, it estimates the worst-case
+cost from:
 
 - model and service tier;
 - short- or long-context pricing band;
@@ -458,12 +457,12 @@ snapshot used for its estimate.
 
 At the decision date, the short-context rates provide the economic rationale:
 
-| Route | Input / 1M | Cached input / 1M | Cache writes / 1M | Output / 1M |
-| - | -: | -: | -: | -: |
-| Luna standard | $1.00 | $0.10 | $1.25 | $6.00 |
-| Luna Flex | $0.50 | $0.05 | $0.625 | $3.00 |
-| Terra standard | $2.50 | $0.25 | $3.125 | $15.00 |
-| Terra Flex | $1.25 | $0.125 | $1.5625 | $7.50 |
+| Route          | Input / 1M | Cached input / 1M | Cache writes / 1M | Output / 1M |
+| -------------- | ---------: | ----------------: | ----------------: | ----------: |
+| Luna standard  | $1.00      | $0.10             | $1.25             | $6.00       |
+| Luna Flex      | $0.50      | $0.05             | $0.625            | $3.00       |
+| Terra standard | $2.50      | $0.25             | $3.125            | $15.00      |
+| Terra Flex     | $1.25      | $0.125            | $1.5625           | $7.50       |
 
 Table 1: OpenAI short-context prices on 2026-07-10; the runtime pricing table,
 not this snapshot, governs admission.[^4]
@@ -506,8 +505,8 @@ The host assigns and preserves:
 Agent outputs are immutable inputs to later stages. The Terra audit record
 references candidate identifiers; it does not rewrite Luna history in place.
 Final Markdown and the compatibility `findings`/`discarded` JSON fields are
-deterministic projections of consolidated SARIF data; a future GitHub projection
-must use the same document.
+deterministic projections of consolidated SARIF data; a future GitHub
+projection must use the same document.
 
 ## Consequences
 
@@ -526,8 +525,8 @@ Positive consequences:
 - Review provenance and cost become auditable at the call and finding level.
 - A no-action review remains a valid and inexpensive outcome.
 - The pi coding agent selects Flex through a supported extension hook,
-  avoiding a bespoke API-wrapper subsystem; the original premise that Codex
-  CLI could do so was falsified — see the adapter-contract amendment.
+  avoiding a bespoke API-wrapper subsystem; the original premise that Codex CLI
+  could do so was falsified — see the adapter-contract amendment.
 
 Negative consequences:
 
@@ -550,15 +549,15 @@ Negative consequences:
   transactions plus one Terra audit, all input priced at the cache-write band)
   is approximately the £0.10 hard budget. The admission controller, not the
   call caps, is the effective ceiling, and the second large-review Terra call
-  can never fit the ordinary budget. Large reviews must use the explicit
-  larger budget.
+  can never fit the ordinary budget. Large reviews must use the explicit larger
+  budget.
 - The partitioning strategy for large reviews is intentionally undefined. It
   must be designed before migration steps 8 and 9 can exercise
   `maxTerraFlexCallsLargeReview`.
 - The implementation agent's behaviour after a deferred review — retry
   cadence, operator notification, and back-pressure — needs definition during
-  implementation. Deferral-rate telemetry should carry an alert threshold so
-  a Flex capacity drought is visible before loops stall.
+  implementation. Deferral-rate telemetry should carry an alert threshold so a
+  Flex capacity drought is visible before loops stall.
 - Reasoning-effort escalation to high on Terra requires a dedicated adapter,
   or an adapter flag mapping for `model_reasoning_effort`, because the
   representative adapters pin the default effort for each lane.
@@ -584,7 +583,8 @@ individual response latency rather than useful fleet throughput per pound.
 ### Use Terra Flex for every model call
 
 Rejected. Flex is the correct default service tier, but Terra remains 2.5 times
-the token price of Luna. Small, local judgements do not justify the larger model.
+the token price of Luna. Small, local judgements do not justify the larger
+model.
 
 ### Use Luna Flex for the complete review
 

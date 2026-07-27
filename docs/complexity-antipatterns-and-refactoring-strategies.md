@@ -46,8 +46,8 @@ the number of edges, N is the number of nodes, and P is the number of connected
 components (typically 1 for a single program or method).[^3] A simpler
 formulation applies to a single subroutine:
 
-M = number of decision points + 1, where decision points include constructs
-like `if` statements and conditional loops.[^3]
+M = number of decision points + 1, where decision points include constructs like
+`if` statements and conditional loops.[^3]
 
 Thresholds and Implications:
 
@@ -118,14 +118,14 @@ maintenance costs.[^8]
 
 ### Table 1: Cyclomatic vs. cognitive complexity
 
-| Dimension | Cyclomatic complexity | Cognitive complexity |
-| --- | --- | --- |
-| Primary Focus | testability and execution paths | readability and human understanding |
-| Basis | rooted in graph theory | breaks in flow and nesting |
-| Nesting Penalty | counts paths only | adds cost for each nested level |
-| Method Calls | measured separately per routine; a callee's paths do not add to the caller | generally free unless recursive |
-| Logical Operators | each condition is a decision point | mixed operators raise the score |
-| Use Case Example | high Cyclomatic Complexity, low cognitive load in simple switch | deep nesting raises cognitive load |
+| Dimension         | Cyclomatic complexity                                                      | Cognitive complexity                |
+| ----------------- | -------------------------------------------------------------------------- | ----------------------------------- |
+| Primary Focus     | testability and execution paths                                            | readability and human understanding |
+| Basis             | rooted in graph theory                                                     | breaks in flow and nesting          |
+| Nesting Penalty   | counts paths only                                                          | adds cost for each nested level     |
+| Method Calls      | measured separately per routine; a callee's paths do not add to the caller | generally free unless recursive     |
+| Logical Operators | each condition is a decision point                                         | mixed operators raise the score     |
+| Use Case Example  | high Cyclomatic Complexity, low cognitive load in simple switch            | deep nesting raises cognitive load  |
 
 Understanding both metrics provides a more holistic view of code quality. While
 Cyclomatic Complexity guides testing efforts, Cognitive Complexity directly
@@ -187,14 +187,14 @@ attention, much like a physical bumpy road slows down driving.[^9]
 ### B. How it forms and its impact
 
 The Bumpy Road antipattern, like many software antipatterns, often emerges from
-development practices that prioritize short-term speed over long-term
-structural integrity.[^2] Rushed development cycles, lack of clear design, or
-cutting corners on maintenance can lead to the gradual accumulation of
-conditional logic within a single function.[^2] As new requirements emerge
-alongside additional edge cases, developers might add conditional branches to
-an existing method. Examples include an `if` statement, a loop, or a deeply
-nested match added in haste when a team could instead step back to refactor and
-create appropriate abstractions.
+development practices that prioritize short-term speed over long-term structural
+integrity.[^2] Rushed development cycles, lack of clear design, or cutting
+corners on maintenance can lead to the gradual accumulation of conditional
+logic within a single function.[^2] As new requirements emerge alongside
+additional edge cases, developers might add conditional branches to an existing
+method. Examples include an `if` statement, a loop, or a deeply nested match
+added in haste when a team could instead step back to refactor and create
+appropriate abstractions.
 
 The impact of this antipattern is significant:
 
@@ -382,10 +382,10 @@ maintainable systems.
 1\. Separation of Concerns (SoC)
 
 Separation of Concerns is a design principle that advocates for dividing a
-computer program into distinct sections, where each section addresses a
-separate concern.[^13] A "concern" is a set of information that affects the
-code of a computer program. Modularity is achieved by encapsulating information
-within a section of code that has a well-defined interface.[^13]
+computer program into distinct sections, where each section addresses a separate
+concern.[^13] A "concern" is a set of information that affects the code of a
+computer program. Modularity is achieved by encapsulating information within a
+section of code that has a well-defined interface.[^13]
 
 The Bumpy Road antipattern is a direct violation of SoC. Each "bump" in the
 code often represents a distinct concern, or responsibility, that has been
@@ -460,10 +460,10 @@ Command Query Responsibility Segregation promotes a clear separation that can
 prevent the kind of tangled logic that forms Bumpy Roads. By isolating write
 operations (commands) from read operations (queries), and by encouraging
 task-based commands, the system naturally tends towards smaller, more cohesive
-units of behaviour, thus reducing overall cognitive complexity within
-individual components.[^14] The separation allows for independent optimization
-and scaling of read and write sides, but more importantly for this discussion,
-it enforces a structural discipline that discourages methods from accumulating
+units of behaviour, thus reducing overall cognitive complexity within individual
+components.[^14] The separation allows for independent optimization and
+scaling of read and write sides, but more importantly for this discussion, it
+enforces a structural discipline that discourages methods from accumulating
 diverse responsibilities.[^14]
 
 ### B. Avoiding spaghetti code turning into ravioli code
@@ -546,12 +546,12 @@ and method structure.
 
 ### Table 2: Refactoring approaches for reducing cognitive complexity
 
-| Approach | Description | Benefit | Problem solved |
-| --- | --- | --- | --- |
-| Balanced Abstraction (e.g., Extract Method) | Break large methods into smaller, cohesive units | Shorter methods and clearer intent | Spaghetti code and Bumpy Road issues |
-| Structural pattern matching | Replace complex if/else or switch constructs with pattern matching | Simpler conditional logic and data extraction | Deeply nested conditionals |
-| Declarative Programming | Focus on what to achieve instead of how to do it | Less state tracking and clearer intent | Imperative loops and manual state management |
-| Dispatcher/Command Pattern | Encapsulate actions in objects and route via a dispatcher | Removes large conditional blocks | Complex switch statements |
+| Approach                                    | Description                                                        | Benefit                                       | Problem solved                               |
+| ------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------- | -------------------------------------------- |
+| Balanced Abstraction (e.g., Extract Method) | Break large methods into smaller, cohesive units                   | Shorter methods and clearer intent            | Spaghetti code and Bumpy Road issues         |
+| Structural pattern matching                 | Replace complex if/else or switch constructs with pattern matching | Simpler conditional logic and data extraction | Deeply nested conditionals                   |
+| Declarative Programming                     | Focus on what to achieve instead of how to do it                   | Less state tracking and clearer intent        | Imperative loops and manual state management |
+| Dispatcher/Command Pattern                  | Encapsulate actions in objects and route via a dispatcher          | Removes large conditional blocks              | Complex switch statements                    |
 
 #### 1. Structural pattern matching
 
@@ -638,17 +638,17 @@ behaviour—common culprits for bugs and increased cognitive load in imperative
 code.[^26]
 
 Examples include using Structured Query Language for database queries—
-specifying the desired dataset rather than the retrieval algorithm—or
-employing functional programming constructs like `map`, `filter`, and `reduce`
-on collections instead of writing explicit loops. Refactoring imperative code
-to a declarative style can start small, perhaps by converting a loop that
-filters and transforms a list into a chain of `filter` and `map`
-operations.[^26] The broader adoption of declarative approaches in areas like
-UI development (e.g., React) and data querying signifies an industry trend
-towards managing complexity by raising abstraction levels. However, the
-effectiveness of declarative programming relies on well-designed underlying
-abstractions; a poorly designed declarative layer might not successfully hide
-complexity or could introduce its own.[^27]
+specifying the desired dataset rather than the retrieval algorithm—or employing
+functional programming constructs like `map`, `filter`, and `reduce` on
+collections instead of writing explicit loops. Refactoring imperative code to a
+declarative style can start small, perhaps by converting a loop that filters
+and transforms a list into a chain of `filter` and `map` operations.[^26] The
+broader adoption of declarative approaches in areas like UI development (e.g.,
+React) and data querying signifies an industry trend towards managing
+complexity by raising abstraction levels. However, the effectiveness of
+declarative programming relies on well-designed underlying abstractions; a
+poorly designed declarative layer might not successfully hide complexity or
+could introduce its own.[^27]
 
 #### 3. Employing dispatcher and command patterns
 

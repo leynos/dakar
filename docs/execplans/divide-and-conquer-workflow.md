@@ -1,9 +1,8 @@
 # Implement the routed divide-and-conquer review workflow
 
-This ExecPlan (execution plan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
-proceeds.
+This ExecPlan (execution plan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
+and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
 
@@ -11,9 +10,9 @@ Status: COMPLETE
 
 The goal is to replace the current equal full-diff fan-out review with a first
 usable routed review workflow. After this change, an agent working on a Dakar
-branch can run `odw` against `workflows/dakar-review.js` and receive
-one actionable code-review report for only the commits that have not already
-been reviewed on that branch.
+branch can run `odw` against `workflows/dakar-review.js` and receive one
+actionable code-review report for only the commits that have not already been
+reviewed on that branch.
 
 Success is observable when the workflow prepares an unreviewed range, builds a
 bounded task graph from changed files, sends scoped review tasks to appropriate
@@ -35,8 +34,7 @@ findings, task metrics, and the review-history path.
 - Do not add an external runtime dependency. The first pass must continue to
   use Node built-ins, Make, the existing ODW CLI, and the Codex adapter.
 - Preserve the existing default model family:
-  `gpt-5.5` low/medium/high, `gpt-5.4-mini`, and
-  `gpt-5.3-codex-spark`.
+  `gpt-5.5` low/medium/high, `gpt-5.4-mini`, and `gpt-5.3-codex-spark`.
 - Preserve `dryRun` so `make check` can validate workflow syntax without
   launching review agents.
 - Follow Red-Green-Refactor for production changes. Add the focused failing
@@ -51,8 +49,7 @@ findings, task metrics, and the review-history path.
 - Size: if production JavaScript changes exceed roughly 350 net new lines,
   stop and propose a smaller first milestone.
 - Interface: if ODW requires a different public workflow invocation than
-  `odw run workflows/dakar-review.js --source . --wait`, stop and
-  escalate.
+  `odw run workflows/dakar-review.js --source . --wait`, stop and escalate.
 - Dependencies: if any new npm package, global binary, hosted service, or
   database is required, stop and escalate.
 - State: if review history cannot remain in the XDG state path computed by
@@ -66,32 +63,25 @@ findings, task metrics, and the review-history path.
 ## Risks
 
 - Risk: ODW workflows cannot call local shell helpers directly; they must ask a
-  Codex agent to run `scripts/review-state.mjs`.
-  Severity: medium.
-  Likelihood: high.
-  Mitigation: Keep the existing prepare and record prompts, make their expected
-  command output schema explicit, and preserve dry-run validation.
+  Codex agent to run `scripts/review-state.mjs`. Severity: medium. Likelihood:
+  high. Mitigation: Keep the existing prepare and record prompts, make their
+  expected command output schema explicit, and preserve dry-run validation.
 
 - Risk: A first-pass routed task graph may be too shallow to catch every
-  semantic issue.
-  Severity: medium.
-  Likelihood: medium.
-  Mitigation: Make the returned report explicit about accepted and discarded
-  findings, cap claims to changed-range evidence, and record metrics that show
-  which task types survive verification.
+  semantic issue. Severity: medium. Likelihood: medium. Mitigation: Make the
+  returned report explicit about accepted and discarded findings, cap claims to
+  changed-range evidence, and record metrics that show which task types survive
+  verification.
 
 - Risk: Live agent output may not follow schema perfectly.
-  Severity: medium.
-  Likelihood: medium.
-  Mitigation: Keep schemas small, use literal enums, normalize candidates in
-  workflow JavaScript, and filter null results from `parallel()` and
-  `pipeline()`.
+  Severity: medium. Likelihood: medium. Mitigation: Keep schemas small, use
+  literal enums, normalize candidates in workflow JavaScript, and filter null
+  results from `parallel()` and `pipeline()`.
 
 - Risk: A full non-dry-run workflow may be slow or costly to validate locally.
-  Severity: low.
-  Likelihood: medium.
-  Mitigation: Use dry-run and Node tests as required gates; treat live review as
-  a manual acceptance smoke when credentials and model access are available.
+  Severity: low. Likelihood: medium. Mitigation: Use dry-run and Node tests as
+  required gates; treat live review as a manual acceptance smoke when
+  credentials and model access are available.
 
 ## Progress
 
@@ -135,43 +125,42 @@ findings, task metrics, and the review-history path.
 ## Surprises & discoveries
 
 - Observation: The current `workflows/dakar-review.js` is still a
-  homogeneous fan-out design.
-  Evidence: It maps every default model over the same `reviewPrompt(spec,
-  prepared)` and sends each prompt the same review range and changed file list.
-  Impact: The implementation can be focused in one workflow file while keeping
-  `scripts/review-state.mjs` stable.
+  homogeneous fan-out design. Evidence: It maps every default model over the
+  same `reviewPrompt(spec, prepared)` and sends each prompt the same review
+  range and changed file list. Impact: The implementation can be focused in one
+  workflow file while keeping `scripts/review-state.mjs` stable.
 
 - Observation: `node --check workflows/dakar-review.js` is not a
-  valid syntax gate for ODW workflow files.
-  Evidence: Node reports `SyntaxError: Illegal return statement` at the
-  top-level `return`, while `odw run workflows/dakar-review.js
-  --source . --wait --timeout 20 --args '{"dryRun":true}'` succeeds.
-  Impact: Workflow validation must use ODW dry-run rather than direct Node
-  syntax checking.
+  valid syntax gate for ODW workflow files. Evidence: Node reports
+  `SyntaxError: Illegal return statement` at the top-level `return`, while
+  `odw run workflows/dakar-review.js
+  --source . --wait --timeout 20 --args '{"dryRun":true}'`
+  succeeds. Impact: Workflow validation must use ODW dry-run rather than
+  direct Node syntax checking.
 
 - Observation: ODW copy-mode agent workspaces may not contain `.git`.
   Evidence: A live smoke run failed in the Prepare phase with
-  `fatal: not a git repository` from `git -C /tmp/odw-ws-.../dakar rev-parse
-  HEAD`.
-  Impact: Live workflow runs need a `repoRoot` argument pointing to the real
-  checkout, and all git-backed helper or diff prompts must use that path.
+  `fatal: not a git repository` from
+  `git -C /tmp/odw-ws-.../dakar rev-parse HEAD`. Impact: Live workflow runs
+  need a `repoRoot` argument pointing to the real checkout, and all git-backed
+  helper or diff prompts must use that path.
 
 - Observation: The workflow's own live smoke review found one real defect in
-  the first implementation.
-  Evidence: Run `20260629-235614-6ac248` completed with one accepted finding:
-  the workflow displayed `gpt-5.5/high` in prompts and metrics but passed only
-  `gpt-5.5` to the ODW `agent()` model option.
+  the first implementation. Evidence: Run `20260629-235614-6ac248` completed
+  with one accepted finding: the workflow displayed `gpt-5.5/high` in prompts
+  and metrics but passed only `gpt-5.5` to the ODW `agent()` model option.
   Impact: The workflow now selects reasoning-specific ODW adapters at every
   agent-call boundary.
 
 - Observation: Passing `gpt-5.5/high` as the `model` option is rejected by the
-  backend for this ChatGPT-account Codex setup.
-  Evidence: `codex exec -m gpt-5.5/high ...` failed with
+  backend for this ChatGPT-account Codex setup. Evidence:
+  `codex exec -m gpt-5.5/high ...` failed with
   `The 'gpt-5.5/high' model is not supported when using Codex with a ChatGPT
-  account`, while `codex exec -m gpt-5.5 -c
-  'model_reasoning_effort="high"' ...` produced output.
-  Impact: The implementation must use custom ODW adapters that pass Codex
-  config for reasoning effort, rather than encoding reasoning in the model id.
+  account`,
+  while `codex exec -m gpt-5.5 -c 'model_reasoning_effort="high"' ...`
+  produced output. Impact: The implementation must use custom ODW adapters that
+  pass Codex config for reasoning effort, rather than encoding reasoning in the
+  model id.
 
 ## Decision log
 
@@ -181,18 +170,16 @@ findings, task metrics, and the review-history path.
   Date/Author: 2026-06-29T22:37:30Z / Codex.
 
 - Decision: Use a deterministic JavaScript task planner inside the ODW file
-  rather than asking an agent to invent the first task graph.
-  Rationale: ODW can run plain helper functions in the workflow file after
-  `prepare` returns structured data. A deterministic planner makes dry-run
-  tests meaningful and keeps fan-out bounded.
-  Date/Author: 2026-06-29T22:37:30Z / Codex.
+  rather than asking an agent to invent the first task graph. Rationale: ODW
+  can run plain helper functions in the workflow file after `prepare` returns
+  structured data. A deterministic planner makes dry-run tests meaningful and
+  keeps fan-out bounded. Date/Author: 2026-06-29T22:37:30Z / Codex.
 
 - Decision: Use one `gpt-5.5` high verification pass per normalized candidate
-  in the first implementation.
-  Rationale: This delivers the core proposer/verifier split without adding
-  cross-model debate or multiple refuters before the workflow is proven
-  runnable.
-  Date/Author: 2026-06-29T22:37:30Z / Codex.
+  in the first implementation. Rationale: This delivers the core
+  proposer/verifier split without adding cross-model debate or multiple
+  refuters before the workflow is proven runnable. Date/Author:
+  2026-06-29T22:37:30Z / Codex.
 
 - Decision: Treat `docs/design/initial-workflow.md` as the component
   architecture document for this first pass, and add `docs/users-guide.md` and
@@ -200,16 +187,14 @@ findings, task metrics, and the review-history path.
   Rationale: The repository already uses `docs/design/initial-workflow.md` as
   the design and architecture source of truth. Adding a separate architecture
   document would exceed the approved scope without adding useful separation at
-  this stage.
-  Date/Author: 2026-06-29T22:45:17Z / Codex.
+  this stage. Date/Author: 2026-06-29T22:45:17Z / Codex.
 
 - Decision: Add `repoRoot` rather than switching the workflow to an implicit
-  ODW workspace mode.
-  Rationale: The ODW authoring contract says copy mode is the default, and
-  copied workspaces are not a reliable git handoff channel. Passing the real
-  checkout path makes range preparation and diff evidence explicit while
-  keeping the workflow read-only.
-  Date/Author: 2026-06-29T23:11:42Z / Codex.
+  ODW workspace mode. Rationale: The ODW authoring contract says copy mode is
+  the default, and copied workspaces are not a reliable git handoff channel.
+  Passing the real checkout path makes range preparation and diff evidence
+  explicit while keeping the workflow read-only. Date/Author:
+  2026-06-29T23:11:42Z / Codex.
 
 - Decision: Add repo-local ODW adapters for Codex reasoning levels.
   Rationale: ODW custom adapters can include fixed Codex config arguments.
@@ -221,23 +206,23 @@ findings, task metrics, and the review-history path.
   Rationale: Agents and humans need visible ODW progress during long reviews,
   but automation depends on standard output containing only the final workflow
   result. Running ODW in the background and following logs preserves both use
-  cases without changing the default quiet mode.
-  Date/Author: 2026-06-30T01:12:00Z / Codex.
+  cases without changing the default quiet mode. Date/Author:
+  2026-06-30T01:12:00Z / Codex.
 
 ## Outcomes & retrospective
 
 The first routed divide-and-conquer review workflow is implemented. A user can
-run `odw run workflows/dakar-review.js --source . --wait` with
-`repoRoot` pointing at their real checkout and receive a single JSON review
-result containing `reportMarkdown`, accepted findings, discarded candidates,
-task graph data, metrics, and review-history recording status.
+run `odw run workflows/dakar-review.js --source . --wait` with `repoRoot`
+pointing at their real checkout and receive a single JSON review result
+containing `reportMarkdown`, accepted findings, discarded candidates, task
+graph data, metrics, and review-history recording status.
 
 The implementation keeps deterministic review range and TOML state writes in
 `scripts/review-state.mjs`, uses a JavaScript task planner for bounded review
 tasks, routes finder work to model/adapter pairs, verifies candidates with a
 high-reasoning Codex adapter, and records only after synthesis. The live smoke
-run proved the workflow can prepare, review, verify, synthesize, discard a stale
-candidate, and write isolated review history.
+run proved the workflow can prepare, review, verify, synthesize, discard a
+stale candidate, and write isolated review history.
 
 The main lesson is that ODW model routing and Codex reasoning effort are
 separate concerns. The built-in ODW Codex adapter forwards only `model`, so the
@@ -250,10 +235,10 @@ contract.
 
 ## Context and orientation
 
-This repository is a small Node/ODW project. ODW means Open Dynamic Workflow:
-a JavaScript workflow file run by the `odw` CLI, where primitives such as
-`agent`, `parallel`, `pipeline`, `phase`, and `args` are injected by the
-runtime. An ODW file cannot import Node modules directly.
+This repository is a small Node/ODW project. ODW means Open Dynamic Workflow: a
+JavaScript workflow file run by the `odw` CLI, where primitives such as `agent`,
+`parallel`, `pipeline`, `phase`, and `args` are injected by the runtime. An
+ODW file cannot import Node modules directly.
 
 The key files are:
 
@@ -293,22 +278,22 @@ npm run odw:dry-run
 
 It expects dry-run output to include a routed workflow contract with fields
 such as `workflowVersion`, `taskKinds`, `defaultTaskGraph`, `candidateSchema`,
-`verdictSchema`, and `synthesisSchema`. This fails against the current
-workflow because dry-run only returns `ok`, `dryRun`, `config`, `base`, `head`,
-and `models`.
+`verdictSchema`, and `synthesisSchema`. This fails against the current workflow
+because dry-run only returns `ok`, `dryRun`, `config`, `base`, `head`, and
+`models`.
 
 Stage C updates `workflows/dakar-review.js`.
 
-The workflow keeps `meta.name = 'dakar-review'` and adds a planning
-phase after Prepare. It defines small schemas for task review candidates,
-verification verdicts, and final synthesis. It adds helper functions inside
-the workflow file:
+The workflow keeps `meta.name = 'dakar-review'` and adds a planning phase after
+Prepare. It defines small schemas for task review candidates, verification
+verdicts, and final synthesis. It adds helper functions inside the workflow
+file:
 
 - `classifyPath(path)`: returns `source`, `test`, `docs`, `config`,
   `dependency`, or `unknown`.
 - `buildTaskGraph(prepared)`: groups changed files into bounded tasks and
-  assigns each task to `gpt-5.3-codex-spark`, `gpt-5.4-mini`, `gpt-5.5`
-  medium, or `gpt-5.5` high according to path class and risk.
+  assigns each task to `gpt-5.3-codex-spark`, `gpt-5.4-mini`, `gpt-5.5` medium,
+  or `gpt-5.5` high according to path class and risk.
 - `taskPrompt(task, prepared)`: creates a scoped prompt that includes the
   review range, relevant changed files, CodeRabbit config path, allowed
   commands, maximum findings, and an explicit `no_findings` option.
@@ -335,9 +320,9 @@ the report as `reportMarkdown` and includes machine-readable `findings`,
 `discarded`, `taskGraph`, and `metrics`.
 
 The record phase writes the review history exactly once after synthesis. The
-recorded metrics include task count, candidate count, accepted count,
-discarded count, discard reason counts, model assignments, diff stat, and
-warnings from prepare.
+recorded metrics include task count, candidate count, accepted count, discarded
+count, discard reason counts, model assignments, diff stat, and warnings from
+prepare.
 
 Stage D refactors only if the first implementation becomes repetitive or hard
 to test. Any refactor must preserve the focused test and `make check`.
@@ -371,8 +356,8 @@ the dry-run output does not expose the routed workflow contract, for example:
 not ok 1 - dry-run exposes routed workflow contract
 ```
 
-Then implement the workflow changes in
-`workflows/dakar-review.js` and run the focused test again:
+Then implement the workflow changes in `workflows/dakar-review.js` and run the
+focused test again:
 
 ```bash
 node --test tests/workflow-dry-run.test.mjs
@@ -440,18 +425,16 @@ The Red-Green-Refactor evidence must be recorded here during implementation:
 - Red command: `node --test tests/workflow-dry-run.test.mjs`.
   Expected failure: the current dry-run output lacks routed workflow contract
   fields such as `taskKinds`, `defaultTaskGraph`, and verification schemas.
-  Observed failure on 2026-06-29T22:45:17Z:
-  `actual undefined`, `expected 'divide-and-conquer-v1'`.
+  Observed failure on 2026-06-29T22:45:17Z: `actual undefined`,
+  `expected 'divide-and-conquer-v1'`.
 - Green command: `node --test tests/workflow-dry-run.test.mjs`.
   Expected pass: the new dry-run output exposes the routed contract and default
-  task graph.
-  Observed pass on 2026-06-29T22:45:17Z and again on
+  task graph. Observed pass on 2026-06-29T22:45:17Z and again on
   2026-06-30T00:08:20Z.
 - Refactor command sequence: `npm test` and `make check`.
   Expected pass: all tests, syntax checks, dry-run, Markdown lint, and diagram
-  validation succeed.
-  Observed pass for `npm test` on 2026-06-30T00:08:20Z and for `make check`
-  on 2026-06-30T00:13:06Z.
+  validation succeed. Observed pass for `npm test` on 2026-06-30T00:08:20Z and
+  for `make check` on 2026-06-30T00:13:06Z.
 
 Live smoke command:
 
@@ -481,8 +464,8 @@ Quality method:
 ## Idempotence and recovery
 
 The implementation is safe to retry. The red test is additive. The workflow
-itself is read-only until the final Record phase, and `scripts/review-state.mjs`
-already skips a branch head that has been recorded.
+itself is read-only until the final Record phase, and
+`scripts/review-state.mjs` already skips a branch head that has been recorded.
 
 For live smoke tests, pass `stateRoot` to isolate review history:
 
@@ -572,9 +555,10 @@ The final live workflow return object must include:
 ```
 
 `tests/workflow-dry-run.test.mjs` should use Node built-ins only. It may invoke
-`npm run odw:dry-run` or `odw run workflows/dakar-review.js --source
-. --wait --timeout 20 --args '{"dryRun":true}'` and parse the JSON object from
-the command output.
+`npm run odw:dry-run` or
+`odw run workflows/dakar-review.js --source
+. --wait --timeout 20 --args '{"dryRun":true}'`
+and parse the JSON object from the command output.
 
 ## Revision note
 

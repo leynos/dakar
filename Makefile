@@ -1,4 +1,4 @@
-.PHONY: check check-fmt docstrings lint typecheck markdownlint nixie test spelling \
+.PHONY: check fmt check-fmt docstrings lint typecheck markdownlint nixie test spelling \
 	spelling-config spelling-config-write spelling-phrase-check \
 	spelling-helper-test workflow-build workflow-freshness workflow-check
 
@@ -24,6 +24,9 @@ SPELLING_HELPER_PYTEST = PYTHONPATH=scripts $(UV_ENV) $(UV) run --no-project \
 	--with pytest-cov==7.0.0 python -m pytest
 
 check: check-fmt lint typecheck workflow-check test spelling
+
+fmt:
+	mdformat-all
 
 check-fmt:
 	@printf '%s\n' "Checking whitespace and final newlines..."

@@ -1,9 +1,8 @@
 # Build the Dakar incremental ODW review workflow
 
-This ExecPlan (execution plan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
-proceeds.
+This ExecPlan (execution plan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
+and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
 
@@ -37,20 +36,17 @@ model set without launching reviewer agents.
 ## Risks
 
 - Risk: Agent prompts may fail to execute the helper exactly.
-  Severity: medium.
-  Likelihood: medium.
-  Mitigation: include exact commands and schemas in the workflow.
+  Severity: medium. Likelihood: medium. Mitigation: include exact commands and
+  schemas in the workflow.
 
 - Risk: Branch history may be rebased after a review.
-  Severity: medium.
-  Likelihood: medium.
-  Mitigation: use `git merge-base --is-ancestor`; warn and fall back to merge
-  base when recorded heads do not apply.
+  Severity: medium. Likelihood: medium. Mitigation: use
+  `git merge-base --is-ancestor`; warn and fall back to merge base when
+  recorded heads do not apply.
 
 - Risk: Model identifiers may not exist in the local Codex adapter.
-  Severity: medium.
-  Likelihood: unknown.
-  Mitigation: make the model list overridable via workflow args.
+  Severity: medium. Likelihood: unknown. Mitigation: make the model list
+  overridable via workflow args.
 
 ## Progress
 
@@ -69,15 +65,15 @@ model set without launching reviewer agents.
 ## Surprises & discoveries
 
 - Observation: ODW import limitations require agents to call the helper.
-  Evidence: design-phase ODW probes rejected import and require.
-  Impact: The workflow uses schemas and exact helper commands in prompts.
+  Evidence: design-phase ODW probes rejected import and require. Impact: The
+  workflow uses schemas and exact helper commands in prompts.
 
 ## Decision log
 
 - Decision: Store metrics as a JSON string inside each TOML review entry.
-  Rationale: It keeps the initial TOML writer simple while preserving structured
-  metrics for later analysis.
-  Date/Author: 2026-06-29T17:57:30Z / Codex.
+  Rationale: It keeps the initial TOML writer simple while preserving
+  structured metrics for later analysis. Date/Author: 2026-06-29T17:57:30Z /
+  Codex.
 
 - Decision: Use Node built-in `node:test` instead of adding a test framework.
   Rationale: The first helper needs no third-party assertions or fixtures.
@@ -92,14 +88,14 @@ the ODW workflow loads in dry-run mode without launching reviewer agents.
 
 `scripts/review-state.mjs` owns review-history mechanics. Its `prepare` command
 calculates the review range and returns JSON. Its `record` command appends a
-TOML entry from JSON on stdin. `workflows/dakar-review.js` calls
-agents in four phases: prepare, review, synthesize, and record.
+TOML entry from JSON on stdin. `workflows/dakar-review.js` calls agents in four
+phases: prepare, review, synthesize, and record.
 
 ## Plan of work
 
 Stage A adds a failing state-helper test for review-history skipping. Stage B
-implements the helper. Stage C adds the ODW workflow with `dryRun`. Stage D runs
-tests and ODW validation, then updates this plan.
+implements the helper. Stage C adds the ODW workflow with `dryRun`. Stage D
+runs tests and ODW validation, then updates this plan.
 
 ## Concrete steps
 
@@ -171,8 +167,8 @@ node scripts/review-state.mjs prepare --repo-root . --base origin/main --head HE
 node scripts/review-state.mjs record < review-record.json
 ```
 
-`workflows/dakar-review.js` accepts ODW args `config`, `repoRoot`,
-`base`, `head`, `stateRoot`, `agentInstructions`, `models`, `synthesisModel`,
+`workflows/dakar-review.js` accepts ODW args `config`, `repoRoot`, `base`,
+`head`, `stateRoot`, `agentInstructions`, `models`, `synthesisModel`,
 `synthesisReasoning`, `maxTasks`, `maxCandidates`, `maxFindings`, and `dryRun`.
 
 ## Revision note

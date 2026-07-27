@@ -46,14 +46,14 @@ without changing the public workflow contract. See
 
 ### 1.2. Make review-history recording recoverable
 
-This step answers whether a useful review can survive a failed ODW record
-agent without re-reviewing the same commits. See
-`docs/dakar-review-design.md` §7.
+This step answers whether a useful review can survive a failed ODW record agent
+without re-reviewing the same commits. See `docs/dakar-review-design.md` §7.
 
 - [x] 1.2.1. Return `recordInput` and `stage: "record"` on workflow record
   failure.
   - Requires 1.1.3.
-  - Success: failed record phases include enough data to retry deterministically.
+  - Success: failed record phases include enough data to retry
+    deterministically.
 - [x] 1.2.2. Add CLI record recovery for completed reviews.
   - Requires 1.2.1.
   - Success: `dakar-review` can repair a failed workflow record phase once and
@@ -310,9 +310,9 @@ This step proves that the source split preserves the workflow users run. See
 
 ## 6. Deferred extensions after the core v1 promise
 
-Idea: if the core review loop is trustworthy and measurable, broader
-extensions can be evaluated on product value rather than added to compensate
-for missing fundamentals.
+Idea: if the core review loop is trustworthy and measurable, broader extensions
+can be evaluated on product value rather than added to compensate for missing
+fundamentals.
 
 ### 6.1. Static-analysis and codegraph ingestion
 
@@ -345,13 +345,12 @@ becomes provably affordable — mean at or below £0.05, hard ceiling £0.10 —
 without losing high-severity recall (an acceptance target that task 7.5.3
 evaluates).
 
-This phase implements
-[ADR 002](adr-002-deterministic-tiered-review-cost.md). It supersedes the
-USD 0.25 per-file benchmark used by phase 4 with ADR 002's per-review targets
-(`targetCostPerReviewGbp = 0.11`); the phase 4 ledger and pricing-table tasks
-become prerequisites rather than parallel work. The immediate delivery goal is
-a minimally useful live review below USD 0.25 of provider spend, with a
-stretch goal below USD 0.11.
+This phase implements [ADR 002](adr-002-deterministic-tiered-review-cost.md).
+It supersedes the USD 0.25 per-file benchmark used by phase 4 with ADR 002's
+per-review targets (`targetCostPerReviewGbp = 0.11`); the phase 4 ledger and
+pricing-table tasks become prerequisites rather than parallel work. The
+immediate delivery goal is a minimally useful live review below USD 0.25 of
+provider spend, with a stretch goal below USD 0.11.
 
 ### 7.1. Pricing table, cost ledger, and admission control
 
@@ -427,8 +426,8 @@ failure policy".
 
 ### 7.4. Live cost validation on the estate corpus
 
-This step answers whether the implemented route meets the delivery goal on
-real branches. See ADR 002 §"Verification".
+This step answers whether the implemented route meets the delivery goal on real
+branches. See ADR 002 §"Verification".
 
 - [x] 7.4.1. Build the candidate-branch harness for API-key live runs.
   - Requires 7.2 and 7.3.

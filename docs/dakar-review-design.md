@@ -1,25 +1,21 @@
 # Dakar review design
 
-Status: Living design
-Audience: Developers implementing and operating Dakar review workflows
-Date: 2026-07-14
-Companion documents:
+Status: Living design Audience: Developers implementing and operating Dakar
+review workflows Date: 2026-07-14 Companion documents:
 [`docs/users-guide.md`](users-guide.md),
 [`docs/developers-guide.md`](developers-guide.md),
 [`docs/design/initial-workflow.md`](design/initial-workflow.md), and
-[`docs/roadmap.md`](roadmap.md)
-Accepted decision record:
+[`docs/roadmap.md`](roadmap.md) Accepted decision record:
 [`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md)
 
 ## 1. Problem
 
 Dakar runs an Open Dynamic Workflows (ODW) code review over the commits that
 have not already been reviewed on a branch. It uses a CodeRabbit-compatible
-YAML policy, repository-local agent instructions, and routed agents to
-produce one actionable review report. The workflow must avoid re-reviewing the
-same commits, make weak or discarded findings auditable, and expose enough
-telemetry to decide whether the approach can beat CodeRabbit's user-supplied
-benchmark.
+YAML policy, repository-local agent instructions, and routed agents to produce
+one actionable review report. The workflow must avoid re-reviewing the same
+commits, make weak or discarded findings auditable, and expose enough telemetry
+to decide whether the approach can beat CodeRabbit's user-supplied benchmark.
 
 > **Superseded benchmark framing.** The original per-file benchmark below
 > (USD 0.25 per reviewed file) predates
@@ -33,11 +29,11 @@ benchmark.
 > arithmetic (about USD 0.133 at default caps). §8 below names the ledger
 > fields that carry the implemented accounting.
 
-Dakar is not a deterministic linter. The separate `odw-lint` project should
-own formatting, spelling, line-count, schema, and other rules that can be
-checked without judgement. Dakar should focus review budget on behavioural
-regressions, orchestration failures, security boundaries, missing context,
-incorrect assumptions, and gaps where no deterministic tool is configured yet.
+Dakar is not a deterministic linter. The separate `odw-lint` project should own
+formatting, spelling, line-count, schema, and other rules that can be checked
+without judgement. Dakar should focus review budget on behavioural regressions,
+orchestration failures, security boundaries, missing context, incorrect
+assumptions, and gaps where no deterministic tool is configured yet.
 
 ## 2. Goals and non-goals
 
@@ -126,11 +122,11 @@ flowchart TD
 Figure 1: Dakar separates deterministic CLI and helper work from ODW agent
 orchestration. The CLI can repair review-history recording after a workflow
 record-phase failure. **This figure predates ADR 002**; under the current
-`deterministic-flex-v1` route, Resolve CodeRabbit config, Prepare review
-range, Synthesize report, and Record review history all run as CLI host
-code around a workflow whose only phases are Plan, Review (Luna Flex finder
-fan-out), and Audit (one Terra Flex issue-set audit); the CLI records every
-successful result directly rather than only recovering after a failure.
+`deterministic-flex-v1` route, Resolve CodeRabbit config, Prepare review range,
+Synthesize report, and Record review history all run as CLI host code around a
+workflow whose only phases are Plan, Review (Luna Flex finder fan-out), and
+Audit (one Terra Flex issue-set audit); the CLI records every successful result
+directly rather than only recovering after a failure.
 
 The CLI also owns the model-call timeout boundary. The packaged
 `odw.config.json` remains unchanged on disk; for each CLI-started run,
@@ -169,12 +165,11 @@ committed JavaScript artefact is the runtime interface.
 
 `main.ts` remains the only composition root and the only source module that
 calls injected ODW primitives. Pure modules own schemas, argument defaults,
-model routing, task planning, prompt construction, candidate normalization,
-and verdict reduction. `main.ts` imports subsystem functions and passes
-run-scoped configuration through explicit parameters; modules do not import
-`main.ts` or reach into mutable globals. Candidate containment remains
-upstream of verifier command construction, and shell quoting remains one shared
-authority.
+model routing, task planning, prompt construction, candidate normalization, and
+verdict reduction. `main.ts` imports subsystem functions and passes run-scoped
+configuration through explicit parameters; modules do not import `main.ts` or
+reach into mutable globals. Candidate containment remains upstream of verifier
+command construction, and shell quoting remains one shared authority.
 
 The generated artefact is never hand-edited. It remains committed because the
 installed CLI and direct ODW users need a ready workflow without TypeScript or
@@ -188,13 +183,12 @@ contracts, while ADR 001 records why compilation is the selected boundary.
 > still visible as the illustrative `--dry-run` task graph
 > (`defaultTaskGraph()`). The live `deterministic-flex-v1` route instead
 > packs changed files into homogeneous Luna Flex finder evidence packs
-> (`buildFlexFinderPlan()`, capped at `maxLunaFlexCalls x
-> transactionMaxFiles`), deterministically compacts the resulting
-> candidates (`compactForAudit()`: dedup, severity order, `maxAuditCandidates`
-> cap), and sends the survivors to one Terra Flex issue-set audit rather
-> than one verification call per candidate. See
-> [`docs/developers-guide.md`](developers-guide.md) §4 for the current
-> routing.
+> (`buildFlexFinderPlan()`, capped at
+> `maxLunaFlexCalls x transactionMaxFiles`), deterministically compacts the
+> resulting candidates (`compactForAudit()`: dedup, severity order,
+> `maxAuditCandidates` cap), and sends the survivors to one Terra Flex
+> issue-set audit rather than one verification call per candidate. See
+> [`docs/developers-guide.md`](developers-guide.md) §4 for the current routing.
 
 ```mermaid
 flowchart LR
@@ -220,13 +214,13 @@ flowchart LR
 ```
 
 Figure 3: Finder tasks propose candidates. Only verifier-approved candidates
-become findings. This diagram shows the pre-ADR-002 per-candidate
-verification and synthesis shape; see the superseded-content note above.
+become findings. This diagram shows the pre-ADR-002 per-candidate verification
+and synthesis shape; see the superseded-content note above.
 
 The task graph starts with deterministic file classification because it gives
 repeatable fan-out and keeps prompt scope small. Source and dependency-impact
-tasks route to `gpt-5.5` high. Test tasks route to `gpt-5.5` medium. Config
-and documentation tasks route to smaller agents. A summary task scans the whole
+tasks route to `gpt-5.5` high. Test tasks route to `gpt-5.5` medium. Config and
+documentation tasks route to smaller agents. A summary task scans the whole
 change set for cross-cutting risks. The high-reasoning verifier remains the
 gate before synthesis.
 
@@ -253,9 +247,9 @@ The CLI safely parses the selected YAML, rejects malformed documents and
 invalid supported fields, and passes a normalized serializable policy to the
 workflow. Deterministic workflow code matches `reviews.path_instructions`
 against each finder pack's changed paths, so models receive only applicable
-instructions and never parse the YAML themselves. Unsupported keys are
-reported as ignored and have no execution effect. Executable repository-local
-custom checks are reloaded from the trusted review base before they run.
+instructions and never parse the YAML themselves. Unsupported keys are reported
+as ignored and have no execution effect. Executable repository-local custom
+checks are reloaded from the trusted review base before they run.
 
 The CLI reads a root `AGENTS.md` from the reviewed repository and passes it as
 `agentInstructions`. Finder and audit prompts include that text as context.
@@ -285,10 +279,10 @@ ancestors again. Record failure must be visible.
 > workflow entirely (see §4). The CLI now records every successful,
 > non-skipped result directly, in-process, rather than only recovering
 > after a workflow-side record-phase failure; a successful append stamps
-> `recorded: { ok: true, stateFile, headCommit, recordedBy: "dakar-review"
-> }`. `recorded.recoveredBy` and `metrics.recordRecoveredByCli` no longer
-> exist. On append failure the CLI sets `ok: false`, `stage: "record"`,
-> and preserves `recordInput` for manual retry.
+> `recorded: { ok: true, stateFile, headCommit, recordedBy: "dakar-review" }`.
+> `recorded.recoveredBy` and `metrics.recordRecoveredByCli` no longer exist. On
+> append failure the CLI sets `ok: false`, `stage: "record"`, and preserves
+> `recordInput` for manual retry.
 >
 > A successful result with incomplete planned finder coverage is deliberately
 > exempt from that automatic append. Truncated files, admission-refused packs,
@@ -301,47 +295,46 @@ ancestors again. Record failure must be visible.
 ADR 002 implements this section's original ledger aspiration (below) as
 `metrics.ledger: LedgerEntry[]` in `types.ts`, priced by the versioned
 `pricing.ts::DEFAULT_PRICING_TABLE` and enforced pre-dispatch by
-`admission.ts::admit()`. Each `LedgerEntry` carries `callId`, `phase`,
-`lane` (`luna-flex`, `terra-flex`, or `standard`), `model`, `serviceTier`,
+`admission.ts::admit()`. Each `LedgerEntry` carries `callId`, `phase`, `lane`
+(`luna-flex`, `terra-flex`, or `standard`), `model`, `serviceTier`,
 `reasoningEffort`, `estimatedWorstCaseUsd`, `pricingTableVersion`, and
 `attempts`; estimated and reported fields stay distinct, satisfying this
-section's original requirement that estimates be marked as estimates.
-Reported usage is not attached to individual ledger entries. Instead, the
-CLI reads the `pi` extension's per-call usage log and attaches it to the
-top level of the result: `metrics.reportedUsage` is an ordered array of
-`{ model, usage: { input, output, cacheRead, cacheWrite } }` records, one
-per model call, and `metrics.reportedTokens` is the summed totals across
-those records using the same four keys. The live harness prices those
-records per lane (`scripts/live-review-harness.mjs::priceReportedUsage`)
-and exposes a top-level `reportedUsd` in its own summary output; that
-figure is not part of the workflow result. `metrics` also carries
-`ledgerTotalEstimatedUsd` (the sum of admitted worst-case estimates),
-`budgetUsd`, `reservedAuditUsd`, `spentUsd`, `pricingTableVersion`, and
-`routingPolicy` (the sole live value is `deterministic-flex-v1`).
-Audit-routing tallies (`auditCandidateCount`, `overAuditCapCount`,
-`unknownAuditVerdictCount`, `duplicateAuditVerdictCount`,
+section's original requirement that estimates be marked as estimates. Reported
+usage is not attached to individual ledger entries. Instead, the CLI reads the
+`pi` extension's per-call usage log and attaches it to the top level of the
+result: `metrics.reportedUsage` is an ordered array of
+`{ model, usage: { input, output, cacheRead, cacheWrite } }` records, one per
+model call, and `metrics.reportedTokens` is the summed totals across those
+records using the same four keys. The live harness prices those records per lane
+(`scripts/live-review-harness.mjs::priceReportedUsage`) and exposes a top-level
+`reportedUsd` in its own summary output; that figure is not part of the
+workflow result. `metrics` also carries `ledgerTotalEstimatedUsd` (the sum of
+admitted worst-case estimates), `budgetUsd`, `reservedAuditUsd`, `spentUsd`,
+`pricingTableVersion`, and `routingPolicy` (the sole live value is
+`deterministic-flex-v1`). Audit-routing tallies (`auditCandidateCount`,
+`overAuditCapCount`, `unknownAuditVerdictCount`, `duplicateAuditVerdictCount`,
 `lunaDowngradeCount`, `truncatedFiles`) sit alongside the ledger to relate
 spend to review coverage and outcome.
 
 Cost recovery has three layers, now implemented as follows:
 
 - Budget control: a hard per-review `budgetGbp` (default £0.10), enforced
-  by reserve-first admission — the audit's worst case is reserved before
-  any Luna finder dispatch, so an unaffordable review refuses
+  by reserve-first admission — the audit's worst case is reserved before any
+  Luna finder dispatch, so an unaffordable review refuses
   (`stage: "admission"`) before spending on finders it could not afford to
-  conclude. `maxLunaFlexCalls`, `transactionMaxFiles`, and
-  `maxAuditCandidates` remain as complementary bounded caps.
+  conclude. `maxLunaFlexCalls`, `transactionMaxFiles`, and `maxAuditCandidates`
+  remain as complementary bounded caps.
 - Attribution: `ledger` entries carry cost per call, phase, lane, and model;
-  `admissionRefusals` and `lunaDowngrades` record what did not run, or ran
-  only partially, and why.
+  `admissionRefusals` and `lunaDowngrades` record what did not run, or ran only
+  partially, and why.
 - Evaluation: compare `metrics.ledgerTotalEstimatedUsd` (and, once
-  populated, the summed `reportedUsd`) against the hard `budgetGbp`
-  converted through `pricingTableVersion`'s `usdPerGbp` snapshot, not
-  against a per-file ratio (see the superseded-benchmark note in §1).
+  populated, the summed `reportedUsd`) against the hard `budgetGbp` converted
+  through `pricingTableVersion`'s `usdPerGbp` snapshot, not against a per-file
+  ratio (see the superseded-benchmark note in §1).
 
-The cost model stores the pricing table version used for each estimate in
-every ledger entry. Provider prices change, so old runs remain auditable
-without rewriting history.
+The cost model stores the pricing table version used for each estimate in every
+ledger entry. Provider prices change, so old runs remain auditable without
+rewriting history.
 
 ## 9. Making reviews more useful to agents
 
@@ -383,8 +376,8 @@ Stdout contains only the final result in JSON by default or `reportMarkdown`
 when `--format markdown` is selected. Stderr contains progress, ODW run ids,
 telemetry, and process-level errors.
 
-The workflow result contains (post-ADR 002; see the superseded notes in §4,
-§7, and §8 for what changed):
+The workflow result contains (post-ADR 002; see the superseded notes in §4, §7,
+and §8 for what changed):
 
 - `sarif`: the canonical SARIF 2.1.0 run containing normalized candidates,
   Terra decisions, deterministic gate evidence, provenance, dispositions,
@@ -407,9 +400,9 @@ The workflow no longer returns `resolvedConfig`, `recordAttempts`, or a
 in-process append, deriving the destination from its trusted repository and
 state root rather than accepting a state-file path from workflow output.
 
-`reportMarkdown` is a deterministic projection rendered from `sarif`; it is
-not an independent evidence contract. Future GitHub annotations must project
-from the same SARIF document. Existing raw candidates, verdicts, findings, and
+`reportMarkdown` is a deterministic projection rendered from `sarif`; it is not
+an independent evidence contract. Future GitHub annotations must project from
+the same SARIF document. Existing raw candidates, verdicts, findings, and
 discards remain only at the CLI compatibility/debug boundary.
 
 ## 11. Failure modes
@@ -422,14 +415,13 @@ discards remain only at the CLI compatibility/debug boundary.
   starts. The Flex ledger, spend, and audit reservation are all zero, and the
   head is not recorded. Passing and non-blocking outcomes continue normally.
 - The audit's own admission reservation is unaffordable: the workflow
-  returns `stage: "admission"` before any model call, including finder
-  dispatch.
+  returns `stage: "admission"` before any model call, including finder dispatch.
 - A finder pack exhausts its Flex retries: it downgrades
-  (`lunaDowngrades`), and the review continues with the surviving
-  candidates rather than failing.
+  (`lunaDowngrades`), and the review continues with the surviving candidates
+  rather than failing.
 - The audit exhausts its Flex retries: the workflow returns a deferred
-  result (`stage: "deferred"`, no `recordInput`), and the CLI records
-  nothing so the head remains unreviewed.
+  result (`stage: "deferred"`, no `recordInput`), and the CLI records nothing
+  so the head remains unreviewed.
 - The audit references an unknown or duplicate candidate id: the workflow
   tallies it in `metrics.unknownAuditVerdictCount` or
   `duplicateAuditVerdictCount` instead of crashing.
@@ -452,21 +444,19 @@ The implementation must preserve these invariants:
   tallied in `metrics` instead.
 - CLI-side configuration and preparation failures are returned with their
   owning `config` or `prepare` stage rather than escaping without phase
-  context; workflow-side failures carry `admission`, `audit`, or
-  `deferred`.
+  context; workflow-side failures carry `admission`, `audit`, or `deferred`.
 - Stdout contains one final result object or Markdown report, never progress
   text.
 - A completed review is recorded by the CLI in-process, or the CLI exits
-  non-zero with `stage: "record"` and preserves `recordInput` for manual
-  retry.
+  non-zero with `stage: "record"` and preserves `recordInput` for manual retry.
 - Telemetry and cost fields mark estimated worst-case costs
-  (`estimatedWorstCaseUsd`) differently from adapter-reported usage and
-  cost (`reportedUsage`, `reportedUsd`).
+  (`estimatedWorstCaseUsd`) differently from adapter-reported usage and cost
+  (`reportedUsage`, `reportedUsd`).
 - An admission refusal or a deferred audit never mutates the ledger beyond
   its own recorded refusal or deferral.
 - The generated workflow contains exactly one literal `meta` export, no
-  surviving module import or additional export, and exactly one
-  `workflowMain` entry.
+  surviving module import or additional export, and exactly one `workflowMain`
+  entry.
 - The compiler rejects module-closure wrappers, dynamic imports, `import.meta`,
   a runtime module missing from the declared manifest, and output that fails
   the ODW-style asynchronous-function-body parse.

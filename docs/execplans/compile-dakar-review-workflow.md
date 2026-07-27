@@ -13,14 +13,13 @@ Dakar previously shipped a valid but 966-line Open Dynamic Workflows (ODW)
 script at `workflows/dakar-review.js`. With this plan complete, contributors
 edit small, strict TypeScript modules under `src/workflows/dakar-review/`, run
 one deterministic build, and commit the regenerated workflow artefact. Users
-continue running `dakar-review` or
-`odw run workflows/dakar-review.js`; commands, output, routing, state, and
-record recovery will not change.
+continue running `dakar-review` or `odw run workflows/dakar-review.js`;
+commands, output, routing, state, and record recovery will not change.
 
 Success is observable at three levels. Pure planning, candidate, routing, and
 prompt behaviour has direct module tests. The compiler rejects invalid ODW
-artefacts and a freshness gate rejects stale generated output. The existing
-ODW dry run, CLI suites, and one isolated live review prove that the installed
+artefacts and a freshness gate rejects stale generated output. The existing ODW
+dry run, CLI suites, and one isolated live review prove that the installed
 entrypoint still prepares, reviews, verifies, synthesizes, records, and skips a
 head already present in review history.
 
@@ -60,8 +59,8 @@ acceptance transition.
   ODW-aware gates, never `node --check workflows/dakar-review.js`.
 - Use en-GB-oxendict spelling in prose.
 
-If implementation cannot satisfy a constraint, stop, record the conflict in
-the `Decision log`, and request direction.
+If implementation cannot satisfy a constraint, stop, record the conflict in the
+`Decision log`, and request direction.
 
 ## Tolerances (exception triggers)
 
@@ -90,55 +89,43 @@ the `Decision log`, and request direction.
 ## Risks
 
 - Risk: bundling changes the runtime source while unit tests still pass.
-  Severity: high.
-  Likelihood: medium.
-  Mitigation: retain artefact-level dry-run and CLI tests, add loader-wrap
-  parsing, and perform one isolated live review.
+  Severity: high. Likelihood: medium. Mitigation: retain artefact-level dry-run
+  and CLI tests, add loader-wrap parsing, and perform one isolated live review.
 
 - Risk: an import cycle or CommonJS edge introduces a module wrapper.
-  Severity: high.
-  Likelihood: low.
-  Mitigation: one-way dependency direction and fail-closed wrapper scans.
+  Severity: high. Likelihood: low. Mitigation: one-way dependency direction and
+  fail-closed wrapper scans.
 
 - Risk: a new source file is authored but never reaches the bundle.
-  Severity: medium.
-  Likelihood: medium.
-  Mitigation: author and wire each runtime module together; compare esbuild's
-  metafile inputs with an explicit runtime-module manifest.
+  Severity: medium. Likelihood: medium. Mitigation: author and wire each
+  runtime module together; compare esbuild's metafile inputs with an explicit
+  runtime-module manifest.
 
 - Risk: a stale generated artefact ships.
-  Severity: high.
-  Likelihood: medium.
-  Mitigation: compile to a temporary output and compare it with the working-tree
-  artefact. In CI, separately rebuild and reject a Git diff.
+  Severity: high. Likelihood: medium. Mitigation: compile to a temporary output
+  and compare it with the working-tree artefact. In CI, separately rebuild and
+  reject a Git diff.
 
 - Risk: generated reprinting breaks tests that slice source text.
-  Severity: medium.
-  Likelihood: high.
-  Mitigation: replace helper-slicing tests with direct source-module tests and
-  reserve artefact tests for runtime contracts.
+  Severity: medium. Likelihood: high. Mitigation: replace helper-slicing tests
+  with direct source-module tests and reserve artefact tests for runtime
+  contracts.
 
 - Risk: prompt construction receives `CODE_RABBIT_CONFIG` before the Resolve
-  Config phase changes it from `auto` to the resolved path.
-  Severity: high.
-  Likelihood: medium.
-  Mitigation: bind prompt dependencies after resolution or pass the resolved
-  path into each prompt call; add an explicit regression test.
+  Config phase changes it from `auto` to the resolved path. Severity: high.
+  Likelihood: medium. Mitigation: bind prompt dependencies after resolution or
+  pass the resolved path into each prompt call; add an explicit regression test.
 
 - Risk: TypeScript's view of a primitive is more optimistic than ODW runtime
-  behaviour.
-  Severity: medium.
-  Likelihood: medium.
-  Mitigation: declare failed `parallel()` and `pipeline()` slots as nullable,
-  keep result validation, and avoid unchecked casts.
+  behaviour. Severity: medium. Likelihood: medium. Mitigation: declare failed
+  `parallel()` and `pipeline()` slots as nullable, keep result validation, and
+  avoid unchecked casts.
 
 - Risk: contributors use an older Node or unpinned esbuild version and obtain a
-  different test or generated result.
-  Severity: medium.
-  Likelihood: medium.
+  different test or generated result. Severity: medium. Likelihood: medium.
   Mitigation: require Node 24.12 or later for contributors, pin esbuild 0.28.1
-  and TypeScript 6.0.3, and commit `package-lock.json`. This does not change the
-  installed CLI's runtime contract.
+  and TypeScript 6.0.3, and commit `package-lock.json`. This does not change
+  the installed CLI's runtime contract.
 
 ## Progress
 
@@ -186,141 +173,131 @@ the `Decision log`, and request direction.
 ## Surprises & discoveries
 
 - Observation: `tests/workflow-candidate-paths.test.mjs` and
-  `tests/workflow-task-graph.test.mjs` slice declarations from the hand-authored
-  workflow before evaluating helpers.
-  Evidence: both tests search for the dry-run branch and construct a function
-  from the preceding source.
+  `tests/workflow-task-graph.test.mjs` slice declarations from the
+  hand-authored workflow before evaluating helpers. Evidence: both tests search
+  for the dry-run branch and construct a function from the preceding source.
   Impact: direct module tests are part of the migration, not optional cleanup.
 
 - Observation: the current workflow mutates `CODE_RABBIT_CONFIG` after an agent
-  resolves configuration.
-  Evidence: the top-level value begins as an explicit path or `auto`, then the
-  Resolve Config phase assigns `resolvedConfig.config`.
-  Impact: prompt dependency binding must occur after resolution or receive the
-  resolved value per call.
+  resolves configuration. Evidence: the top-level value begins as an explicit
+  path or `auto`, then the Resolve Config phase assigns
+  `resolvedConfig.config`. Impact: prompt dependency binding must occur after
+  resolution or receive the resolved value per call.
 
 - Observation: Node 24.12 and later provide stable built-in stripping for
   erasable TypeScript but ignore `tsconfig.json` and perform no type-checking.
   Evidence: the Node TypeScript module documentation and the current local Node
-  24.13.1 runtime.
-  Impact: direct execution may simplify module tests, but `tsc --noEmit` remains
-  mandatory and the implementation must confirm the contributor baseline.
+  24.13.1 runtime. Impact: direct execution may simplify module tests, but
+  `tsc --noEmit` remains mandatory and the implementation must confirm the
+  contributor baseline.
 
 - Observation: roadmap phase 5 assumes ordinary imports cannot form the
-  decomposition mechanism.
-  Evidence: `docs/roadmap.md` task 5.1.1 currently requires a design explaining
-  why ordinary imports are not used.
-  Impact: the roadmap must be revised with the accepted compile-time boundary.
+  decomposition mechanism. Evidence: `docs/roadmap.md` task 5.1.1 currently
+  requires a design explaining why ordinary imports are not used. Impact: the
+  roadmap must be revised with the accepted compile-time boundary.
 
 - Observation: TypeScript 6 rejects command-line source files when a nearby
   `tsconfig.json` exists unless the invocation includes `--ignoreConfig`.
   Evidence: the initial compile-time fixture failed with TS5112 before reading
-  the valid erasable source.
-  Impact: isolated positive and negative compiler probes use `--ignoreConfig`;
-  the repository gate continues using `tsc -p tsconfig.json`.
+  the valid erasable source. Impact: isolated positive and negative compiler
+  probes use `--ignoreConfig`; the repository gate continues using
+  `tsc -p tsconfig.json`.
 
 - Observation: repeated CodeRabbit review exposed pre-existing trust-boundary
   gaps while the workflow moved behind strict types: unchecked limits and
   prepare fields, task/result spoofing, working-tree verification reads,
   incomplete verdict coverage, synthesis authority drift, and non-idempotent
-  Record retries.
-  Evidence: every accepted finding received a focused regression test before
-  the scrutineer's final 83-test commit gate.
-  Impact: WI-3 includes behaviour-preserving fail-closed validation and security
+  Record retries. Evidence: every accepted finding received a focused
+  regression test before the scrutineer's final 83-test commit gate. Impact:
+  WI-3 includes behaviour-preserving fail-closed validation and security
   hardening needed to make the typed boundary honest; later extraction modules
   inherit these explicit contracts rather than the unsafe implicit assumptions.
 
 - Observation: repeated install-path tests can exhaust the 4 GiB `/tmp` tmpfs
-  when unrelated stale Bun caches occupy it.
-  Evidence: one local run failed with `NoSpaceLeft`; removing inactive
-  `/tmp/bunx-*` and disposable `/tmp/dakar-*` artefacts restored 3.8 GiB and the
-  next run passed.
-  Impact: ENOSPC is treated as environmental evidence, not a product failure;
-  cleanup is limited to inactive disposable cache/test paths.
+  when unrelated stale Bun caches occupy it. Evidence: one local run failed with
+  `NoSpaceLeft`; removing inactive `/tmp/bunx-*` and disposable `/tmp/dakar-*`
+  artefacts restored 3.8 GiB and the next run passed. Impact: ENOSPC is treated
+  as environmental evidence, not a product failure; cleanup is limited to
+  inactive disposable cache/test paths.
 
 - Observation: a `Map` of prompts in the artefact harness could hide duplicate
   agent labels, while broad fixture catches could turn assertion failures into
-  simulated ODW null slots.
-  Evidence: the first WI-4--WI-6 CodeRabbit review identified both blind spots;
-  exact label order/count and a dedicated `FixtureFailure` now distinguish
-  expected slot failure from a broken test fixture.
-  Impact: the harness proves that every expected orchestration call occurs once
-  and propagates unexpected errors.
+  simulated ODW null slots. Evidence: the first WI-4--WI-6 CodeRabbit review
+  identified both blind spots; exact label order/count and a dedicated
+  `FixtureFailure` now distinguish expected slot failure from a broken test
+  fixture. Impact: the harness proves that every expected orchestration call
+  occurs once and propagates unexpected errors.
 
 - Observation: the user-facing runtime dependency contract was implicit in the
-  accepted ADR and design but absent from the user's guide.
-  Evidence: the generated artefact is committed and packaged, while
-  `docs/users-guide.md` previously described direct invocation without stating
-  whether TypeScript or esbuild was required.
-  Impact: the user's guide now states that CLI and direct ODW use require no
-  contributor build tooling; public commands and behaviour remain unchanged.
+  accepted ADR and design but absent from the user's guide. Evidence: the
+  generated artefact is committed and packaged, while `docs/users-guide.md`
+  previously described direct invocation without stating whether TypeScript or
+  esbuild was required. Impact: the user's guide now states that CLI and direct
+  ODW use require no contributor build tooling; public commands and behaviour
+  remain unchanged.
 
 - Observation: post-completion review found that Record-phase retries were
-  bounded but not visible in the returned contract or logs.
-  Evidence: the result now reports `recordAttempts`, attempts two and three log
-  their retry, and the orchestration tests cover immediate success, recovery,
-  and exhausted retries.
-  Impact: operators can distinguish first-attempt recording from retry and
-  exhaustion without changing the existing CLI recovery boundary.
+  bounded but not visible in the returned contract or logs. Evidence: the
+  result now reports `recordAttempts`, attempts two and three log their retry,
+  and the orchestration tests cover immediate success, recovery, and exhausted
+  retries. Impact: operators can distinguish first-attempt recording from retry
+  and exhaustion without changing the existing CLI recovery boundary.
 
 - Observation: `recordInput` previously carried the prepare result's
   `stateFile` into CLI recovery, allowing workflow output to select a local
-  write destination.
-  Evidence: the workflow no longer emits that path in `recordInput`; the CLI
-  passes its trusted repository and state root to `appendReview`, whose focused
-  tests prove trusted derivation and XDG-default behaviour.
-  Impact: review data remains recoverable, but the local CLI retains authority
-  over where review history is written.
+  write destination. Evidence: the workflow no longer emits that path in
+  `recordInput`; the CLI passes its trusted repository and state root to
+  `appendReview`, whose focused tests prove trusted derivation and XDG-default
+  behaviour. Impact: review data remains recoverable, but the local CLI retains
+  authority over where review history is written.
 
 - Observation: external docstring coverage reported 43.62%, then 48.45%, after
-  the authored TypeScript modules and CLI helpers had JSDoc.
-  Evidence: a TypeScript-AST audit found every named CLI function and every
-  exported workflow function documented; the apparent deficit includes the
-  generated artefact, ambient declarations, and private helpers in its
-  denominator. The current audit still reports 18/18 named CLI functions and
-  29/29 exported workflow functions documented; targeted JSDoc covers the
-  exported compiler API and the non-obvious loader and trusted-state
-  boundaries.
-  Impact: contributor guidance now measures documentation on authored surfaces
-  and does not require comments to be duplicated into generated output or
+  the authored TypeScript modules and CLI helpers had JSDoc. Evidence: a
+  TypeScript-AST audit found every named CLI function and every exported
+  workflow function documented; the apparent deficit includes the generated
+  artefact, ambient declarations, and private helpers in its denominator. The
+  current audit still reports 18/18 named CLI functions and 29/29 exported
+  workflow functions documented; targeted JSDoc covers the exported compiler
+  API and the non-obvious loader and trusted-state boundaries. Impact:
+  contributor guidance now measures documentation on authored surfaces and does
+  not require comments to be duplicated into generated output or
   self-explanatory private helpers.
 
 - Observation: direct Resolve Config, Prepare, and Synthesize agent calls could
   throw before the workflow returned its existing phase-specific failure shape.
   Evidence: each direct boundary now converts a thrown value into `ok: false`,
   its `config`, `prepare`, or `synthesize` stage, and an error string; focused
-  orchestration fixtures cover the three labels.
-  Impact: callers retain the owning phase when an adapter or schema failure
-  interrupts a direct agent call; fan-out null-slot handling is unchanged.
+  orchestration fixtures cover the three labels. Impact: callers retain the
+  owning phase when an adapter or schema failure interrupts a direct agent
+  call; fan-out null-slot handling is unchanged.
 
 ## Decision log
 
 - Decision: use the df12-build three-piece frame: verbatim `meta.js`, flat
   esbuild bundle, and generated `return await workflowMain()` footer.
   Rationale: it preserves the ODW loader dialect while making source modules
-  ordinary TypeScript.
-  Date/Author: 2026-07-14, Codex with Wyvern planning review.
+  ordinary TypeScript. Date/Author: 2026-07-14, Codex with Wyvern planning
+  review.
 
 - Decision: commit `workflows/dakar-review.js` and reject stale output.
   Rationale: the CLI and installed package need a ready runtime artefact; an
-  installation must not depend on contributor tooling.
-  Date/Author: 2026-07-14, Codex with Wyvern planning review.
+  installation must not depend on contributor tooling. Date/Author: 2026-07-14,
+  Codex with Wyvern planning review.
 
 - Decision: retain all df12-build fail-closed loader checks but not its Bun,
-  BDD, LemmaScript, or Dafny test stack.
-  Rationale: loader hazards transfer directly; unrelated verification tooling
-  does not.
-  Date/Author: 2026-07-14, Codex with Wyvern planning review.
+  BDD, LemmaScript, or Dafny test stack. Rationale: loader hazards transfer
+  directly; unrelated verification tooling does not. Date/Author: 2026-07-14,
+  Codex with Wyvern planning review.
 
 - Decision: use direct module tests for pure source and retain ODW dry-run and
-  CLI tests for the generated artefact.
-  Rationale: source and artefact tests own different contracts.
-  Date/Author: 2026-07-14, Codex with Wyvern planning review.
+  CLI tests for the generated artefact. Rationale: source and artefact tests
+  own different contracts. Date/Author: 2026-07-14, Codex with Wyvern planning
+  review.
 
 - Decision: keep shell quoting as one injected authority and candidate path
-  containment before verifier prompt construction.
-  Rationale: decomposition must not duplicate or reorder security boundaries.
-  Date/Author: 2026-07-14, Codex with Wyvern planning review.
+  containment before verifier prompt construction. Rationale: decomposition
+  must not duplicate or reorder security boundaries. Date/Author: 2026-07-14,
+  Codex with Wyvern planning review.
 
 - Decision: create a Dakar-specific compiler.
   Rationale: sharing a compiler before a second compatible consumer exists
@@ -328,39 +305,36 @@ the `Decision log`, and request direction.
   Date/Author: 2026-07-14, Codex with Wyvern planning review.
 
 - Decision: allow esbuild to rename internal helpers and use its metafile to
-  prove runtime-module reachability.
-  Rationale: direct source-module tests remove internal bundle names from the
-  runtime contract; only `workflowMain` must retain an exact top-level name.
-  Date/Author: 2026-07-14, Codex after Logisphere review.
+  prove runtime-module reachability. Rationale: direct source-module tests
+  remove internal bundle names from the runtime contract; only `workflowMain`
+  must retain an exact top-level name. Date/Author: 2026-07-14, Codex after
+  Logisphere review.
 
 - Decision: make freshness a content comparison with the working-tree artefact,
-  separate from the CI clean-Git check.
-  Rationale: contributors need a freshness gate that passes before source and
-  regenerated artefact are committed.
-  Date/Author: 2026-07-14, Codex after Logisphere review.
+  separate from the CI clean-Git check. Rationale: contributors need a
+  freshness gate that passes before source and regenerated artefact are
+  committed. Date/Author: 2026-07-14, Codex after Logisphere review.
 
 - Decision: use npm with a committed `package-lock.json`, exact esbuild 0.28.1
   and TypeScript 6.0.3 development dependencies, and Node 24.12 or later for
-  source module tests.
-  Rationale: generated bytes and direct `.ts` execution must be reproducible;
-  the Node baseline is contributor-only and does not change CLI compatibility.
-  Date/Author: 2026-07-14, Codex after Logisphere review.
+  source module tests. Rationale: generated bytes and direct `.ts` execution
+  must be reproducible; the Node baseline is contributor-only and does not
+  change CLI compatibility. Date/Author: 2026-07-14, Codex after Logisphere
+  review.
 
 - Decision: keep the injected-primitive boundary as a TypeScript-scope-backed
   source invariant test and loader compatibility as a fail-closed compiler
   assertion, rather than adding ESLint, `@typescript-eslint`, or a separate
-  esbuild plugin.
-  Rationale: those alternatives duplicate the existing executable policies and
-  exceed the approved dependency tolerance; compiler hazards must prevent a
-  write rather than depend on a separately invoked linter.
-  Date/Author: 2026-07-14, Codex after CodeRabbit implementation review.
+  esbuild plugin. Rationale: those alternatives duplicate the existing
+  executable policies and exceed the approved dependency tolerance; compiler
+  hazards must prevent a write rather than depend on a separately invoked
+  linter. Date/Author: 2026-07-14, Codex after CodeRabbit implementation review.
 
 - Decision: malformed, duplicate, unknown, or incomplete verifier coverage
   remains a fail-closed Verify-stage error rather than becoming an auditable
-  discard that permits Record.
-  Rationale: a discard is a completed verification judgment; manufacturing one
-  from missing or malformed output would allow an incompletely reviewed head to
-  enter history and be skipped later.
+  discard that permits Record. Rationale: a discard is a completed verification
+  judgment; manufacturing one from missing or malformed output would allow an
+  incompletely reviewed head to enter history and be skipped later.
   Date/Author: 2026-07-14, Codex after CodeRabbit implementation review.
 
 - Decision: freeze resolved model arrays and their entries, clone configured
@@ -368,31 +342,28 @@ the `Decision log`, and request direction.
   Rationale: `WorkflowConfig` is an immutable cross-module contract; retaining
   caller-owned mutable entries or coercing an invalid object to
   `[object Object]` would make routing depend on later mutation or malformed
-  input.
-  Date/Author: 2026-07-14, Codex after CodeRabbit extraction review.
+  input. Date/Author: 2026-07-14, Codex after CodeRabbit extraction review.
 
 - Decision: do not add the generated `workflows/dakar-review.js` to Biome or
   standard-JS ignore configuration, and initially do not require blanket
-  function docstrings.
-  Rationale: this repository has no Biome or standard-JS configuration, so an
-  ignore would create an unused tool contract, while clear module-level
-  documentation plus targeted API and boundary JSDoc satisfies the actionable
-  documentation gap without adding repetitive comments to self-explanatory
-  functions, ambient declarations, or generated output.
+  function docstrings. Rationale: this repository has no Biome or standard-JS
+  configuration, so an ignore would create an unused tool contract, while clear
+  module-level documentation plus targeted API and boundary JSDoc satisfies the
+  actionable documentation gap without adding repetitive comments to
+  self-explanatory functions, ambient declarations, or generated output.
   Date/Author: 2026-07-14, Codex after post-completion review.
 
 - Decision: supersede the earlier targeted-docstring convention with a
   deterministic authored-source audit over `bin/dakar-review.mjs` and
-  `src/workflows/dakar-review/`.
-  Rationale: CodeRabbit's AI-driven review reported 48.45% without exposing a
-  reproducible numerator or denominator. `npm run docstrings` now counts module
-  headers, named functions, exported interfaces and types, and exported
-  constants. Ambient `*.d.ts` declarations are compile-time contracts rather
-  than authored runtime symbols and are excluded with the generated artefact;
-  the resulting default scope contains 94 of 94 documented symbols without
-  changing runtime code. The earlier 103-of-103 result remains historical
-  evidence from before that scope correction.
-  Date/Author: 2026-07-16, Codex after documentation validation.
+  `src/workflows/dakar-review/`. Rationale: CodeRabbit's AI-driven review
+  reported 48.45% without exposing a reproducible numerator or denominator.
+  `npm run docstrings` now counts module headers, named functions, exported
+  interfaces and types, and exported constants. Ambient `*.d.ts` declarations
+  are compile-time contracts rather than authored runtime symbols and are
+  excluded with the generated artefact; the resulting default scope contains 94
+  of 94 documented symbols without changing runtime code. The earlier
+  103-of-103 result remains historical evidence from before that scope
+  correction. Date/Author: 2026-07-16, Codex after documentation validation.
 
 ## Outcomes & retrospective
 
@@ -429,8 +400,8 @@ ODW workflow files are not normal Node modules. The loader extracts one literal
 metadata export and executes the remaining file as an asynchronous function
 body with workflow primitives injected. This makes top-level `return` valid and
 ordinary imports invalid in the shipped artefact. The source tree introduced by
-this plan may use TypeScript imports because esbuild removes the module boundary
-before ODW sees the file.
+this plan may use TypeScript imports because esbuild removes the module
+boundary before ODW sees the file.
 
 The normative sources for implementation are:
 
@@ -451,8 +422,8 @@ The normative sources for implementation are:
 - The `execplans` skill for maintaining this plan, `odw-authoring` before any
   workflow review or edit, and `leta` for symbol navigation.
 - The `firecrawl-mcp` skill when a current upstream esbuild, TypeScript, Node,
-  or ODW contract has a material gap; prefer the official sources linked by
-  ADR 001.
+  or ODW contract has a material gap; prefer the official sources linked by ADR
+  001.
 - The `logisphere-experts` skill before approving a substantive architecture
   deviation, and `code-review` before accepting the completed implementation.
 - The `mapsplice` skill for structural roadmap edits; always inspect its
@@ -495,8 +466,9 @@ proceeded through WI-8. All work items are now complete and the plan status is
 Before production movement, extend existing Node tests with the smallest
 assertions that would fail if compilation changed behaviour. Pin the complete
 dry-run object: metadata-derived phase contract where observable, workflow
-version, models, synthesis model and adapter, limits, task kinds, default graph,
-candidate schema, verdict schema, synthesis schema, and AGENTS inclusion flag.
+version, models, synthesis model and adapter, limits, task kinds, default
+graph, candidate schema, verdict schema, synthesis schema, and AGENTS inclusion
+flag.
 
 Add focused characterization for model-name parsing, role selection, changed
 file classification, task-slot distribution, mandatory summary coverage,
@@ -516,10 +488,10 @@ movements. Revert every mutation before continuing.
 
 Use npm to add exact `typescript@6.0.3` and `esbuild@0.28.1` development
 dependencies and commit `package-lock.json`; do not add a runtime dependency.
-Add `tsconfig.json` with strict, no-emit, bundler-resolution,
-explicit TypeScript extension, isolated-module, verbatim-module, and
-erasable-syntax restrictions. Include `src/workflows/dakar-review/` and any
-TypeScript compile probes, but do not type-check generated JavaScript.
+Add `tsconfig.json` with strict, no-emit, bundler-resolution, explicit
+TypeScript extension, isolated-module, verbatim-module, and erasable-syntax
+restrictions. Include `src/workflows/dakar-review/` and any TypeScript compile
+probes, but do not type-check generated JavaScript.
 
 Add `src/workflows/dakar-review/odw-globals.d.ts`. The ambient contract must
 state that a direct `agent()` call throws on adapter or schema failure, while
@@ -549,8 +521,8 @@ second test loader.
 ### WI-3: Build a mechanically equivalent generated workflow
 
 Add `scripts/build-workflow.mjs`, adapted narrowly from df12-build. Expose a
-testable `buildWorkflow({ srcDir, entry, banner, outFile, checkOnly })` core and
-a thin command-line wrapper. The core reads `meta.js` verbatim, bundles
+testable `buildWorkflow({ srcDir, entry, banner, outFile, checkOnly })` core
+and a thin command-line wrapper. The core reads `meta.js` verbatim, bundles
 `main.ts`, appends `return await workflowMain()`, and returns or writes framed
 content only after every assertion succeeds.
 
@@ -569,9 +541,9 @@ The compiler must reject:
 Add negative compiler probes for each failure class. Run fixtures entirely in
 temporary directories through the parameterized core. Add a source-invariant
 test that rejects calls to injected ODW primitives outside `main.ts`. The Red
-run expects a specific diagnostic; the Green run builds the real source.
-Expose stable diagnostic codes and make tests assert the code rather than full
-prose: `BUILD_META_COUNT`, `BUILD_MODULE_WRAPPER`, `BUILD_MODULE_SYNTAX`,
+run expects a specific diagnostic; the Green run builds the real source. Expose
+stable diagnostic codes and make tests assert the code rather than full prose:
+`BUILD_META_COUNT`, `BUILD_MODULE_WRAPPER`, `BUILD_MODULE_SYNTAX`,
 `BUILD_ORPHAN_MODULE`, `BUILD_ENTRY_COUNT`, and `BUILD_LOADER_PARSE`.
 
 Counting one exact metadata export does not prove that the object is a pure
@@ -597,8 +569,8 @@ instead of making `make check` repeat the same bundle three times.
 uncommitted source. Continuous Integration (CI) separately runs
 `make workflow-build` followed by
 `git diff --exit-code -- workflows/dakar-review.js`. Make whole-workflow tests
-depend on a fresh build and make `make check` cover the type, content freshness,
-dry-run, and existing test gates. Build twice and compare hashes.
+depend on a fresh build and make `make check` cover the type, content
+freshness, dry-run, and existing test gates. Build twice and compare hashes.
 
 ### WI-4: Extract schemas, types, configuration, and model routing
 
@@ -616,9 +588,9 @@ Keep `shellWord` in `shell.ts` as the only shell quoting authority. Do not move
 deterministic git or state operations out of `scripts/review-state.mjs` or
 configuration precedence out of `scripts/review-config.mjs`.
 
-For each module, first add a direct test that imports the future source path and
-fails because it does not exist. Move the smallest code slice, wire it through
-`main.ts`, rebuild, and run the focused module test, dry-run test, and
+For each module, first add a direct test that imports the future source path
+and fails because it does not exist. Move the smallest code slice, wire it
+through `main.ts`, rebuild, and run the focused module test, dry-run test, and
 content-freshness gate. Internal bundle renaming is not a contract.
 
 ### WI-5: Extract the task graph and candidate processing
@@ -632,9 +604,9 @@ fit.
 Create `candidates.ts` with candidate keys, path containment, normalization,
 caps, discard counts, accepted verdict reduction, and discarded verdict
 reduction. Pass caps as explicit limits. Preserve iteration order, changed-file
-membership, traversal rejection, severity
-downgrades, unknown-verdict audit records, and the rule that containment occurs
-before verifier prompt construction.
+membership, traversal rejection, severity downgrades, unknown-verdict audit
+records, and the rule that containment occurs before verifier prompt
+construction.
 
 Replace `tests/workflow-task-graph.test.mjs` and
 `tests/workflow-candidate-paths.test.mjs` source slicing with direct module
@@ -660,17 +632,17 @@ drive review, verification, synthesis, and recording. Assert every downstream
 prompt uses that resolved path and never the initial `auto` placeholder. Also
 assert phase order and null-slot filtering without spending agent budget.
 
-Leave `main.ts` responsible for phase transitions, agent calls, `parallel()`
-and `pipeline()` orchestration, filtering failed slots, early returns, metrics,
-record input, and final result assembly. Do not extract interleaved orchestration
-only to reduce line count.
+Leave `main.ts` responsible for phase transitions, agent calls, `parallel()` and
+`pipeline()` orchestration, filtering failed slots, early returns, metrics,
+record input, and final result assembly. Do not extract interleaved
+orchestration only to reduce line count.
 
 ### WI-7: Synchronize contributor and user documentation
 
 Synchronize ADR 001 with any approved implementation deviations; do not change
 its acceptance status here. Update the module tree and final function
-interfaces in `docs/dakar-review-design.md`,
-`docs/design/initial-workflow.md`, and `docs/developers-guide.md`.
+interfaces in `docs/dakar-review-design.md`, `docs/design/initial-workflow.md`,
+and `docs/developers-guide.md`.
 
 Keep `docs/users-guide.md` limited to the user-relevant fact that Dakar ships a
 pre-generated workflow and direct invocation does not require TypeScript or a
@@ -691,8 +663,8 @@ Markdown gates, and `make check`.
 
 Create a disposable git repository and isolated `XDG_STATE_HOME` or explicit
 state root. Run one bounded live Dakar review against a small known commit.
-Capture stdout and stderr separately and parse all stdout as exactly one result.
-Require first-run `recorded.ok === true`, no `recorded.recoveredBy`, and
+Capture stdout and stderr separately and parse all stdout as exactly one
+result. Require first-run `recorded.ok === true`, no `recorded.recoveredBy`, and
 `metrics.recordRecoveredByCli !== true`; CLI recovery must not mask a broken
 Record phase. Count entries for the target `head_commit`, run the same head
 again, require `skipped: true`, and confirm the count remains exactly one.
@@ -714,12 +686,12 @@ git status --short
 make check
 ```
 
-Expected result: the worktree contains only the approved planning documents,
-and `make check` exits zero. Record the test count printed by `node --test` in
+Expected result: the worktree contains only the approved planning documents, and
+`make check` exits zero. Record the test count printed by `node --test` in
 `Artefacts and notes` when execution begins.
 
-During WI-2, run the type and compile-time gates with the exact targets added by
-that work item, expected to resemble:
+During WI-2, run the type and compile-time gates with the exact targets added
+by that work item, expected to resemble:
 
 ```bash
 npm install --save-dev --save-exact esbuild@0.28.1 typescript@6.0.3
@@ -741,8 +713,8 @@ npm run odw:dry-run
 
 Expected result: the build reports `workflows/dakar-review.js` as built,
 freshness reports matching content, and dry-run returns `ok: true`,
-`dryRun: true`, and
-`workflowVersion: "divide-and-conquer-v1"` without launching review agents.
+`dryRun: true`, and `workflowVersion: "divide-and-conquer-v1"` without
+launching review agents.
 
 Run focused module and artefact tests while iterating:
 
@@ -822,8 +794,8 @@ rm -rf "$smoke_root"
 ```
 
 An interrupted or failing smoke leaves `smoke_root` intact. Record that path,
-the run identifier from stderr, and the failed assertion in `Artefacts and
-notes` before diagnosing or deliberately abandoning it.
+the run identifier from stderr, and the failed assertion in
+`Artefacts and notes` before diagnosing or deliberately abandoning it.
 
 ## Validation and acceptance
 
@@ -859,8 +831,9 @@ failure excerpts in `Artefacts and notes`.
 ### Refactor evidence
 
 After each extraction, rerun the focused module test, workflow dry-run, and
-freshness gate. After each work item, run `make check`. The final diff must show
-source movement and build infrastructure, not an undocumented interface change.
+freshness gate. After each work item, run `make check`. The final diff must
+show source movement and build infrastructure, not an undocumented interface
+change.
 
 Quality criteria:
 
@@ -879,16 +852,16 @@ The compiler, type-check, module tests, dry run, and freshness gate are
 idempotent. Re-running `make workflow-build` replaces the generated artefact
 with deterministic output from the current source.
 
-If a work item fails after changing the source tree, do not repair the generated
-artefact manually. Correct the source or compiler and rebuild. If an extraction
-cannot be completed within tolerance, restore only that work item's deliberate
-changes with a non-destructive patch, leave earlier committed work intact, and
-record the stopping point in `Progress` and `Decision log`.
+If a work item fails after changing the source tree, do not repair the
+generated artefact manually. Correct the source or compiler and rebuild. If an
+extraction cannot be completed within tolerance, restore only that work item's
+deliberate changes with a non-destructive patch, leave earlier committed work
+intact, and record the stopping point in `Progress` and `Decision log`.
 
 Compiler negative tests must operate in temporary directories and clean them in
 `finally` blocks or shell traps. The live smoke must use disposable source,
-state, and run roots. A failed live run may be inspected before cleanup, but its
-paths and run identifier must be recorded here so another implementer can
+state, and run roots. A failed live run may be inspected before cleanup, but
+its paths and run identifier must be recorded here so another implementer can
 resume diagnosis.
 
 ## Artefacts and notes
@@ -922,11 +895,12 @@ state path, and the second-run skip result. Do not paste full logs.
   `vsleep` before a successful retry.
 - WI-4--WI-6 at 2026-07-14 06:47Z: local and independent scrutineer runs passed
   all four deterministic gates with 97 tests. CodeRabbit reported six schema,
-  immutability, routing, precedence, and fixture-strength concerns; all received
-  focused corrections and regression coverage before the milestone commit.
+  immutability, routing, precedence, and fixture-strength concerns; all
+  received focused corrections and regression coverage before the milestone
+  commit.
 - WI-8 at 2026-07-14 07:02Z: two builds produced SHA-256
-  `4f48e4a2b665a60a3d644e65630e41cdc794d18b4ec182ac32081a5916e9fe31`.
-  A bounded review of disposable head `15cbc98372ae9f067ddeeb84abf0006e63c493c7`
+  `4f48e4a2b665a60a3d644e65630e41cdc794d18b4ec182ac32081a5916e9fe31`. A bounded
+  review of disposable head `15cbc98372ae9f067ddeeb84abf0006e63c493c7`
   completed two planned tasks, synthesized one confirmed finding, and recorded
   natively under isolated state with no CLI recovery. The second invocation
   returned `skipped: true`; history contained one matching head before cleanup.
@@ -936,9 +910,9 @@ state path, and the second-run skip result. Do not paste full logs.
   findings.
 - Post-completion review at 2026-07-14: accepted findings received focused
   regression coverage; the generated artefact was rebuilt, and the updated
-  suite passed all 109 tests. The Biome-ignore and
-  blanket-function-docstring suggestions were dispositioned in the Decision
-  log because their assumed repository contracts do not exist.
+  suite passed all 109 tests. The Biome-ignore and blanket-function-docstring
+  suggestions were dispositioned in the Decision log because their assumed
+  repository contracts do not exist.
 - Trusted-state follow-up at 2026-07-15: `npm test` passed all 115 tests,
   including state derivation, manipulated workflow output, and CLI recovery
   coverage.
@@ -960,9 +934,9 @@ Use npm and commit the generated `package-lock.json`. Add a `typecheck` package
 script that runs `tsc -p tsconfig.json --noEmit`; do not rely on `npx`
 auto-installation or introduce an unrelated runtime dependency.
 
-`src/workflows/dakar-review/main.ts` must declare exactly one runtime entry used
-by the compiler. It is not exported because the bundled ODW body may not retain
-an export statement:
+`src/workflows/dakar-review/main.ts` must declare exactly one runtime entry
+used by the compiler. It is not exported because the bundled ODW body may not
+retain an export statement:
 
 ```ts
 async function workflowMain(): Promise<unknown> {
@@ -1006,8 +980,8 @@ export function verificationPrompt(
 
 These signatures are prescriptive about dependency direction but may gain
 precise return types or split config/prepare prompt methods during
-implementation. A change that alters ownership or introduces a cycle requires
-a `Decision log` entry; a public behaviour change triggers escalation.
+implementation. A change that alters ownership or introduces a cycle requires a
+`Decision log` entry; a public behaviour change triggers escalation.
 
 ## Revision note
 
@@ -1018,10 +992,10 @@ contract, and leaves implementation behind the required approval gate.
 The user subsequently approved the plan, and ADR 001 was accepted before WI-1
 began.
 
-2026-07-15: Implementation is complete. ADR 001 is accepted, all work items
-are complete, and the final deterministic validation passed all 115 tests.
+2026-07-15: Implementation is complete. ADR 001 is accepted, all work items are
+complete, and the final deterministic validation passed all 115 tests.
 
 2026-07-16: Documentation validation made the external docstring review
-reproducible as `npm run docstrings`; 103 of 103 counted symbols are documented.
-The approval history, completed WI-0--WI-8 status, and final 115-test outcome
-are aligned throughout this plan.
+reproducible as `npm run docstrings`; 103 of 103 counted symbols are
+documented. The approval history, completed WI-0--WI-8 status, and final
+115-test outcome are aligned throughout this plan.

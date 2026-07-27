@@ -1,9 +1,8 @@
 # Design the Dakar incremental ODW review workflow
 
-This ExecPlan (execution plan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
-proceeds.
+This ExecPlan (execution plan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
+and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
 
@@ -40,22 +39,16 @@ strategy.
 ## Risks
 
 - Risk: The requested path `~/.local/data` conflicts with XDG state semantics.
-  Severity: medium.
-  Likelihood: high.
-  Mitigation: document the conflict and implement `$XDG_STATE_HOME`, defaulting
-  to `~/.local/state`.
+  Severity: medium. Likelihood: high. Mitigation: document the conflict and
+  implement `$XDG_STATE_HOME`, defaulting to `~/.local/state`.
 
 - Risk: ODW may not allow filesystem imports in workflow JavaScript.
-  Severity: high.
-  Likelihood: medium.
-  Mitigation: probe ODW locally and move state work into a helper if imports are
-  unavailable.
+  Severity: high. Likelihood: medium. Mitigation: probe ODW locally and move
+  state work into a helper if imports are unavailable.
 
 - Risk: Static-analysis and codegraph tools are useful but can expand scope.
-  Severity: medium.
-  Likelihood: high.
-  Mitigation: design metrics and extension points first; do not add tool
-  dependencies to the initial build.
+  Severity: medium. Likelihood: high. Mitigation: design metrics and extension
+  points first; do not add tool dependencies to the initial build.
 
 ## Progress
 
@@ -75,25 +68,23 @@ strategy.
   Impact: The implementation must introduce a minimal project structure.
 
 - Observation: ODW rejects workflow-level dynamic imports and `require`.
-  Evidence: local probe runs failed before execution.
-  Impact: The design uses a deterministic Node helper invoked by agents.
+  Evidence: local probe runs failed before execution. Impact: The design uses a
+  deterministic Node helper invoked by agents.
 
 ## Decision log
 
 - Decision: Use `$XDG_STATE_HOME/dakar/.../reviews.toml`, defaulting to
-  `$HOME/.local/state/dakar/...`.
-  Rationale: The XDG specification assigns persistent history to state, not data.
-  Date/Author: 2026-06-29T17:57:30Z / Codex.
+  `$HOME/.local/state/dakar/...`. Rationale: The XDG specification assigns
+  persistent history to state, not data. Date/Author: 2026-06-29T17:57:30Z /
+  Codex.
 
 - Decision: Keep static analysis and codegraph support as recorded metrics and
-  future enrichment points.
-  Rationale: The initial repository has no language target or dependency policy.
-  Date/Author: 2026-06-29T17:57:30Z / Codex.
+  future enrichment points. Rationale: The initial repository has no language
+  target or dependency policy. Date/Author: 2026-06-29T17:57:30Z / Codex.
 
 - Decision: Put deterministic range calculation in `scripts/review-state.mjs`.
   Rationale: ODW workflow JavaScript cannot import filesystem or child-process
-  modules directly.
-  Date/Author: 2026-06-29T17:57:30Z / Codex.
+  modules directly. Date/Author: 2026-06-29T17:57:30Z / Codex.
 
 ## Outcomes & retrospective
 
@@ -103,12 +94,11 @@ inside workflow JavaScript.
 
 ## Context and orientation
 
-The repository is `/path/to/dakar` on branch `initial-workflow`.
-The only pre-existing file is `examples/df12-code-review.yaml`, an untracked
-CodeRabbit configuration with review tone, path instructions, labels, and
-pre-merge checks. ODW means Open Dynamic Workflow, a JavaScript workflow format
-run by the `odw` CLI. CodeRabbit YAML is used here as a policy document for
-review agents.
+The repository is `/path/to/dakar` on branch `initial-workflow`. The only
+pre-existing file is `examples/df12-code-review.yaml`, an untracked CodeRabbit
+configuration with review tone, path instructions, labels, and pre-merge
+checks. ODW means Open Dynamic Workflow, a JavaScript workflow format run by the
+`odw` CLI. CodeRabbit YAML is used here as a policy document for review agents.
 
 ## Plan of work
 

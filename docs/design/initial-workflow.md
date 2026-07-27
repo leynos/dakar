@@ -1,9 +1,8 @@
 # Dakar incremental review workflow design
 
 Status: First routed workflow pass and compiled source boundary implemented
-Audience: Developers implementing and operating Dakar workflows
-Date: 2026-07-14
-Companion documents:
+Audience: Developers implementing and operating Dakar workflows Date:
+2026-07-14 Companion documents:
 [`docs/dakar-review-design.md`](../dakar-review-design.md) and
 [`docs/adr-001-compile-odw-workflow-from-typescript.md`](../adr-001-compile-odw-workflow-from-typescript.md)
 
@@ -42,8 +41,8 @@ extraction and mechanical checks.
 
 AutoGen separates single-agent, multi-agent, and event-driven agent
 orchestration, including MCP-backed tools and distributed runtimes. That
-supports the same boundary this design uses: deterministic preparation and
-tool output first, agent reasoning second, final arbitration last.
+supports the same boundary this design uses: deterministic preparation and tool
+output first, agent reasoning second, final arbitration last.
 
 SARIF 2.1.0 is the OASIS standard exchange format for static-analysis results.
 Static analysis findings should enter the review as candidate facts, not final
@@ -69,10 +68,10 @@ workflow instructions, task schemas, cached CodeRabbit policy, and tool-use
 rules should appear before dynamic per-run content such as the commit range,
 changed snippets, and candidate findings.
 
-Recent code-review and software-engineering research supports a narrower
-claim than "more agents are better". The useful pattern is: bound the task,
-provide precise context, generate candidate findings cheaply, and put a strong
-critic in charge of refutation and final synthesis. The design therefore treats
+Recent code-review and software-engineering research supports a narrower claim
+than "more agents are better". The useful pattern is: bound the task, provide
+precise context, generate candidate findings cheaply, and put a strong critic
+in charge of refutation and final synthesis. The design therefore treats
 heterogeneous fan-out as a way to cover scoped work, not as a vote over five
 full-diff reviews.
 
@@ -91,8 +90,8 @@ the workflow as follows:
   than fan the whole diff to redundant reviewers.
 - Cihan et al. found GPT-4o and Gemini 2.0 Flash classified code correctness
   only 68.50% and 63.89% of the time with problem descriptions, with weaker
-  performance when descriptions were omitted. Dakar should treat raw LLM
-  review output as untrusted until verified against source, diff, policy, and
+  performance when descriptions were omitted. Dakar should treat raw LLM review
+  output as untrusted until verified against source, diff, policy, and
   available runtime or static evidence.
 - LLM4FPM, ZeroFalse, and SemTaint all support static-analysis hybrids:
   extract precise code context, treat analyser output as structured contracts
@@ -102,8 +101,7 @@ the workflow as follows:
 - Hanam et al. show semantic change impact analysis can reduce false positives
   and shrink impact sets compared with syntactic diffs; their user study found
   stronger semantics helped reviewers find defects. Dakar should route by
-  changed entities and dependency neighbourhoods before splitting by file
-  count.
+  changed entities and dependency neighbourhoods before splitting by file count.
 - Runtime-Structured Task Decomposition shows that static decomposition can be
   worse than monolithic prompting when failures force downstream reruns, while
   runtime-structured control logic reruns only failed subtasks. Dakar should
@@ -280,81 +278,80 @@ results, and codegraph impact:
 
 `prepare-state`
 
-: Run `scripts/review-state.mjs prepare`, compute the unreviewed range,
-  changed files, commit count, and state-file path. Skip when `HEAD` is already
-  reviewed. Use the deterministic helper through `gpt-5.5` high or a local
-  command wrapper. Tools: `git`, `scripts/review-state.mjs`, and XDG state
-  rules.
+: Run `scripts/review-state.mjs prepare`, compute the unreviewed range, changed
+files, commit count, and state-file path. Skip when `HEAD` is already reviewed.
+Use the deterministic helper through `gpt-5.5` high or a local command wrapper.
+Tools: `git`, `scripts/review-state.mjs`, and XDG state rules.
 
 `config-hash`
 
 : Read the CodeRabbit YAML bytes and compute the config cache key. Do not
-  interpret relevance here. Use a local helper or `gpt-5.3-codex-spark` if the
-  step is agentized. Tools: SHA-256 and the config path from workflow args.
+interpret relevance here. Use a local helper or `gpt-5.3-codex-spark` if the
+step is agentized. Tools: SHA-256 and the config path from workflow args.
 
 `policy-cache`
 
 : Load a cached policy bundle when the hash and analyser version match;
-  otherwise request extraction. Use a local helper. Tools: XDG state and JSON
-  schema validation.
+otherwise request extraction. Use a local helper. Tools: XDG state and JSON
+schema validation.
 
 `policy-extract`
 
 : Parse stable CodeRabbit policy into normalized fields: path instructions,
-  path filters, tools, pre-merge checks, labels, and review tone. Use
-  `gpt-5.4-mini` for extraction; `gpt-5.5` high verifies parser warnings during
-  rollout. Tools: CodeRabbit docs, YAML parser, and structured output schema.
-  Cache only this stable policy bundle by config hash; do not cache per-run
-  relevance or difficulty.
+path filters, tools, pre-merge checks, labels, and review tone. Use
+`gpt-5.4-mini` for extraction; `gpt-5.5` high verifies parser warnings during
+rollout. Tools: CodeRabbit docs, YAML parser, and structured output schema.
+Cache only this stable policy bundle by config hash; do not cache per-run
+relevance or difficulty.
 
 `git-diff-inventory`
 
 : Produce file-level diff stats and classify paths as source, test, docs,
-  config, generated, dependency, or unknown. Use `gpt-5.3-codex-spark`. Tools:
-  `git diff --name-status` and `git diff --stat`.
+config, generated, dependency, or unknown. Use `gpt-5.3-codex-spark`. Tools:
+`git diff --name-status` and `git diff --stat`.
 
 `sem-entity-diff`
 
 : Convert changed files into entity-level changes. Prefer functions, methods,
-  types, modules, Markdown sections, and YAML/TOML keys over raw line ranges.
-  Use a local helper, with a light agent summarizing output. Tool:
-  `sem diff --from <base> --to <head> --format json`.
+types, modules, Markdown sections, and YAML/TOML keys over raw line ranges. Use
+a local helper, with a light agent summarizing output. Tool:
+`sem diff --from <base> --to <head> --format json`.
 
 `static-analysis-ingest`
 
 : Ingest SARIF or tool-native JSON, group findings by rule and changed entity,
-  and mark whether each finding intersects the review range. Use
-  `gpt-5.4-mini`. Treat each warning as a structured contract containing rule,
-  location, trace, CWE or category when available, and changed-range
-  intersection. Tools: SARIF, Semgrep, CodeQL, and project linters.
+and mark whether each finding intersects the review range. Use `gpt-5.4-mini`.
+Treat each warning as a structured contract containing rule, location, trace,
+CWE or category when available, and changed-range intersection. Tools: SARIF,
+Semgrep, CodeQL, and project linters.
 
 `codegraph-and-leta-context`
 
 : Build ownership clusters and blast-radius summaries for changed entities. Use
-  codegraph when available; use Leta for precise LSP refs and calls; fall back
-  to git and `sem`. Use local tools plus a `gpt-5.3-codex-spark` summary.
-  Tools: `codegraph diff-impact`, `codegraph owners`, `codegraph triage`,
-  `leta refs`, `leta calls`, and `leta show`.
+codegraph when available; use Leta for precise LSP refs and calls; fall back to
+git and `sem`. Use local tools plus a `gpt-5.3-codex-spark` summary. Tools:
+`codegraph diff-impact`, `codegraph owners`, `codegraph triage`, `leta refs`,
+`leta calls`, and `leta show`.
 
 `premerge-relevance`
 
 : Score each pre-merge check for applicability, difficulty, mechanical
-  evaluability, and required verifier. `gpt-5.5` medium drafts; `gpt-5.5` high
-  approves. Inputs: cached policy bundle, entity diff, and static-analysis
-  clusters. Recompute this every run because changed entities alter whether a
-  stable pre-merge check is relevant.
+evaluability, and required verifier. `gpt-5.5` medium drafts; `gpt-5.5` high
+approves. Inputs: cached policy bundle, entity diff, and static-analysis
+clusters. Recompute this every run because changed entities alter whether a
+stable pre-merge check is relevant.
 
 `task-graph-plan`
 
 : Deterministically build bounded review tasks from the prepared changed-file
-  list in workflow JavaScript (`buildTaskGraph`). Each changed file is
-  classified as `source`, `tests`, `config`, or `docs`; dependency lockfiles
-  and unknown paths are routed through `source` review because they can affect
-  runtime behaviour. Each task receives a `taskId`, assigned model and adapter,
-  `maxFindings` cap, and verification policy derived from its class. A mandatory
-  `review-summary` task is always appended. If the changed-file groups plus the
-  summary task exceed `maxTasks`, the planner fails closed rather than silently
-  dropping tasks. No agent is invoked during planning.
+list in workflow JavaScript (`buildTaskGraph`). Each changed file is classified
+as `source`, `tests`, `config`, or `docs`; dependency lockfiles and unknown
+paths are routed through `source` review because they can affect runtime
+behaviour. Each task receives a `taskId`, assigned model and adapter,
+`maxFindings` cap, and verification policy derived from its class. A mandatory
+`review-summary` task is always appended. If the changed-file groups plus the
+summary task exceed `maxTasks`, the planner fails closed rather than silently
+dropping tasks. No agent is invoked during planning.
 
   Future enhancement: an optional agent-assisted planner could use CodeRabbit
   policy, codegraph/sem entity context, and ODW planning to produce richer task
@@ -365,63 +362,62 @@ results, and codegraph impact:
 `context-pack-assembly`
 
 : Create one stable context pack per task class and one small dynamic tail per
-  task. Include only files, entities, and policy snippets needed for the task.
-  Use a local helper or `gpt-5.4-mini`. Tools: `context_pack`, `sem`, `leta`,
-  codegraph, and git snippets.
+task. Include only files, entities, and policy snippets needed for the task.
+Use a local helper or `gpt-5.4-mini`. Tools: `context_pack`, `sem`, `leta`,
+codegraph, and git snippets.
 
 `light-mechanical-checks`
 
 : Execute bounded checks: docs links, changelog consistency, title/description
-  requirements, path-instruction presence, static-analysis clustering, and
-  obvious missing-test inventory. Return candidates, not conclusions. Use
-  `gpt-5.4-mini` or `gpt-5.3-codex-spark`. The prompt must make
-  `no_findings` and `not_applicable` first-class valid outputs. Tools:
-  `markdownlint`, SARIF, CodeRabbit pre-merge checks, and path globs.
+requirements, path-instruction presence, static-analysis clustering, and
+obvious missing-test inventory. Return candidates, not conclusions. Use
+`gpt-5.4-mini` or `gpt-5.3-codex-spark`. The prompt must make `no_findings` and
+`not_applicable` first-class valid outputs. Tools: `markdownlint`, SARIF,
+CodeRabbit pre-merge checks, and path globs.
 
 `medium-risk-review`
 
 : Review medium-risk clusters where local reasoning is required but global
-  invariants are unlikely: test/code consistency, config behaviour, API
-  documentation drift, and moderate blast-radius changes. Use `gpt-5.5`
-  medium. Inputs: context pack, `sem`, `leta`, and codegraph summaries.
+invariants are unlikely: test/code consistency, config behaviour, API
+documentation drift, and moderate blast-radius changes. Use `gpt-5.5` medium.
+Inputs: context pack, `sem`, `leta`, and codegraph summaries.
 
 `high-risk-review`
 
 : Review correctness, security, concurrency, migrations, state machines, public
-  API compatibility, proof quality, property tests, and high-blast-radius
-  entities. Use `gpt-5.5` high. Inputs: full context pack, `leta
-  show/refs/calls`, codegraph impact, and static-analysis evidence.
+API compatibility, proof quality, property tests, and high-blast-radius
+entities. Use `gpt-5.5` high. Inputs: full context pack,
+`leta show/refs/calls`, codegraph impact, and static-analysis evidence.
 
 `candidate-normalization`
 
 : Convert all agent outputs and tool findings into one candidate schema with
-  source task, evidence, confidence, changed-range link, and required verifier.
-  Use `gpt-5.4-mini`. Do not improve or argue the finding here; normalize,
-  de-duplicate, and preserve evidence. Tools: structured output schema and
-  dedupe keys.
+source task, evidence, confidence, changed-range link, and required verifier.
+Use `gpt-5.4-mini`. Do not improve or argue the finding here; normalize,
+de-duplicate, and preserve evidence. Tools: structured output schema and dedupe
+keys.
 
 `high-verification`
 
 : Verify every candidate that could block merge, every light-agent candidate
-  above low severity, and every proof/test-substance claim. Reject speculative
-  or irrelevant findings. Use `gpt-5.5` high. Inputs: git diff, source
-  excerpts, test/proof files, and static-analysis traces. This is an
-  adversarial refutation step: the verifier tries to kill each candidate before
-  promoting it.
+above low severity, and every proof/test-substance claim. Reject speculative or
+irrelevant findings. Use `gpt-5.5` high. Inputs: git diff, source excerpts,
+test/proof files, and static-analysis traces. This is an adversarial refutation
+step: the verifier tries to kill each candidate before promoting it.
 
 `synthesis-and-discard`
 
 : Deduplicate accepted findings, downgrade severity when warranted, and record
-  discarded findings with reason codes. Produce the final review report and
-  metrics. Use `gpt-5.5` high. Inputs: candidate schema, verification results,
-  and audit log.
+discarded findings with reason codes. Produce the final review report and
+metrics. Use `gpt-5.5` high. Inputs: candidate schema, verification results,
+and audit log.
 
 `record-history`
 
 : Append the review record to `reviews.toml` only after synthesis finishes.
-  Include task metrics and discarded-finding counts. Use the deterministic
-  helper through `gpt-5.5` high or a local command wrapper. Tools:
-  `scripts/review-state.mjs record` and TOML writer.
+Include task metrics and discarded-finding counts. Use the deterministic helper
+through `gpt-5.5` high or a local command wrapper. Tools:
+`scripts/review-state.mjs record` and TOML writer.
 
 ## Agent assignment policy
 
@@ -443,9 +439,9 @@ path classification, obvious missing artefacts, TODO/FIXME extraction, and
 small mechanical checks. It should not classify proof quality or decide whether
 a semantic code finding blocks merge.
 
-The default pattern is fast finder, heavy verifier. The inverse pattern,
-heavy finder with light presentation check, is allowed only when the light
-agent checks schema completeness rather than truth.
+The default pattern is fast finder, heavy verifier. The inverse pattern, heavy
+finder with light presentation check, is allowed only when the light agent
+checks schema completeness rather than truth.
 
 The fan-out strategy is therefore:
 
@@ -470,9 +466,9 @@ parallel final reviews.
 ## ODW realization constraints
 
 The ODW script implements the dependency graph as executable JavaScript data:
-task objects with `taskId`, `dependsOn`, `kind`, `assignedModel`,
-`contextPack`, `maxFindings`, `schema`, and `verificationPolicy`. It should not
-hide the graph inside a monolithic prompt.
+task objects with `taskId`, `dependsOn`, `kind`, `assignedModel`, `contextPack`,
+`maxFindings`, `schema`, and `verificationPolicy`. It should not hide the
+graph inside a monolithic prompt.
 
 Current ODW realities shape the runtime artefact:
 
@@ -503,8 +499,7 @@ Current ODW realities shape the runtime artefact:
   tasks in a controlled loop, but it cannot depend on a separate dynamic DAG
   scheduler or shared per-agent files.
 - Fan-out is bounded by args such as `maxTasks`, `maxCandidates`,
-  `maxRefuters`, and by `budget.remaining()` when ODW exposes budget
-  estimates.
+  `maxRefuters`, and by `budget.remaining()` when ODW exposes budget estimates.
 - ODW does not commit, push, apply patches, or update repository state by
   itself. The only persistent write in this design is the deterministic review
   history record after synthesis.
@@ -523,8 +518,8 @@ agents from receiving broad context they cannot use.
 
 ### Compiled component boundary
 
-The source of truth is `src/workflows/dakar-review/`. The component
-tree separates contracts that already exist in the monolith:
+The source of truth is `src/workflows/dakar-review/`. The component tree
+separates contracts that already exist in the monolith:
 
 - `meta.js` owns only the verbatim literal metadata export.
 - `main.ts` owns phases, agent dispatch, early returns, metrics, recording, and
@@ -545,8 +540,7 @@ tree separates contracts that already exist in the monolith:
 parameters. A factory requires a recorded reason and must not bind a value that
 changes between phases. Prompt construction receives the resolved policy path
 after the Resolve Config phase, so it cannot retain the initial `auto`
-placeholder. Candidate
-containment remains before verifier command construction.
+placeholder. Candidate containment remains before verifier command construction.
 
 The current internal interfaces make these boundaries executable.
 `resolveWorkflowConfig()` produces the immutable `WorkflowConfig` used by
@@ -607,11 +601,11 @@ The orchestrator should build prompts in this order:
 6. Dynamic run data: commit range, changed entities, source excerpts, and
    candidate findings.
 
-This order maximizes prompt-cache reuse because the longest common prefix
-stays unchanged across tasks that share the same workflow version and
-CodeRabbit config hash. The OpenAI prompt caching guide states that cache hits
-require exact prefix matches and recommends placing static content before
-dynamic content.
+This order maximizes prompt-cache reuse because the longest common prefix stays
+unchanged across tasks that share the same workflow version and CodeRabbit
+config hash. The OpenAI prompt caching guide states that cache hits require
+exact prefix matches and recommends placing static content before dynamic
+content.
 
 Use `prompt_cache_key` at task-class granularity, for example:
 
@@ -639,8 +633,8 @@ unless the same excerpt is intentionally reused across many tasks.
 
 Static analysis is an evidence source. SARIF results become candidate findings
 with rule ID, location, message, and changed-range intersection. Light agents
-may cluster the results and remove duplicates from the same rule/location
-pair, but high verifies all blocking candidates.
+may cluster the results and remove duplicates from the same rule/location pair,
+but high verifies all blocking candidates.
 
 `sem` should run for every review range when installed:
 
@@ -649,8 +643,8 @@ sem diff --from <review-base> --to <head> --format json
 ```
 
 The planner uses the JSON to dispatch by changed entity. For example, a change
-to one exported function with many callers becomes a high-risk semantic task;
-a Markdown heading change becomes a docs task unless CodeRabbit policy says
+to one exported function with many callers becomes a high-risk semantic task; a
+Markdown heading change becomes a docs task unless CodeRabbit policy says
 otherwise.
 
 `leta` should be used when the task names a symbol and the language server can
@@ -734,17 +728,16 @@ metrics_json = "{\"confirmedFindings\":2,\"discardedFindings\":5}"
 
 ## Workflow contract
 
-`workflows/dakar-review.js` exposes `meta.name =
-"dakar-review"` and accepts these args in the first routed
-implementation:
+`workflows/dakar-review.js` exposes `meta.name = "dakar-review"` and accepts
+these args in the first routed implementation:
 
 - `config`: explicit CodeRabbit YAML path. When omitted, Dakar resolves
   repository-local `.coderabbit.yaml`, `.coderabbit.yml`, `coderabbit.yaml`, or
   `coderabbit.yml`; then `$XDG_CONFIG_HOME/dakar/config.yaml` or
   `~/.config/dakar/config.yaml`; then the bundled example config.
 - `repoRoot`: real git checkout path used by the prepare helper and diff
-  prompts, default `.`. Live runs should pass an absolute path because ODW
-  copy workspaces may not contain `.git`.
+  prompts, default `.`. Live runs should pass an absolute path because ODW copy
+  workspaces may not contain `.git`.
 - `base`: base ref for merge-base calculation, default `origin/main`.
 - `head`: reviewed head ref, default `HEAD`.
 - `stateRoot`: optional state root override for tests or compatibility runs.
@@ -825,8 +818,8 @@ result.
 ## CLI contract
 
 `bin/dakar-review.mjs` is the globally installable wrapper exposed as
-`dakar-review` through `package.json`. It is designed for `bun install -g "$PWD"`
-from a Dakar checkout and for agent-to-agent automation.
+`dakar-review` through `package.json`. It is designed for
+`bun install -g "$PWD"` from a Dakar checkout and for agent-to-agent automation.
 
 The CLI runs the workflow from Dakar's package root, passes that package root
 as ODW `--source`, and passes the reviewed checkout as workflow `repoRoot`.
@@ -897,8 +890,8 @@ The initial metrics fit in the `metrics_json` field:
 - `semanticImpactSetSize`, `semanticImpactShrinkage`, and fallback mode when
   semantic tools are unavailable
 - codegraph availability, graph quality, changed functions, affected callers,
-  affected files, new cycles, complexity threshold failures, and owner
-  boundary crossings
+  affected files, new cycles, complexity threshold failures, and owner boundary
+  crossings
 - `contextPackBytes`, source excerpt count, cached policy hash, cached token
   count, latency, and model
 - high-verification time per accepted finding
@@ -909,9 +902,9 @@ The initial metrics fit in the `metrics_json` field:
 
 These metrics support long-term evaluation of whether light agents are useful
 finders, which task types survive high verification, and whether static
-analysis or graph context improves confirmed-finding density. They also
-measure whether the workflow is producing useful signal or merely dents from
-role pressure.
+analysis or graph context improves confirmed-finding density. They also measure
+whether the workflow is producing useful signal or merely dents from role
+pressure.
 
 ## Verification
 
@@ -938,8 +931,8 @@ behaviour:
 
 - TypeScript rejects non-erasable syntax and invalid cross-module shapes.
 - Compiler negative probes reject duplicate metadata, module wrappers,
-  surviving imports or exports, omitted declared runtime modules,
-  invalid entry counts, and loader-wrap parse failures.
+  surviving imports or exports, omitted declared runtime modules, invalid entry
+  counts, and loader-wrap parse failures.
 - Direct module tests replace helper tests that slice generated workflow text.
 - Freshness, ODW dry-run, CLI, and isolated live-smoke checks exercise the
   generated artefact that users run.

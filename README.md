@@ -1,31 +1,31 @@
 # 🏜️ Dakar
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/leynos/dakar)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](
+https://deepwiki.com/leynos/dakar)
 
 *Semantic code review that knows exactly what it is allowed to spend.*
 
-Dakar is an [Open Dynamic Workflows](https://github.com/leynos/open-dynamic-workflows)
+Dakar is an
+[Open Dynamic Workflows](https://github.com/leynos/open-dynamic-workflows)
 (ODW) code-review workflow and an installable `dakar-review` command-line
 interface (CLI). Deterministic host code owns everything derivable —
 configuration, review range, rendering, and history — while two bounded
-Flex-tier model lanes do the judgement, under a hard per-review budget
-enforced before any call is dispatched.
+Flex-tier model lanes do the judgement, under a hard per-review budget enforced
+before any call is dispatched.
 
 ______________________________________________________________________
 
 ## Why Dakar?
 
 - **A hard cost ceiling, not a cost report**: the Terra audit's worst-case
-  estimate is reserved first, every finder call passes admission control,
-  and a review that cannot afford its audit refuses before spending
-  anything.
+  estimate is reserved first, every finder call passes admission control, and a
+  review that cannot afford its audit refuses before spending anything.
 - **Deterministic where determinism is possible**: no model is paid to run
-  a shell command and echo its JSON. Range preparation, report rendering,
-  and review-history recording are host code with tests.
+  a shell command and echo its JSON. Range preparation, report rendering, and
+  review-history recording are host code with tests.
 - **One adversarial audit instead of thirty verifier calls**: candidates
-  are deduplicated and capped deterministically, then judged as an issue
-  set — duplicates merged, causes clustered, performative findings
-  rejected.
+  are deduplicated and capped deterministically, then judged as an issue set —
+  duplicates merged, causes clustered, performative findings rejected.
 - **Reviews remember where they stopped**: completed reviews record the
   reviewed head, so the next run reviews only new commits.
 
@@ -57,13 +57,13 @@ ______________________________________________________________________
 
 ## How a review flows
 
-For screen readers: the following flowchart shows the review pipeline.
-The CLI deterministically resolves configuration and prepares the review
-range, skipping when nothing is unreviewed. The workflow then reserves
-the audit budget, runs up to four bounded Luna Flex finder packs,
-compacts candidates deterministically, runs one Terra Flex issue-set
-audit, and renders the report deterministically. The CLI records the
-reviewed head only after a successful audit.
+For screen readers: the following flowchart shows the review pipeline. The CLI
+deterministically resolves configuration and prepares the review range,
+skipping when nothing is unreviewed. The workflow then reserves the audit
+budget, runs up to four bounded Luna Flex finder packs, compacts candidates
+deterministically, runs one Terra Flex issue-set audit, and renders the report
+deterministically. The CLI records the reviewed head only after a successful
+audit.
 
 ```mermaid
 flowchart TD
@@ -81,9 +81,9 @@ flowchart TD
   H -->|truncation, refusal, or downgrade| W[Return recordWithheld: head stays unrecorded]
 ```
 
-*Figure 1: The deterministic-tiered review route. Model spend happens
-only in the two Flex lanes; every other step is host code, and only a
-review with complete planned coverage records the reviewed head.*
+*Figure 1: The deterministic-tiered review route. Model spend happens only in
+the two Flex lanes; every other step is host code, and only a review with
+complete planned coverage records the reviewed head.*
 
 ______________________________________________________________________
 
@@ -94,8 +94,8 @@ ______________________________________________________________________
 - Repository `AGENTS.md` context, bounded and passed to every prompt with
   Dakar's schema and safety rules taking precedence.
 - A per-call cost ledger with a versioned pricing table, worst-case
-  estimates at the cache-write band, and the pricing-table version
-  recorded on every run.
+  estimates at the cache-write band, and the pricing-table version recorded on
+  every run.
 - Byte-stable deterministic report rendering: the same consolidated
   findings always produce the same report.
 - Review-history state under the XDG state directory, recorded through a
@@ -125,5 +125,5 @@ ______________________________________________________________________
 
 ## Contributing
 
-Contributions welcome! Please read [AGENTS.md](AGENTS.md) for the
-repository contract and run `make check` before committing.
+Contributions welcome! Please read [AGENTS.md](AGENTS.md) for the repository
+contract and run `make check` before committing.

@@ -13,8 +13,8 @@ Accepted.
 `workflows/dakar-review.js` is both Dakar's largest source file and the runtime
 artefact loaded by Open Dynamic Workflows (ODW). ODW does not load an ordinary
 ECMAScript module. It accepts one literal `export const meta = { ... }`, wraps
-the remaining source in an asynchronous function, and injects primitives such
-as `agent`, `parallel`, `pipeline`, `phase`, and `args`. Top-level `return` is
+the remaining source in an asynchronous function, and injects primitives such as
+`agent`, `parallel`, `pipeline`, `phase`, and `args`. Top-level `return` is
 therefore valid, while ordinary imports and additional exports are not.
 
 The current 966-line workflow keeps that runtime contract visible, but couples
@@ -114,13 +114,13 @@ small compiler produces the exact ODW shape. The compiler can reject every
 known loader hazard before it writes output. It introduces generated-source
 discipline and build dependencies, but those costs are bounded and testable.
 
-| Topic | Monolith | Runtime split | Text concatenation | Framed esbuild bundle |
-| --- | --- | --- | --- | --- |
-| ODW compatibility | Native | Boundary-dependent | Fragile | Checked before write |
-| Direct module tests | Poor | Partial | Partial | Strong |
-| Type safety | Poor | Mixed | Mixed | Strong |
-| Installed artefact | Present | Multiple files | Present | Present and committed |
-| Build complexity | None | Runtime complexity | Custom linker logic | Small compiler |
+| Topic               | Monolith | Runtime split      | Text concatenation  | Framed esbuild bundle |
+| ------------------- | -------- | ------------------ | ------------------- | --------------------- |
+| ODW compatibility   | Native   | Boundary-dependent | Fragile             | Checked before write  |
+| Direct module tests | Poor     | Partial            | Partial             | Strong                |
+| Type safety         | Poor     | Mixed              | Mixed               | Strong                |
+| Installed artefact  | Present  | Multiple files     | Present             | Present and committed |
+| Build complexity    | None     | Runtime complexity | Custom linker logic | Small compiler        |
 
 _Table 1: Comparison of decomposition approaches._
 
@@ -171,8 +171,8 @@ The development toolchain remains npm. The implementation adds exact
 development dependencies esbuild 0.28.1 and TypeScript 6.0.3 and commits the
 resulting `package-lock.json`. Module tests remain ordinary Node tests and use
 Node 24.12 or later, where built-in erasable TypeScript stripping is stable.
-This is a contributor baseline only; the decision does not change the
-installed CLI's runtime requirement.
+This is a contributor baseline only; the decision does not change the installed
+CLI's runtime requirement.
 
 The compiler is Dakar-specific. Generalizing it into a shared package is not
 part of this decision.
@@ -215,8 +215,8 @@ test-first sequence, tolerances, and recovery procedure.
 ## Known risks and limitations
 
 - esbuild may rename internal top-level declarations. Those names are not a
-  runtime interface because source tests import modules directly; only the
-  exact `workflowMain` entry remains load-bearing.
+  runtime interface because source tests import modules directly; only the exact
+  `workflowMain` entry remains load-bearing.
 - Cycles or CommonJS interop may introduce closure wrappers. The compiler
   rejects known wrapper forms, and contributors must keep the graph acyclic ESM.
 - Tree-shaking control does not make an unreachable file reachable. The build
