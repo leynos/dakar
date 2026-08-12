@@ -7,31 +7,24 @@ result.
 
 ## Installing the CLI
 
-Agents can install Dakar's review command from a checkout with Bun:
+Install Dakar's review command from a checkout with the canonical installer:
 
 ```bash
 ./install.sh
 ```
 
-The installer calls Bun with the absolute checkout path and exposes
-`dakar-review`. The package remains private; the command is meant for local or
-git-based installation, not npm publication. `install.sh` accepts no install
-arguments; run `./install.sh --help` for its short usage text. On each repeated
-installer run, `install.sh` first executes `bun remove -g dakar` before
-reinstalling, preventing an interrupted installation from leaving duplicate
-`dakar` entries while keeping the shared Bun lockfile and other global packages
-intact.
-
-For direct Bun invocation, use an absolute path or `file:` URL:
-
-```bash
-bun install -g "$PWD"
-bun install -g "file:$PWD"
-```
-
-Do not use `bun install -g .` for this local install path. In Bun 1.3.11, bare
-`.` is parsed as an empty package spec before Dakar's `package.json` is read,
-so Bun installs `@` and creates no `dakar-review` bin link.
+The installer requires Node, npm, Bun, and ODW on `PATH`. It restores the exact
+pinned dependencies beside the checkout, then calls Bun with the absolute
+checkout path and exposes `dakar-review`.
+Installing through Bun directly is unsupported because Bun links a local
+package's executable back into its checkout, while Node resolves runtime
+dependencies from that checkout. The package remains private; the command is
+meant for local or git-based installation, not npm publication. `install.sh`
+accepts no install arguments; run `./install.sh --help` for its short usage
+text. On each repeated installer run, `install.sh` first executes
+`bun remove -g dakar` before reinstalling, preventing an interrupted
+installation from leaving duplicate `dakar` entries while keeping the shared
+Bun lockfile and other global packages intact.
 
 ## Running a branch review
 
