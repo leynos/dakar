@@ -3,6 +3,7 @@
  *
  * @module
  */
+import type { LunaFlexLaneRole } from './model-routing.ts'
 import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'
 import { adapterForReasoning, baseModel, flexLaneRole, modelForRole, modelName } from './model-routing.ts'
 
@@ -25,7 +26,7 @@ export interface FlexFinderConfig {
   /** Maximum number of changed files packed into each homogeneous finder pack. */
   transactionMaxFiles: number
   /** Luna finder lane, either the default or a pre-registered de-escalation lane. */
-  lunaRole: 'luna' | 'luna-medium' | 'luna-low'
+  lunaRole: LunaFlexLaneRole
   /** Per-pack findings cap, further tightened by kind when tasks are built. */
   maxFindings: number
 }
