@@ -1089,9 +1089,11 @@ pre_merge_checks:
 })
 
 test('install script installs a callable CLI from a clean checkout', (t) => {
-  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8' })
-  if (bunCheck.status !== 0) {
-    t.skip('bun is not installed')
+  const missingPrerequisite = ['bun', 'node', 'npm', 'odw'].find(
+    (command) => spawnSync(command, ['--version'], { encoding: 'utf8' }).status !== 0,
+  )
+  if (missingPrerequisite) {
+    t.skip(`${missingPrerequisite} is required but is not installed`)
     return
   }
 
@@ -1110,7 +1112,11 @@ test('install script installs a callable CLI from a clean checkout', (t) => {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
-  assert.equal(existsSync(join(installFixture, 'node_modules', 'js-yaml', 'package.json')), true)
+  const rootPackage = JSON.parse(readFileSync(join(installFixture, 'package.json'), 'utf8'))
+  const installedYamlPackage = JSON.parse(
+    readFileSync(join(installFixture, 'node_modules', 'js-yaml', 'package.json'), 'utf8'),
+  )
+  assert.equal(installedYamlPackage.version, rootPackage.dependencies['js-yaml'])
   assert.equal(existsSync(join(installFixture, 'node_modules', 'typescript', 'package.json')), true)
   assert.equal(output.trim(), '0.1.0')
 })
