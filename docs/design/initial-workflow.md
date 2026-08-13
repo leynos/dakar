@@ -820,7 +820,10 @@ result.
 `bin/dakar-review.mjs` is the globally installable wrapper exposed as
 `dakar-review` through `package.json`. It is installed from a Dakar checkout
 with the canonical `install.sh` entry point and supports agent-to-agent
-automation.
+automation. The installer serializes dependency restoration and Bun global
+linking with its installer-owned `${script_dir}/.dakar-install.lock` directory,
+which is released on successful, failed, and handled HUP, INT, or TERM exits
+and is not automatically reclaimed when it already exists.
 
 The CLI runs the workflow from Dakar's package root, passes that package root
 as ODW `--source`, and passes the reviewed checkout as workflow `repoRoot`.

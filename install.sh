@@ -39,6 +39,26 @@ if ! command -v odw >/dev/null 2>&1; then
   exit 127
 fi
 
+# The checkout owns this lock because npm mutates its node_modules directory and
+# Bun subsequently reads that package tree while changing the shared global
+# installation record. Release it on every shell exit, including failures and
+# handled termination signals, so a failed installation never blocks a retry.
+lock_dir="$script_dir/.dakar-install.lock"
+
+release_install_lock() {
+  status=$?
+  rmdir "$lock_dir" 2>/dev/null || true
+  trap - 0
+  exit "$status"
+}
+
+while ! mkdir "$lock_dir" 2>/dev/null; do
+  sleep 1
+done
+
+trap release_install_lock 0
+trap 'exit 1' HUP INT TERM
+
 # Bun links local-package executables back into their source checkout. Node then
 # resolves runtime imports from that checkout rather than Bun's global module
 # tree, so restore the exact locked dependencies beside Dakar first. Install the

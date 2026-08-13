@@ -6,8 +6,9 @@
  * installation behaviour.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -18,14 +19,33 @@ const cliPath = join(repoRoot, 'bin', 'dakar-review.mjs')
 const installPath = join(repoRoot, 'install.sh')
 
 /** Copies the checkout's installation inputs without its dependencies. */
-function makeCleanInstallFixture() {
-  const fixture = join(mkdtempSync(join(tmpdir(), 'dakar-install-fixture-')), 'dakar')
+function makeCleanInstallFixture(t) {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'dakar-install-fixture-'))
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }))
+  const fixture = join(fixtureRoot, 'dakar')
   const excluded = new Set([join(repoRoot, '.git'), join(repoRoot, 'node_modules')])
   cpSync(repoRoot, fixture, {
     recursive: true,
     filter: (source) => !excluded.has(source),
   })
   return fixture
+}
+
+/** Waits for a test fixture signal without depending on process scheduling. */
+async function waitForPath(path, description) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (existsSync(path)) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.fail(`timed out waiting for ${description}`)
+}
+
+/** Returns the eventual exit status of a spawned installation process. */
+async function waitForExit(child) {
+  const [code, signal] = await once(child, 'exit')
+  return { code, signal }
 }
 
 function runCli(args, options = {}) {
@@ -1097,8 +1117,9 @@ test('install script installs a callable CLI from a clean checkout', (t) => {
     return
   }
 
-  const installFixture = makeCleanInstallFixture()
+  const installFixture = makeCleanInstallFixture(t)
   const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
+  t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
   execFileSync(join(installFixture, 'install.sh'), {
     cwd: installFixture,
     env: { ...process.env, BUN_INSTALL: bunInstall, NODE_ENV: 'production' },
@@ -1129,6 +1150,7 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
   }
 
   const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
+  t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
   const globalDir = join(bunInstall, 'install', 'global')
   mkdirSync(globalDir, { recursive: true })
   writeFileSync(
@@ -1157,8 +1179,83 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
   )
 })
 
-test('install script stops before installation when npm is unavailable', () => {
+test('install script serializes concurrent installation from one checkout', async (t) => {
+  const installFixture = makeCleanInstallFixture(t)
   const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
+  t.after(() => rmSync(toolDir, { recursive: true, force: true }))
+  const lockDir = join(installFixture, '.dakar-install.lock')
+  const npmStarted = join(toolDir, 'npm-started')
+  const lockWaiter = join(toolDir, 'lock-waiter')
+  const release = join(toolDir, 'release')
+  const npmInvocations = join(toolDir, 'npm-invocations')
+
+  writeFileSync(
+    join(toolDir, 'mkdir'),
+    `#!/bin/sh
+if [ "$1" = "$DAKAR_TEST_LOCK_DIR" ] && [ -d "$1" ]; then
+  : > "$DAKAR_TEST_LOCK_WAITER"
+fi
+exec /usr/bin/mkdir "$@"
+`,
+  )
+  writeFileSync(
+    join(toolDir, 'npm'),
+    `#!/bin/sh
+printf '%s\\n' "$$" >> "$DAKAR_TEST_NPM_INVOCATIONS"
+if ! /usr/bin/mkdir "$DAKAR_TEST_NPM_ACTIVE"; then
+  exit 1
+fi
+: > "$DAKAR_TEST_NPM_STARTED"
+while [ ! -e "$DAKAR_TEST_RELEASE" ]; do
+  sleep 0.01
+done
+/usr/bin/rmdir "$DAKAR_TEST_NPM_ACTIVE"
+`,
+  )
+  for (const command of ['bun', 'node', 'odw']) {
+    writeFileSync(join(toolDir, command), '#!/bin/sh\nexit 0\n')
+  }
+  for (const command of ['bun', 'mkdir', 'node', 'npm', 'odw']) {
+    chmodSync(join(toolDir, command), 0o755)
+  }
+
+  const env = {
+    ...process.env,
+    PATH: `${toolDir}:${process.env.PATH}`,
+    DAKAR_TEST_LOCK_DIR: lockDir,
+    DAKAR_TEST_LOCK_WAITER: lockWaiter,
+    DAKAR_TEST_NPM_ACTIVE: join(toolDir, 'npm-active'),
+    DAKAR_TEST_NPM_INVOCATIONS: npmInvocations,
+    DAKAR_TEST_NPM_STARTED: npmStarted,
+    DAKAR_TEST_RELEASE: release,
+  }
+  const first = spawn('/bin/sh', [join(installFixture, 'install.sh')], { cwd: installFixture, env })
+  const firstExit = waitForExit(first)
+  let secondExit
+
+  try {
+    await waitForPath(npmStarted, 'the first dependency restoration')
+    secondExit = waitForExit(spawn('/bin/sh', [join(installFixture, 'install.sh')], { cwd: installFixture, env }))
+    await waitForPath(lockWaiter, 'the second installer to wait for the lock')
+    assert.equal(readFileSync(npmInvocations, 'utf8').trim().split('\n').length, 1)
+    writeFileSync(release, '')
+
+    assert.deepEqual(await firstExit, { code: 0, signal: null })
+    assert.deepEqual(await secondExit, { code: 0, signal: null })
+    assert.equal(readFileSync(npmInvocations, 'utf8').trim().split('\n').length, 2)
+    assert.equal(existsSync(lockDir), false)
+  } finally {
+    writeFileSync(release, '')
+    await firstExit
+    if (secondExit) {
+      await secondExit
+    }
+  }
+})
+
+test('install script stops before installation when npm is unavailable', (t) => {
+  const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
+  t.after(() => rmSync(toolDir, { recursive: true, force: true }))
   const installMarker = join(toolDir, 'bun-invoked')
   writeFileSync(join(toolDir, 'bun'), `#!/bin/sh\ntouch '${installMarker}'\n`)
   writeFileSync(join(toolDir, 'node'), '#!/bin/sh\nexit 0\n')
