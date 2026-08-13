@@ -1104,13 +1104,12 @@ function prepareLiveReview(options, repoRoot, workflowArgs, format) {
 }
 
 /**
- * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
+ * Print a terminal meta-option response when the CLI should not start a review.
  *
- * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
- * @returns {Promise<number>} process exit code; 0 on success, 1 on failure.
+ * @param {object} options - Parsed CLI options.
+ * @returns {number | null} terminal exit code, or null when review work continues.
  */
-async function run(argv) {
-  const options = parseArgs(argv)
+function metaOptionExitCode(options) {
   if (options.help) {
     process.stdout.write(usage())
     return 0
@@ -1119,18 +1118,31 @@ async function run(argv) {
     process.stdout.write('0.1.0\n')
     return 0
   }
+  return null
+}
 
-  const repoRoot = resolve(options.repoRoot || process.cwd())
+/**
+ * Resolve and validate the requested final output format.
+ *
+ * @param {object} options - Parsed CLI options.
+ * @returns {string} the supported JSON or Markdown output format.
+ * @throws {Error} When the requested format is unsupported.
+ */
+function outputFormat(options) {
   const format = options.format || 'json'
-  if (!['json', 'markdown'].includes(format)) {
-    throw new Error('--format must be json or markdown')
-  }
+  if (!['json', 'markdown'].includes(format)) throw new Error('--format must be json or markdown')
+  return format
+}
 
-  const workflowArgs = buildWorkflowArgs(options, repoRoot)
-  if (!options.dryRun) {
-    const preflightStatus = prepareLiveReview(options, repoRoot, workflowArgs, format)
-    if (preflightStatus !== null) return preflightStatus
-  }
+/**
+ * Launch ODW after preflight and emit its final workflow result.
+ *
+ * @param {object} options - Parsed CLI options, mutated only with the run-local config path.
+ * @param {object} workflowArgs - Prepared workflow arguments for the ODW run.
+ * @param {string} format - Requested final output format.
+ * @returns {Promise<number>} process exit code for the completed ODW result.
+ */
+async function launchOdw(options, workflowArgs, format) {
   // Derive a run-local ODW config that bounds the pi Flex calls with the per-call
   // timeout, then remove it after the run like the usage-log file.
   options.odwConfigPath = writeDerivedOdwConfig(clampPerCallTimeout(options.perCallTimeoutSeconds))
@@ -1146,14 +1158,34 @@ async function run(argv) {
       // A leftover temp file is harmless.
     }
   }
-  if (outcome.status !== undefined) {
-    return outcome.status
-  }
+  if (outcome.status !== undefined) return outcome.status
   // Reported usage is attached and folded into recordInput before recording by
   // finalizeWorkflowResult; nothing further to enrich here.
   const output = outcome.output
   printWorkflowOutput(output, format)
   return output.ok === false ? 1 : 0
+}
+
+/**
+ * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
+ *
+ * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
+ * @returns {Promise<number>} process exit code; 0 on success, 1 on failure.
+ */
+async function run(argv) {
+  const options = parseArgs(argv)
+  const metaExitCode = metaOptionExitCode(options)
+  if (metaExitCode !== null) return metaExitCode
+
+  const repoRoot = resolve(options.repoRoot || process.cwd())
+  const format = outputFormat(options)
+
+  const workflowArgs = buildWorkflowArgs(options, repoRoot)
+  if (!options.dryRun) {
+    const preflightStatus = prepareLiveReview(options, repoRoot, workflowArgs, format)
+    if (preflightStatus !== null) return preflightStatus
+  }
+  return launchOdw(options, workflowArgs, format)
 }
 
 try {
