@@ -28,11 +28,23 @@ if ! command -v node >/dev/null 2>&1; then
   exit 127
 fi
 
+if ! command -v npm >/dev/null 2>&1; then
+  printf '%s\n' "install.sh: npm is required but was not found on PATH" >&2
+  exit 127
+fi
+
 if ! command -v odw >/dev/null 2>&1; then
   printf '%s\n' "install.sh: odw is required but was not found on PATH" >&2
   printf '%s\n' "install.sh: install the ODW CLI (open-dynamic-workflows) and ensure 'odw' is on PATH before running Dakar" >&2
   exit 127
 fi
+
+# Bun links local-package executables back into their source checkout. Node then
+# resolves runtime imports from that checkout rather than Bun's global module
+# tree, so restore the exact locked dependencies beside Dakar first. Install the
+# complete lockfile so running the installer from a development checkout does
+# not leave its required tooling pruned.
+npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefix "$script_dir"
 
 # Remove any prior global Dakar install so a re-run starts from a clean state.
 # bun remove updates the global package.json and shared bun.lock atomically and

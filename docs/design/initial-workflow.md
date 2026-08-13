@@ -818,8 +818,9 @@ result.
 ## CLI contract
 
 `bin/dakar-review.mjs` is the globally installable wrapper exposed as
-`dakar-review` through `package.json`. It is designed for
-`bun install -g "$PWD"` from a Dakar checkout and for agent-to-agent automation.
+`dakar-review` through `package.json`. It is installed from a Dakar checkout
+with the canonical `install.sh` entry point and supports agent-to-agent
+automation.
 
 The CLI runs the workflow from Dakar's package root, passes that package root
 as ODW `--source`, and passes the reviewed checkout as workflow `repoRoot`.

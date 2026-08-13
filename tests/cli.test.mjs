@@ -7,7 +7,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -16,6 +16,17 @@ import assert from 'node:assert/strict'
 const repoRoot = resolve(new URL('..', import.meta.url).pathname)
 const cliPath = join(repoRoot, 'bin', 'dakar-review.mjs')
 const installPath = join(repoRoot, 'install.sh')
+
+/** Copies the checkout's installation inputs without its dependencies. */
+function makeCleanInstallFixture() {
+  const fixture = join(mkdtempSync(join(tmpdir(), 'dakar-install-fixture-')), 'dakar')
+  const excluded = new Set([join(repoRoot, '.git'), join(repoRoot, 'node_modules')])
+  cpSync(repoRoot, fixture, {
+    recursive: true,
+    filter: (source) => !excluded.has(source),
+  })
+  return fixture
+}
 
 function runCli(args, options = {}) {
   return execFileSync(process.execPath, [cliPath, ...args], {
@@ -1077,17 +1088,20 @@ pre_merge_checks:
   assert.equal(existsSync(marker), false, 'ODW must not run after a trusted-base lookup failure')
 })
 
-test('package installs a callable CLI with Bun global install', (t) => {
-  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8' })
-  if (bunCheck.status !== 0) {
-    t.skip('bun is not installed')
+test('install script installs a callable CLI from a clean checkout', (t) => {
+  const missingPrerequisite = ['bun', 'node', 'npm', 'odw'].find(
+    (command) => spawnSync(command, ['--version'], { encoding: 'utf8' }).status !== 0,
+  )
+  if (missingPrerequisite) {
+    t.skip(`${missingPrerequisite} is required but is not installed`)
     return
   }
 
+  const installFixture = makeCleanInstallFixture()
   const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
-  execFileSync('bun', ['install', '-g', repoRoot], {
-    cwd: repoRoot,
-    env: { ...process.env, BUN_INSTALL: bunInstall },
+  execFileSync(join(installFixture, 'install.sh'), {
+    cwd: installFixture,
+    env: { ...process.env, BUN_INSTALL: bunInstall, NODE_ENV: 'production' },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -1098,30 +1112,12 @@ test('package installs a callable CLI with Bun global install', (t) => {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
-  assert.equal(output.trim(), '0.1.0')
-})
-
-test('install script installs a callable CLI with Bun', (t) => {
-  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8' })
-  if (bunCheck.status !== 0) {
-    t.skip('bun is not installed')
-    return
-  }
-
-  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
-  execFileSync(installPath, {
-    cwd: repoRoot,
-    env: { ...process.env, BUN_INSTALL: bunInstall },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
-  const output = execFileSync(join(bunInstall, 'bin', 'dakar-review'), ['--version'], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
+  const rootPackage = JSON.parse(readFileSync(join(installFixture, 'package.json'), 'utf8'))
+  const installedYamlPackage = JSON.parse(
+    readFileSync(join(installFixture, 'node_modules', 'js-yaml', 'package.json'), 'utf8'),
+  )
+  assert.equal(installedYamlPackage.version, rootPackage.dependencies['js-yaml'])
+  assert.equal(existsSync(join(installFixture, 'node_modules', 'typescript', 'package.json')), true)
   assert.equal(output.trim(), '0.1.0')
 })
 
@@ -1159,6 +1155,30 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
     execFileSync(join(bunInstall, 'bin', 'dakar-review'), ['--version'], { encoding: 'utf8' }).trim(),
     '0.1.0',
   )
+})
+
+test('install script stops before installation when npm is unavailable', () => {
+  const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
+  const installMarker = join(toolDir, 'bun-invoked')
+  writeFileSync(join(toolDir, 'bun'), `#!/bin/sh\ntouch '${installMarker}'\n`)
+  writeFileSync(join(toolDir, 'node'), '#!/bin/sh\nexit 0\n')
+  writeFileSync(join(toolDir, 'odw'), '#!/bin/sh\nexit 0\n')
+  writeFileSync(join(toolDir, 'dirname'), '#!/bin/sh\nexec /usr/bin/dirname "$@"\n')
+  for (const command of ['bun', 'node', 'odw', 'dirname']) {
+    chmodSync(join(toolDir, command), 0o755)
+  }
+
+  const result = spawnSync('/bin/sh', [installPath], {
+    cwd: repoRoot,
+    env: { PATH: toolDir },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  assert.equal(result.status, 127)
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /install\.sh: npm is required but was not found on PATH/u)
+  assert.equal(existsSync(installMarker), false, 'Bun must not run without npm')
 })
 
 test('install script help does not install', () => {

@@ -169,13 +169,13 @@ an agent to inspect diffs should use `git -C <repoRoot>` rather than plain
 
 ## 3. CLI conventions
 
-`bin/dakar-review.mjs` is the installable command exposed by `package.json`. It
-must remain usable after Bun installs Dakar from an absolute checkout path or
-package tarball.
-
-`install.sh` is the preferred local installer. It intentionally calls
-`bun install -g` with Dakar's absolute checkout path because Bun 1.3.11 does
-not create package bin links for bare `bun install -g .`.
+`bin/dakar-review.mjs` is the installable command exposed by `package.json`.
+`install.sh` is the canonical installation method. Before asking Bun to install
+Dakar from the absolute checkout path, it installs the locked dependencies into
+that checkout. This is required because Bun links a local package's executable
+back to its source, from which Node cannot resolve Bun's separate global
+dependency tree. Keep the clean-checkout installation test in
+`tests/cli.test.mjs` representative of this layout.
 
 The CLI should run the workflow from Dakar's package root as ODW `--source` and
 pass the reviewed repository as the workflow `repoRoot` argument. This is
