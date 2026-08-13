@@ -1099,7 +1099,7 @@ test('install script installs a callable CLI from a clean checkout', (t) => {
   const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
   execFileSync(join(installFixture, 'install.sh'), {
     cwd: installFixture,
-    env: { ...process.env, BUN_INSTALL: bunInstall },
+    env: { ...process.env, BUN_INSTALL: bunInstall, NODE_ENV: 'production' },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -1111,6 +1111,7 @@ test('install script installs a callable CLI from a clean checkout', (t) => {
   })
 
   assert.equal(existsSync(join(installFixture, 'node_modules', 'js-yaml', 'package.json')), true)
+  assert.equal(existsSync(join(installFixture, 'node_modules', 'typescript', 'package.json')), true)
   assert.equal(output.trim(), '0.1.0')
 })
 

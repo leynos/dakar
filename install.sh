@@ -44,7 +44,7 @@ fi
 # tree, so restore the exact locked dependencies beside Dakar first. Install the
 # complete lockfile so running the installer from a development checkout does
 # not leave its required tooling pruned.
-npm ci --ignore-scripts --no-audit --no-fund --prefix "$script_dir"
+npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefix "$script_dir"
 
 # Remove any prior global Dakar install so a re-run starts from a clean state.
 # bun remove updates the global package.json and shared bun.lock atomically and
