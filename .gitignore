@@ -19,3 +19,9 @@ __pycache__/
 adapters/pi/auth.json
 adapters/pi/models-store.json
 adapters/pi/sessions/
+.vtcode/
+.claude/
+.grepai/
+*.swp
+*.swo
+*~
