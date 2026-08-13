@@ -57,13 +57,16 @@ test('role lookup preserves configuration order and has a closed fallback', () =
 
 test('flex lane roles resolve to the pinned pi adapters, tier, and effort', () => {
   assert.deepEqual(flexLaneRole('luna'), {
-    role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low',
+    role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-high', serviceTier: 'flex', reasoning: 'high',
   })
   assert.deepEqual(flexLaneRole('luna-medium'), {
     role: 'luna-medium', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-medium', serviceTier: 'flex', reasoning: 'medium',
   })
+  assert.deepEqual(flexLaneRole('luna-low'), {
+    role: 'luna-low', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low',
+  })
   assert.deepEqual(flexLaneRole('terra'), {
-    role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex', serviceTier: 'flex', reasoning: 'medium',
+    role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex-high', serviceTier: 'flex', reasoning: 'high',
   })
   assert.throws(() => flexLaneRole('missing-lane'), /unknown flex lane role/u)
   assert.equal(Object.isFrozen(FLEX_LANE_ROLES), true)
