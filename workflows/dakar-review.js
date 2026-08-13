@@ -221,6 +221,11 @@ function modelForRole(role, reviewModels) {
 function isReasoning(value) {
   return value === "low" || value === "medium" || value === "high";
 }
+function lunaFlexLaneRole(reasoning) {
+  if (reasoning === "medium") return "luna-medium";
+  if (reasoning === "low") return "luna-low";
+  return "luna";
+}
 var FLEX_LANE_ROLES = Object.freeze({
   luna: Object.freeze({ role: "luna", model: "gpt-5.6-luna", adapter: "pi-luna-flex-high", serviceTier: "flex", reasoning: "high" }),
   "luna-medium": Object.freeze({ role: "luna-medium", model: "gpt-5.6-luna", adapter: "pi-luna-flex-medium", serviceTier: "flex", reasoning: "medium" }),
@@ -1172,9 +1177,8 @@ async function workflowMain() {
   });
   const WORST_CASE_REVIEW_SECONDS = worstCaseReviewSeconds(RETRY_CONFIG, PER_CALL_TIMEOUT_SECONDS);
   const PRICING_TABLE = DEFAULT_PRICING_TABLE;
-  const LUNA_LANE = flexLaneRole(
-    LUNA_REASONING === "medium" ? "luna-medium" : LUNA_REASONING === "low" ? "luna-low" : "luna"
-  );
+  const LUNA_ROLE = lunaFlexLaneRole(LUNA_REASONING);
+  const LUNA_LANE = flexLaneRole(LUNA_ROLE);
   const TERRA_LANE = flexLaneRole("terra");
   const BUDGET_USD = BUDGET_GBP * PRICING_TABLE.usdPerGbp;
   const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
@@ -1335,7 +1339,7 @@ async function workflowMain() {
       maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
       maxTasks: MAX_TASKS,
       transactionMaxFiles: TRANSACTION_MAX_FILES,
-      lunaRole: LUNA_LANE.role === "luna-medium" || LUNA_LANE.role === "luna-low" ? LUNA_LANE.role : "luna",
+      lunaRole: LUNA_ROLE,
       maxFindings: MAX_FINDINGS
     });
     packs = plan.packs;

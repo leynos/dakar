@@ -15,7 +15,7 @@ import {
 } from './candidates.ts'
 import { admit } from './admission.ts'
 import { resolveWorkflowConfig } from './config.ts'
-import { flexLaneRole, modelName } from './model-routing.ts'
+import { flexLaneRole, lunaFlexLaneRole, modelName } from './model-routing.ts'
 import { DEFAULT_PRICING_TABLE, estimateWorstCaseUsd } from './pricing.ts'
 import { auditPrompt, taskPrompt } from './prompts.ts'
 import { backoffSeconds, isRetryableFlexError, worstCaseReviewSeconds } from './retry.ts'
@@ -42,6 +42,13 @@ import type {
   ReviewTask,
   Verdict,
 } from './types.ts'
+
+
+/**
+ * Orchestrate Dakar's ODW phases through the injected runtime primitives.
+ *
+ * @module
+ */
 
 /** Bundles one Flex call's success flag, decoded value, and attempt count. */
 interface FlexCallOutcome<T> {
@@ -191,12 +198,11 @@ const RETRY_CONFIG: FlexRetryConfig = Object.freeze({
 })
 const WORST_CASE_REVIEW_SECONDS = worstCaseReviewSeconds(RETRY_CONFIG, PER_CALL_TIMEOUT_SECONDS)
 // The host selects each Flex lane; ADR 002 forbids an agent promoting itself to
-// a costlier model or service tier. `lunaReasoning` chooses the low or the
-// pre-registered medium escalation adapter for the finder lane.
+// a costlier model or service tier. `lunaReasoning` selects one registered
+// finder lane before any agent dispatch.
 const PRICING_TABLE = DEFAULT_PRICING_TABLE
-const LUNA_LANE = flexLaneRole(
-  LUNA_REASONING === 'medium' ? 'luna-medium' : LUNA_REASONING === 'low' ? 'luna-low' : 'luna',
-)
+const LUNA_ROLE = lunaFlexLaneRole(LUNA_REASONING)
+const LUNA_LANE = flexLaneRole(LUNA_ROLE)
 const TERRA_LANE = flexLaneRole('terra')
 const BUDGET_USD = BUDGET_GBP * PRICING_TABLE.usdPerGbp
 const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
@@ -386,7 +392,7 @@ try {
     maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
     maxTasks: MAX_TASKS,
     transactionMaxFiles: TRANSACTION_MAX_FILES,
-    lunaRole: LUNA_LANE.role === 'luna-medium' || LUNA_LANE.role === 'luna-low' ? LUNA_LANE.role : 'luna',
+    lunaRole: LUNA_ROLE,
     maxFindings: MAX_FINDINGS,
   })
   packs = plan.packs
