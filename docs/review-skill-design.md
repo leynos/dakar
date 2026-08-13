@@ -164,6 +164,41 @@ Accepted findings, in brief:
   copying timeout event attributes into span events, and an expanded test
   module exceeds the 400-line policy.
 
+### 3.2 Re-evaluation with context tools, high reasoning, and the repricing
+
+The finding corpus was re-run on 2026-08-13 after three workflow changes landed
+together: the 2026-08-13 pricing table (Luna Flex at a fifth of the prior
+rates, Terra Flex at four fifths), high-reasoning defaults for both lanes, and
+finder access to the CodeGraph and DeepWiki context tools through the `mcp` CLI
+with a host-side CodeGraph warmup. All four fixtures ran at pure defaults from
+fresh state roots.
+
+| Fixture                | v1 accepted     | v2 accepted | v2 reported USD |
+| ---------------------- | --------------- | ----------- | --------------- |
+| `netsuke#545`          | 0 (1 at medium) | 1           | 0.0363          |
+| `ortho-config#419`     | 2               | 5           | 0.0520          |
+| `repovec-appliance#78` | 1               | 6           | 0.1860          |
+| `cuprum#271`           | 2               | 6           | 0.1812          |
+
+_Table: v1 (low reasoning, 2026-07-18 pricing, no context tools) versus v2
+(high reasoning, 2026-08-13 pricing, context tools) accepted findings._
+
+Observations:
+
+- Recall rose on every fixture. `netsuke#545` now accepts the manifest race
+  at CodeRabbit's exact anchor without an escalation flag. `ortho-config#419`
+  reaches CodeRabbit's source territory (`cargo/mod.rs:110` against their
+  `mod.rs:115`) and adds a test-hardening finding. `repovec-appliance#78`
+  yields a high-severity parser validation gap plus two further parser defects
+  on a pull request CodeRabbit never reviewed. `cuprum#271` overlaps
+  CodeRabbit's `events.py` anchors with a medium compatibility finding.
+- Cost per finding fell sharply: the two smaller fixtures cost less at high
+  reasoning under the new rates than at low reasoning under the old rates. The
+  two larger fixtures reported around USD 0.18 each, dominated by
+  high-reasoning output tokens across four packs plus the audit.
+- The audit discarded nothing across the four runs; at high reasoning both
+  the finders and the audit converged on the same accepted sets.
+
 ## 4. Findings that shaped the skill
 
 ### 4.1 The default budget refuses every finder pack
@@ -235,6 +270,23 @@ CodeRabbit's inline comments on the same rounds give a recall benchmark:
 The comparison is directional, not a controlled experiment: CodeRabbit reviewed
 several rounds with repository scripts at its disposal, while Dakar saw one
 pinned diff under a GBP 0.15 budget spending roughly USD 0.05-0.17 per review.
+
+For replaying the comparison, these are the CodeRabbit review banners posted
+immediately after each pinned commit:
+
+- `netsuke#545` @ `d9f5dce7`:
+  [review 4890391311](https://github.com/leynos/netsuke/pull/545#pullrequestreview-4890391311)
+  (submitted twenty minutes after the pinned commit, on that exact commit).
+- `ortho-config#419` @ `b55f4b22`:
+  [review 4891600420](https://github.com/leynos/ortho-config/pull/419#pullrequestreview-4891600420)
+  (on `7046703b`, the pre-rebase identity of the pinned implementation round).
+- `repovec-appliance#78` @ `2032b9d3`: no CodeRabbit review exists on the
+  draft pull request.
+- `cuprum#271` @ `a87b3a83`:
+  [review 4870027319](https://github.com/leynos/cuprum/pull/271#pullrequestreview-4870027319)
+  (the first review submitted after the pinned commit landed; the branch was
+  later rebased, so CodeRabbit's commit identifiers do not appear in current
+  history).
 
 ### 4.5 Reported spend can exceed the admitted estimate on large runs
 
