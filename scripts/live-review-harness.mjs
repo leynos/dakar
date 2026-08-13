@@ -615,7 +615,10 @@ const CLI_FLAGS = new Map([
   ['work', { key: 'work', value: true }],
   ['out', { key: 'out', value: true }],
   ['key-file', { key: 'keyFile', value: true }],
-  ['dakar-args', { key: 'dakarArgs', value: true }],
+  // optionLikeValue: the value is itself a flag string for the child CLI
+  // (e.g. "--budget-gbp 0.15"), so a leading "--" must not be mistaken for
+  // a missing value.
+  ['dakar-args', { key: 'dakarArgs', value: true, optionLikeValue: true }],
   ['skip-review', { key: 'skipReview', value: false }],
 ])
 
@@ -625,7 +628,7 @@ const CLI_FLAGS = new Map([
  * @param {string[]} argv - argument tokens, excluding the node/script prefix.
  * @returns {object} parsed options, with `keyFile` defaulted to `~/dakar-api-key.txt`.
  */
-function parseCliArgs(argv) {
+export function parseCliArgs(argv) {
   const options = { keyFile: join(homedir(), 'dakar-api-key.txt') }
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]
@@ -642,7 +645,7 @@ function parseCliArgs(argv) {
       continue
     }
     const value = argv[++index]
-    if (value === undefined || value.startsWith('--')) {
+    if (value === undefined || (!spec.optionLikeValue && value.startsWith('--'))) {
       throw new Error(`--${name} requires a value`)
     }
     options[spec.key] = value

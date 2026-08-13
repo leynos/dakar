@@ -22,6 +22,7 @@ import {
   extractUsageLines,
   guardStateRoot,
   loadCorpusEntry,
+  parseCliArgs,
   priceReportedUsage,
   stateRootFor,
   summarize,
@@ -116,6 +117,25 @@ test('loadCorpusEntry returns the pinned entry for a known repo and PR', () => {
   assert.equal(entry.pr, 140)
   assert.equal(entry.base, 'e39920ff83c23d75dd1ce4c2d4e35e7e05fd461f')
   assert.equal(entry.head, '448f1a4581856894f79d18637ff784b928214ab2')
+})
+
+test('parseCliArgs accepts a --dakar-args value that begins with dashes', () => {
+  const options = parseCliArgs([
+    '--repo', 'leynos/comenq',
+    '--pr', '140',
+    '--work', '/tmp/work',
+    '--out', '/tmp/out',
+    '--dakar-args', '--budget-gbp 0.15 --max-luna-calls 8',
+  ])
+
+  assert.equal(options.dakarArgs, '--budget-gbp 0.15 --max-luna-calls 8')
+})
+
+test('parseCliArgs still rejects an option-like value for ordinary flags', () => {
+  assert.throws(
+    () => parseCliArgs(['--repo', '--pr', '140', '--work', '/tmp/w', '--out', '/tmp/o']),
+    /--repo requires a value/u,
+  )
 })
 
 test('loadCorpusEntry throws for an unknown repo or PR', () => {

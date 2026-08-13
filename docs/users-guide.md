@@ -15,16 +15,15 @@ Install Dakar's review command from a checkout with the canonical installer:
 
 The installer requires Node, npm, Bun, and ODW on `PATH`. It restores the exact
 pinned dependencies beside the checkout, then calls Bun with the absolute
-checkout path and exposes `dakar-review`.
-Installing through Bun directly is unsupported because Bun links a local
-package's executable back into its checkout, while Node resolves runtime
-dependencies from that checkout. The package remains private; the command is
-meant for local or git-based installation, not npm publication. `install.sh`
-accepts no install arguments; run `./install.sh --help` for its short usage
-text. On each repeated installer run, `install.sh` first executes
-`bun remove -g dakar` before reinstalling, preventing an interrupted
-installation from leaving duplicate `dakar` entries while keeping the shared
-Bun lockfile and other global packages intact.
+checkout path and exposes `dakar-review`. Installing through Bun directly is
+unsupported because Bun links a local package's executable back into its
+checkout, while Node resolves runtime dependencies from that checkout. The
+package remains private; the command is meant for local or git-based
+installation, not npm publication. `install.sh` accepts no install arguments;
+run `./install.sh --help` for its short usage text. On each repeated installer
+run, `install.sh` first executes `bun remove -g dakar` before reinstalling,
+preventing an interrupted installation from leaving duplicate `dakar` entries
+while keeping the shared Bun lockfile and other global packages intact.
 
 ## Running a branch review
 
@@ -117,7 +116,9 @@ than fail. See "Cost, budget, and the ledger" and "Retries, downgrades, and
 deferral" below for what each knob controls.
 
 - `--budget-gbp <number>` sets the hard admission budget in GBP. The default is
-  `0.1`.
+  `0.15`, raised from ADR 002's original `0.1` because, at pricing table
+  2026-07-18, the reserve-first audit left less than one finder pack's worst
+  case inside the old default (see the ADR's 2026-08-13 amendment).
 - `--max-luna-calls <number>` caps the Luna Flex finder calls. The default is
   `4`. It composes with `--max-tasks`: the effective finder-pack cap is the
   smaller of the two.
@@ -388,8 +389,8 @@ Dry-run output is also JSON, but it describes the contract instead of a review:
       "adapter": "pi-terra-flex", "serviceTier": "flex", "reasoning": "medium"
     }
   },
-  "budgetGbp": 0.1,
-  "budgetUsd": 0.127,
+  "budgetGbp": 0.15,
+  "budgetUsd": 0.1905,
   "pricingTableVersion": "2026-07-18",
   "reservedAuditUsd": 0.1140625,
   "reservedAuditChainUsd": 0.3421875,
@@ -495,7 +496,7 @@ The following optional limits are supported:
   `over_audit_cap`.
 - `maxLunaFlexCalls`: maximum finder evidence packs, default `4`.
 - `transactionMaxFiles`: maximum files per finder pack, default `5`.
-- `budgetGbp`: hard per-review budget in GBP, default `0.10`, converted to
+- `budgetGbp`: hard per-review budget in GBP, default `0.15`, converted to
   USD through the pricing table's `usdPerGbp` snapshot.
 - `routingPolicy`: recorded in metrics and the dry run; the only supported
   value is `deterministic-flex-v1`.
@@ -536,9 +537,10 @@ exceeding the ceiling (see "Retries, downgrades, and deferral" below).
 
 Because admission refuses any finder pack beyond the ordinary budget, a gate
 reviewing a large task branch may need to raise `--budget-gbp` to admit more
-finder packs and so cover the full diff. The ordinary default deliberately
-forces refusals on multi-pack large reviews; lift the budget only for the runs
-that warrant the extra coverage.
+finder packs and so cover the full diff. The default budget covers the default
+caps (four finder packs plus the audit reserve, with modest retry headroom);
+reviews that raise `--max-luna-calls` or the token bounds must raise the budget
+in step, and should lift it only for the runs that warrant the extra coverage.
 
 `metrics` carries the cost accounting:
 
