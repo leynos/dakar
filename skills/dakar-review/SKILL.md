@@ -49,15 +49,16 @@ OPENAI_API_KEY=... dakar-review \
 
 ## Set the budget deliberately
 
-The admission controller reserves the audit call's worst case (about USD 0.114
-at default token bounds) before admitting any finder pack, and each finder
-pack's worst case is about USD 0.0142. The default `--budget-gbp 0.15` (USD
-0.1905) covers the default caps — four packs of five files plus the audit
-reserve, with modest retry headroom. A budget too small for even one pack fails
-with a "zero coverage" error rather than reporting a hollow pass, so a lowered
-budget or raised caps must keep the arithmetic in balance:
+The admission controller reserves the audit call's worst case (about USD 0.106
+at default token bounds under the 2026-08-13 pricing table) before admitting
+any finder pack, and each finder pack's worst case is about USD 0.0043. The
+default `--budget-gbp 0.15` (USD 0.1905) covers the default caps — four packs
+of five files plus the audit reserve — with ample retry headroom. A budget too
+small for even one pack fails with a "zero coverage" error rather than
+reporting a hollow pass, so a lowered budget or raised caps must keep the
+arithmetic in balance:
 
-- Approximate rule: `budgetUsd >= 0.114 + packs x 0.0143`, with
+- Approximate rule: `budgetUsd >= 0.106 + packs x 0.0043`, with
   `packs = ceil(changedFiles / transactionMaxFiles)` capped at
   `maxLunaFlexCalls`. GBP converts at the pricing table's snapshot (1.27).
 - The default budget suffices for up to 20 changed files at the default caps;
@@ -80,16 +81,28 @@ with any of these is not recorded to review history (`recordWithheld` replaces
 
 ## Choose the finder reasoning effort
 
-The default low-reasoning finders are deliberately conservative: on clean
-branches they return substantive `noFindingsReason` entries rather than
-manufactured findings, and a `pass` verdict from them is meaningful. The cost
-is recall on subtle defects — in the pinned evaluations, a low-reasoning run
-missed a race-condition bug that `--luna-reasoning medium` then accepted at the
-exact line a human-confirmed CodeRabbit Major had flagged, for roughly four
-times the finder spend. Use `--luna-reasoning medium` when reviewing
-unfamiliar, bot-authored, or first-round code where missed defects are costlier
-than the extra spend; keep the low default for routine incremental reviews of
-trusted branches.
+Both lanes default to high reasoning since the 2026-08-13 Flex repricing made
+Luna a fifth of its former price. In the pinned evaluations the high default
+materially raised recall: a race-condition bug that low reasoning missed is
+accepted at the exact line CodeRabbit had flagged as a Major, and every
+finding-corpus fixture yielded more accepted findings at equal or lower cost
+than the old low default. Findings remain conservative in style — clean packs
+return substantive `noFindingsReason` entries, so a `pass` verdict stays
+meaningful. Pass `--luna-reasoning low` (or `medium`) only when squeezing cost
+on routine incremental reviews of trusted branches where a shallower pass is
+acceptable.
+
+## Context tools
+
+When the operator's `mcp` CLI is on `PATH`, the CLI warms a CodeGraph index of
+the checkout (code plus key markdown) before finders run, and finder prompts
+direct agents at the CodeGraph query tools (context, callers, impact, symbol,
+and documentation search) and at DeepWiki for repository-level questions.
+DeepWiki carries an explicit staleness caveat: it helps with dependencies and
+the overall purpose of the codebase but may lag the head by a week, so it is
+never evidence about the change under review. Warmup is advisory (set
+`DAKAR_SKIP_CONTEXT_WARMUP` to disable it), and finders fall back to git and
+direct file inspection when `mcp` is unavailable.
 
 ## Read the result
 

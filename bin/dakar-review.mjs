@@ -8,7 +8,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -340,6 +340,77 @@ function readAgentInstructions(repoRoot, baseRef) {
  * @param {string} repoRoot - absolute path to the repository root.
  * @returns {object} workflow arguments ready to be JSON-serialized.
  */
+/**
+ * Derive the `owner/name` GitHub slug from the origin remote, if any.
+ *
+ * The slug parameterizes finder-prompt DeepWiki lookups; a repository without
+ * a GitHub origin simply reviews without DeepWiki guidance.
+ *
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @returns {string} the slug, or an empty string when none can be derived.
+ */
+function deriveRepoSlug(repoRoot) {
+  const result = spawnSync('git', ['-C', repoRoot, 'remote', 'get-url', 'origin'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  if (result.status !== 0) return ''
+  const match = /github\.com[/:]([^/]+)\/([^/\s]+?)(?:\.git)?$/u.exec((result.stdout || '').trim())
+  return match ? `${match[1]}/${match[2]}` : ''
+}
+
+/**
+ * Warm the CodeGraph MCP index for the reviewed checkout before finders run.
+ *
+ * Indexes the repository directory, then the markdown context finders are
+ * most likely to consult: the root `AGENTS.md` and `README.md`, plus any
+ * markdown files in the review's changed set (bounded). Warmup is advisory:
+ * a missing `mcp` command or a failed call warns on stderr and never blocks
+ * the review, matching the prompt's instruction to fall back to git when the
+ * tools are unavailable.
+ *
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @param {string[]} changedFiles - repo-relative changed paths for this review.
+ * @returns {void}
+ */
+function warmContextIndex(repoRoot, changedFiles) {
+  const MAX_MARKDOWN_WARMUPS = 20
+  if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
+    process.stderr.write('dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n')
+    return
+  }
+  const probe = spawnSync('mcp', ['--list'], { encoding: 'utf8', timeout: 30_000 })
+  if (probe.error || probe.status !== 0) {
+    process.stderr.write('dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n')
+    return
+  }
+  const call = (tool, payload, timeout) => {
+    const result = spawnSync('mcp', ['codegraph', tool, JSON.stringify(payload)], {
+      encoding: 'utf8',
+      timeout,
+    })
+    if (result.error || result.status !== 0) {
+      process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.\n`)
+      return false
+    }
+    return true
+  }
+  process.stderr.write('dakar-review: warming CodeGraph index for the reviewed checkout.\n')
+  call('codegraph_index_directory', { path: repoRoot }, 600_000)
+  const markdownPaths = ['AGENTS.md', 'README.md']
+    .concat((changedFiles || []).filter((path) => path.endsWith('.md')))
+  const seen = new Set()
+  let indexed = 0
+  for (const relPath of markdownPaths) {
+    if (indexed >= MAX_MARKDOWN_WARMUPS) break
+    const absolute = join(repoRoot, relPath)
+    if (seen.has(absolute) || !existsSync(absolute)) continue
+    seen.add(absolute)
+    if (call('codegraph_index_markdown', { path: absolute }, 120_000)) indexed += 1
+  }
+  process.stderr.write(`dakar-review: CodeGraph warmup complete (${indexed} markdown file(s) indexed).\n`)
+}
+
 function buildWorkflowArgs(options, repoRoot) {
   const resolvedConfig = resolveReviewConfig({ repoRoot, config: options.config, packageRoot })
   if (resolvedConfig.ok === false) {
@@ -350,6 +421,10 @@ function buildWorkflowArgs(options, repoRoot) {
     config: resolvedConfig.config,
     policy: resolvedConfig.policy,
     repoRoot,
+  }
+  const repoSlug = deriveRepoSlug(repoRoot)
+  if (repoSlug) {
+    workflowArgs.repoSlug = repoSlug
   }
   if (agentInstructions) {
     workflowArgs.agentInstructions = agentInstructions
@@ -792,12 +867,12 @@ Review tuning (bounds enforced by the workflow; the CLI only forwards):
   --max-luna-calls <n>               Maximum Luna Flex finder calls (default: 4)
   --transaction-max-files <n>        Maximum files per finder pack (default: 5)
   --transaction-max-input-tokens <n> Finder input-token estimate (default: 12000)
-  --transaction-max-output-tokens <n> Finder output-token estimate (default: 750)
+  --transaction-max-output-tokens <n> Finder output-token estimate (default: 2000)
   --terra-max-input-tokens <n>       Audit input-token estimate (default: 48000)
-  --terra-max-output-tokens <n>      Audit output-token estimate (default: 2500)
+  --terra-max-output-tokens <n>      Audit output-token estimate (default: 5000)
   --adapter-overhead-tokens <n>      Per-call adapter overhead tokens (default: 13000)
   --max-audit-candidates <n>         Maximum candidates sent to the audit (default: 30)
-  --luna-reasoning <low|medium>      Luna finder reasoning effort (default: low)
+  --luna-reasoning <low|medium|high> Luna finder reasoning effort (default: high)
   --routing-policy <policy>          Routing policy (default: deterministic-flex-v1)
   --flex-attempts <n>                Flex retry attempts per call (default: 3)
   --per-call-timeout <seconds>       Per-model-call timeout (default: 300)
@@ -980,6 +1055,9 @@ async function run(argv) {
     if (!process.env.OPENAI_API_KEY) {
       process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
     }
+    // Warm the CodeGraph MCP index (code plus key markdown) before any finder
+    // dispatch so finder-prompt context lookups are cheap and current.
+    warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || [])
     // Advisory guard: an outer wait shorter than the retry schedule's worst
     // case can kill a healthy run before the workflow's own deferral logic
     // fires. The knob bounds mirror resolveWorkflowConfig's defaults.

@@ -42,11 +42,11 @@ test('resolveWorkflowConfig supplies the ADR 002 Flex knob defaults', () => {
   assert.equal(config.maxLunaFlexCalls, 4)
   assert.equal(config.transactionMaxFiles, 5)
   assert.equal(config.transactionMaxInputTokens, 12000)
-  assert.equal(config.transactionMaxOutputTokens, 750)
+  assert.equal(config.transactionMaxOutputTokens, 2000)
   assert.equal(config.terraMaxInputTokens, 48000)
-  assert.equal(config.terraMaxOutputTokens, 2500)
+  assert.equal(config.terraMaxOutputTokens, 5000)
   assert.equal(config.adapterOverheadTokens, 13000)
-  assert.equal(config.lunaReasoning, 'low')
+  assert.equal(config.lunaReasoning, 'high')
 })
 
 test('resolveWorkflowConfig supplies the M5 Flex retry and timeout defaults', () => {
@@ -119,11 +119,11 @@ test('Flex knobs clamp to their bounds and reject invalid input', () => {
   assert.equal(resolveWorkflowConfig({ budgetGbp: 'nope' }).budgetGbp, 0.15)
 })
 
-test('lunaReasoning accepts low and medium and rejects other values', () => {
+test('lunaReasoning accepts low, medium, and high, and clamps other values to high', () => {
   assert.equal(resolveWorkflowConfig({ lunaReasoning: 'medium' }).lunaReasoning, 'medium')
   assert.equal(resolveWorkflowConfig({ lunaReasoning: 'low' }).lunaReasoning, 'low')
-  assert.equal(resolveWorkflowConfig({ lunaReasoning: 'high' }).lunaReasoning, 'low')
-  assert.equal(resolveWorkflowConfig({ lunaReasoning: 42 }).lunaReasoning, 'low')
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 'high' }).lunaReasoning, 'high')
+  assert.equal(resolveWorkflowConfig({ lunaReasoning: 42 }).lunaReasoning, 'high')
 })
 
 test('resolveWorkflowConfig passes the prepared review through unvalidated', () => {

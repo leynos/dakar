@@ -361,9 +361,9 @@ test('CLI-attached reportedUsage records take precedence and price per lane', ()
   const summary = summarize({ entry, resultJson, usages: [], resultPath: '/r', stderrPath: '/s' })
 
   assert.deepEqual(summary.reportedTokens, { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 })
-  // Luna flex: 1000x0.50 + 500x3.00 + 12000x0.625 per 1M = 0.0005+0.0015+0.0075
-  // Terra flex: 40000x1.25 + 2000x7.50 + 8000x0.125 per 1M = 0.05+0.015+0.001
-  assert.ok(Math.abs(summary.reportedUsd - (0.0095 + 0.066)) < 1e-9, `priced ${summary.reportedUsd}`)
+  // Luna flex: 1000x0.10 + 500x0.60 + 12000x0.125 per 1M = 0.0001+0.0003+0.0015
+  // Terra flex: 40000x1.00 + 2000x6.00 + 8000x0.10 per 1M = 0.04+0.012+0.0008
+  assert.ok(Math.abs(summary.reportedUsd - (0.0019 + 0.0528)) < 1e-9, `priced ${summary.reportedUsd}`)
 })
 
 test('priceReportedUsage skips unpriceable records rather than guessing', () => {
@@ -371,7 +371,7 @@ test('priceReportedUsage skips unpriceable records rather than guessing', () => 
     { model: 'unknown-model', usage: { input: 1000, output: 1000 } },
     { model: 'gpt-5.6-luna', usage: { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 } },
   ])
-  assert.ok(Math.abs(priced - 0.003) < 1e-12, `priced ${priced}`)
+  assert.ok(Math.abs(priced - 0.0006) < 1e-12, `priced ${priced}`)
 })
 
 test('summarize skips a malformed null record in metrics.reportedUsage', () => {
@@ -393,7 +393,7 @@ test('summarize skips a malformed null record in metrics.reportedUsage', () => {
   const summary = summarize({ entry, resultJson, usages: [], resultPath: '/r', stderrPath: '/s' })
 
   assert.deepEqual(summary.reportedTokens, { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 })
-  assert.ok(Math.abs(summary.reportedUsd - 0.003) < 1e-12, `priced ${summary.reportedUsd}`)
+  assert.ok(Math.abs(summary.reportedUsd - 0.0006) < 1e-12, `priced ${summary.reportedUsd}`)
   // The null entry is now diagnosed, not silently vanished.
   assert.equal(summary.malformedTelemetryCount, 1)
   assert.deepEqual(summary.malformedTelemetryCategories, { 'non-object': 1 })
@@ -506,7 +506,7 @@ test('summarize diagnoses malformed metrics.reportedUsage entries while keeping 
   const summary = summarize({ entry, resultJson, usages: [], malformedTelemetry: [], resultPath: '/r', stderrPath: '/s' })
 
   assert.deepEqual(summary.reportedTokens, { input: 0, output: 1000, cacheRead: 0, cacheWrite: 0 })
-  assert.ok(Math.abs(summary.reportedUsd - 0.003) < 1e-12, `priced ${summary.reportedUsd}`)
+  assert.ok(Math.abs(summary.reportedUsd - 0.0006) < 1e-12, `priced ${summary.reportedUsd}`)
   assert.equal(summary.malformedTelemetryCount, 3)
   assert.deepEqual(summary.malformedTelemetryCategories, { 'non-object': 2, 'invalid-fields': 1 })
   // The serialized summary must not leak any malformed payload contents.
