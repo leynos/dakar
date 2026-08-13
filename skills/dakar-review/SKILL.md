@@ -78,6 +78,19 @@ never packed, `admissionRefusals` lists packs the budget refused, and
 with any of these is not recorded to review history (`recordWithheld` replaces
 `recordInput`), so the same head is reviewed again next time.
 
+## Choose the finder reasoning effort
+
+The default low-reasoning finders are deliberately conservative: on clean
+branches they return substantive `noFindingsReason` entries rather than
+manufactured findings, and a `pass` verdict from them is meaningful. The cost
+is recall on subtle defects — in the pinned evaluations, a low-reasoning run
+missed a race-condition bug that `--luna-reasoning medium` then accepted at the
+exact line a human-confirmed CodeRabbit Major had flagged, for roughly four
+times the finder spend. Use `--luna-reasoning medium` when reviewing
+unfamiliar, bot-authored, or first-round code where missed defects are costlier
+than the extra spend; keep the low default for routine incremental reviews of
+trusted branches.
+
 ## Read the result
 
 - `verdict` is `changes-requested` or `pass`; accepted findings do not make

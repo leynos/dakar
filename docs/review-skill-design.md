@@ -37,6 +37,23 @@ after branches rebase or merge:
 _Table: evaluation fixtures. Full 40-character commit identifiers are pinned in
 `scripts/live-corpus.json`; the remote tags point at the same objects._
 
+The first corpus turned out to be clean at every head — useful for validating
+the pass path, but silent on the findings path. A second, finding-oriented
+corpus was therefore added on the same day. Its heads are deliberately not the
+pull requests' current heads: each pins an early, pre-review-fix commit (the
+initial implementation round, before "address review" commits landed), because
+current heads have already absorbed reviewer feedback. CodeRabbit's inline
+comments on those same rounds provide benchmark data (§4.4).
+
+| Tier                    | Fixture                       | Files | Base commit | Head commit |
+| ----------------------- | ----------------------------- | ----- | ----------- | ----------- |
+| skill-findings-small    | `leynos/netsuke#545`          | 1     | `76456df1`  | `d9f5dce7`  |
+| skill-findings-medium   | `leynos/ortho-config#419`     | 12    | `9fba1ed0`  | `b55f4b22`  |
+| skill-findings-medium-2 | `leynos/repovec-appliance#78` | 18    | `dc9c97b9`  | `2032b9d3`  |
+| skill-findings-large    | `leynos/cuprum#271`           | 17    | `7f6ec929`  | `a87b3a83`  |
+
+_Table: finding-oriented fixtures pinned at pre-review-fix commits._
+
 Full commit identifiers:
 
 - `leynos/mdtablefix#413`: base
@@ -54,6 +71,18 @@ Full commit identifiers:
 - `leynos/concordat#110`: base
   `fcf22696f127606da9ef5cdab9cabdea9849f37c`, head
   `8e0ece98a3778d93eb90acf0c97beb04608a799c`.
+- `leynos/netsuke#545`: base
+  `76456df19ff418081e3bac9970d93e6196babdd7`, head
+  `d9f5dce7bc591436b7c3578c4a25dbbac07e927b`.
+- `leynos/ortho-config#419`: base
+  `9fba1ed061bbfaeecaa1fb0ea81881e55fbac474`, head
+  `b55f4b22be7860c3ef7886fe1014fc4bbf7a23b9`.
+- `leynos/repovec-appliance#78`: base
+  `dc9c97b96b6f640a7d03a99d0903154200c711a0`, head
+  `2032b9d313562225d2295bb88508f352ebc2331a`.
+- `leynos/cuprum#271`: base
+  `7f6ec929e3bf068130c81d26346060d04d94aeec`, head
+  `a87b3a83a85c8a1081af994f320823fc0041c436`.
 
 ## 3. Recorded evaluation runs
 
@@ -79,7 +108,7 @@ The `concordat#110` run used
 `--budget-gbp 0.3 --max-luna-calls 8 --transaction-max-files 10`. Its eight
 finder packs covered 67 of the 82 changed files; the remaining 15 appear in
 `metrics.truncatedFiles`, so the run completed with `recordWithheld` and was
-deliberately not recorded to review history (see §4.5). Packs group files by
+deliberately not recorded to review history (see §4.6). Packs group files by
 task kind (source, tests, config, docs), so coverage can truncate below the
 arithmetic `maxLunaFlexCalls x transactionMaxFiles` maximum.
 
@@ -100,6 +129,40 @@ The harness clones the repository, fetches and verifies the pinned base and
 head SHAs against the corpus manifest, checks the head out detached, isolates
 review history under the output directory, and injects the API key from
 `~/dakar-api-key.txt` into the child environment only.
+
+### 3.1 Finding-oriented runs
+
+The four finding-oriented fixtures ran on 2026-08-13 after the default-budget
+fix landed, so all ran at the GBP 0.15 default with no extra flags except where
+noted. Three of four delivered accepted findings at default (low) Luna
+reasoning; the fourth delivered on a medium-reasoning re-run.
+
+| Fixture                | Flags                     | Verdict           | Accepted | Reported USD |
+| ---------------------- | ------------------------- | ----------------- | -------- | ------------ |
+| `netsuke#545` (low)    | defaults                  | changes-requested | 0        | 0.0120       |
+| `netsuke#545` (medium) | `--luna-reasoning medium` | changes-requested | 1        | 0.0483       |
+| `ortho-config#419`     | defaults                  | changes-requested | 2        | 0.0856       |
+| `repovec-appliance#78` | defaults                  | changes-requested | 1        | 0.0904       |
+| `cuprum#271`           | defaults                  | changes-requested | 2        | 0.1667       |
+
+_Table: finding-oriented run outcomes. The `repovec-appliance#78` run truncated
+2 of 18 files through kind-grouped packing, so its recording was withheld; the
+others recorded with full coverage._
+
+Accepted findings, in brief:
+
+- `netsuke#545` (medium): the `AlreadyExists` branch in
+  `test_support/src/manifest.rs` converts a directory-creation race into
+  `Ok(())`, returning a directory as though it were a usable manifest file.
+- `ortho-config#419`: two ExecPlan self-contradictions (a constraint that
+  omits the `display_name` mutation the implementation performs, and a stale
+  draft-only approval gate contradicting the recorded approval).
+- `repovec-appliance#78`: a test reimplements `parse_mode` instead of calling
+  the production parser, so the claimed octal-normalization coverage cannot
+  fail when the production parser regresses.
+- `cuprum#271`: the tracing adapter drops `timeout_s` and `timeout_mode` when
+  copying timeout event attributes into span events, and an expanded test
+  module exceeds the 400-line policy.
 
 ## 4. Findings that shaped the skill
 
@@ -132,17 +195,48 @@ Resolved: the `issues-identified-during-skill-creation` branch marks
 reject a following flag token as a missing value. The leading-space form
 remains accepted, so the recorded invocations replay unchanged.
 
-### 4.3 Low-reasoning finders are conservative on clean pull requests
+### 4.3 Low-reasoning finders are conservative; medium reasoning recovers recall
 
-Across the four smaller fixtures the Luna low-reasoning finders produced a
-single candidate in total (a `typos.local.toml` ignore-pattern concern on
+Across the four clean fixtures the Luna low-reasoning finders produced a single
+candidate in total (a `typos.local.toml` ignore-pattern concern on
 `gauss#124`), which the Terra audit discarded with a reasoned `not_applicable`
 disposition. Each finder returned a substantive `noFindingsReason`, so silence
-reflected judgement rather than parsing failure. Editors seeking higher recall
-on suspect branches should recommend `--luna-reasoning medium`, accepting the
-higher per-pack cost.
+reflected judgement rather than parsing failure.
 
-### 4.4 Reported spend can exceed the admitted estimate on large runs
+The finding-oriented corpus quantified the trade. At low reasoning,
+`netsuke#545` returned zero findings where CodeRabbit had flagged a
+functional-correctness Major; at `--luna-reasoning medium` Dakar accepted the
+same defect at the same anchor (`test_support/src/manifest.rs:109`) for roughly
+four times the reported finder spend. The skill therefore recommends medium
+reasoning for suspect or unreviewed branches and the low default for routine
+incremental review.
+
+### 4.4 CodeRabbit benchmark comparison on pre-review commits
+
+CodeRabbit's inline comments on the same rounds give a recall benchmark:
+
+- `netsuke#545` @ `d9f5dce7`: CodeRabbit posted one functional-correctness
+  Major and one maintainability Major. Dakar at low reasoning found neither; at
+  medium reasoning it accepted the functional-correctness defect at
+  CodeRabbit's exact anchor (`test_support/src/manifest.rs:109`). The PR's own
+  follow-up commit ("Reject raced manifest directories") fixed precisely that
+  defect, confirming both reviewers.
+- `ortho-config#419` first round: CodeRabbit raised five potential issues and
+  one nitpick across the ExecPlan, `ortho_config/src/cargo/mod.rs`, and two
+  test files. Dakar accepted two ExecPlan contradictions (one within four lines
+  of a CodeRabbit anchor) but missed the source and test issues at low
+  reasoning.
+- `repovec-appliance#78`: CodeRabbit recorded no comments on the draft
+  pull request; Dakar's test-effectiveness finding has no benchmark counterpart.
+- `cuprum#271` early rounds: CodeRabbit raised roughly sixteen distinct
+  anchors; Dakar accepted two findings, one of them (dropped span-event timeout
+  attributes) outside CodeRabbit's early anchor set.
+
+The comparison is directional, not a controlled experiment: CodeRabbit reviewed
+several rounds with repository scripts at its disposal, while Dakar saw one
+pinned diff under a GBP 0.15 budget spending roughly USD 0.05-0.17 per review.
+
+### 4.5 Reported spend can exceed the admitted estimate on large runs
 
 On `concordat#110` the priced reported usage (USD 0.1766) exceeded the admitted
 worst-case ledger total (USD 0.1040). This matches the user guide's note that
@@ -153,7 +247,7 @@ estimates on large or cold-cache runs. The hard budget bounds admission
 estimates, not the provider's eventual bill, so operators watching real spend
 should read `reportedUsd` from the harness summary rather than the ledger.
 
-### 4.5 Recording is withheld on partial coverage
+### 4.6 Recording is withheld on partial coverage
 
 A successful review with truncated files, refused packs, or downgraded packs is
 deliberately not recorded to review history. The skill therefore tells agents

@@ -75,5 +75,33 @@
     "pr": 110,
     "base": "fcf22696f127606da9ef5cdab9cabdea9849f37c",
     "head": "8e0ece98a3778d93eb90acf0c97beb04608a799c"
+  },
+  {
+    "tier": "skill-findings-small",
+    "repo": "leynos/netsuke",
+    "pr": 545,
+    "base": "76456df19ff418081e3bac9970d93e6196babdd7",
+    "head": "d9f5dce7bc591436b7c3578c4a25dbbac07e927b"
+  },
+  {
+    "tier": "skill-findings-medium",
+    "repo": "leynos/ortho-config",
+    "pr": 419,
+    "base": "9fba1ed061bbfaeecaa1fb0ea81881e55fbac474",
+    "head": "b55f4b22be7860c3ef7886fe1014fc4bbf7a23b9"
+  },
+  {
+    "tier": "skill-findings-medium-2",
+    "repo": "leynos/repovec-appliance",
+    "pr": 78,
+    "base": "dc9c97b96b6f640a7d03a99d0903154200c711a0",
+    "head": "2032b9d313562225d2295bb88508f352ebc2331a"
+  },
+  {
+    "tier": "skill-findings-large",
+    "repo": "leynos/cuprum",
+    "pr": 271,
+    "base": "7f6ec929e3bf068130c81d26346060d04d94aeec",
+    "head": "a87b3a83a85c8a1081af994f320823fc0041c436"
   }
 ]
