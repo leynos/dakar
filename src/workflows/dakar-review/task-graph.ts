@@ -24,8 +24,8 @@ export interface FlexFinderConfig {
   maxTasks: number
   /** Maximum number of changed files packed into each homogeneous finder pack. */
   transactionMaxFiles: number
-  /** Luna finder lane, either the default or the pre-registered escalation lane. */
-  lunaRole: 'luna' | 'luna-medium'
+  /** Luna finder lane, either the default or a pre-registered de-escalation lane. */
+  lunaRole: 'luna' | 'luna-medium' | 'luna-low'
   /** Per-pack findings cap, further tightened by kind when tasks are built. */
   maxFindings: number
 }

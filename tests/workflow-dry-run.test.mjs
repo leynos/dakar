@@ -75,18 +75,21 @@ test('dry-run reports the Flex lanes, budget, and reserved audit estimate', () =
   const result = runDryRun()
 
   assert.deepEqual(result.lanes.luna, {
-    role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low',
+    role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-high', serviceTier: 'flex', reasoning: 'high',
   })
   assert.deepEqual(result.lanes['luna-medium'], {
     role: 'luna-medium', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-medium', serviceTier: 'flex', reasoning: 'medium',
   })
+  assert.deepEqual(result.lanes['luna-low'], {
+    role: 'luna-low', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low',
+  })
   assert.deepEqual(result.lanes.terra, {
-    role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex', serviceTier: 'flex', reasoning: 'medium',
+    role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex-high', serviceTier: 'flex', reasoning: 'high',
   })
   assert.equal(result.budgetGbp, 0.15)
-  assert.equal(result.pricingTableVersion, '2026-07-18')
-  // Reserved Terra audit worst case: (48000 + 13000) x 1.5625/1e6 + 2500 x 7.5/1e6 = 0.1140625.
-  assert.ok(Math.abs(result.reservedAuditUsd - 0.1140625) < 1e-9, `reservedAuditUsd was ${result.reservedAuditUsd}`)
+  assert.equal(result.pricingTableVersion, '2026-08-13')
+  // Reserved Terra audit worst case: (48000 + 13000) x 1.25/1e6 + 5000 x 6/1e6 = 0.10625.
+  assert.ok(Math.abs(result.reservedAuditUsd - 0.10625) < 1e-9, `reservedAuditUsd was ${result.reservedAuditUsd}`)
   // The chain-level worst case surfaces the full retry cost of the audit for
   // operators without admission reserving it: one attempt's reserve times the
   // Flex attempt count.
@@ -97,9 +100,9 @@ test('dry-run reports the Flex lanes, budget, and reserved audit estimate', () =
   assert.equal(result.flexLimits.maxLunaFlexCalls, 4)
   assert.equal(result.flexLimits.transactionMaxFiles, 5)
   assert.equal(result.flexLimits.transactionMaxInputTokens, 12000)
-  assert.equal(result.flexLimits.transactionMaxOutputTokens, 750)
+  assert.equal(result.flexLimits.transactionMaxOutputTokens, 2000)
   assert.equal(result.flexLimits.terraMaxInputTokens, 48000)
-  assert.equal(result.flexLimits.terraMaxOutputTokens, 2500)
+  assert.equal(result.flexLimits.terraMaxOutputTokens, 5000)
   assert.equal(result.flexLimits.adapterOverheadTokens, 13000)
 })
 
