@@ -20,7 +20,7 @@ security, behavioural regressions, and missing context, not formatting.
 
 ## Prerequisites
 
-- `node`, `bun`, and `odw` on `PATH`, plus the `pi` coding agent
+- `node`, `npm`, `bun`, and `odw` on `PATH`, plus the `pi` coding agent
   (`bun add -g @earendil-works/pi-coding-agent`).
 - `OPENAI_API_KEY` exported for live runs. The CLI warns on stderr but does
   not fail if it is unset; the finder calls then fail instead.
@@ -98,7 +98,7 @@ trusted branches.
 - `sarif` is the authoritative evidence document; `findings`, `discarded`,
   and `reportMarkdown` are derived projections.
 - `metrics.ledger` itemizes every admitted call with its worst-case estimate;
-  `metrics.spentUsd` and `budgetUsd` show the admission trail.
+  `metrics.spentUsd` and `metrics.budgetUsd` show the admission trail.
 - Failure stages: `config`/`prepare` (host-side, before ODW), `admission`
   (budget refused the audit reserve), `audit` (invalid audit output,
   fail-closed), `deferred` (audit retries exhausted; space out the retry —
@@ -119,8 +119,9 @@ Without `--config`, Dakar resolves a CodeRabbit-compatible YAML from the
 repository (`.coderabbit.yaml` and variants), then
 `~/.config/dakar/config.yaml`, then a bundled example. Path instructions are
 sliced per finder pack by changed path; `pre_merge_checks.custom_checks`
-commands run host-side from the trusted base commit before any model call. A
-root `AGENTS.md` is passed to the workflow as repository context.
+definitions are read from the trusted base commit, but their commands run
+host-side in the reviewed checkout before any model call. A root `AGENTS.md`
+is passed to the workflow as repository context.
 
 ## Replaying pinned evaluations
 
