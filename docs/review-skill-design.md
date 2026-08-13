@@ -89,8 +89,12 @@ To replay a fixture:
 node scripts/live-review-harness.mjs \
   --repo leynos/gauss --pr 124 \
   --work /tmp/dakar-eval/work --out /tmp/dakar-eval/out \
-  --dakar-args " --budget-gbp 0.15"
+  --dakar-args "--budget-gbp 0.15"
 ```
+
+The recorded runs quoted the `--dakar-args` value with a leading space to work
+around a parser restriction that has since been fixed (see §4.2); both forms
+parse identically now.
 
 The harness clones the repository, fetches and verifies the pinned base and
 head SHAs against the corpus manifest, checks the head out detached, isolates
@@ -106,19 +110,27 @@ At pricing table 2026-07-18 the default `budgetGbp` of 0.1 converts to USD
 first, leaving USD 0.0129 — less than one finder pack's worst case (USD
 0.0142). Every pack is refused and the workflow correctly fails with a "zero
 coverage" error rather than recording a hollow pass. The initial evaluation
-attempt demonstrated this on all five fixtures. The skill therefore instructs
-agents to always pass an explicit budget, with `--budget-gbp 0.15` as the
-working floor. If default token bounds or pricing change, revisit the skill's
-budget arithmetic.
+attempt demonstrated this on all five fixtures.
+
+Resolved: the default `budgetGbp` was raised to 0.15 (USD 0.1905) on the
+`issues-identified-during-skill-creation` branch, with a dated amendment to ADR
+002 recording the arithmetic. The recorded evaluation runs passed
+`--budget-gbp 0.15` explicitly because they predate the new default; replays at
+default settings now admit the same coverage. If default token bounds or
+pricing change, revisit the skill's budget arithmetic.
 
 ### 4.2 The harness rejects `--dakar-args` values starting with dashes
 
-`parseCliArgs` in the harness treats any option value beginning with `--` as a
-missing value. Passing extra CLI flags through `--dakar-args` requires a
-leading space in the quoted value, for example
-`--dakar-args " --budget-gbp 0.15"`. The skill documents the workaround; a
-future harness change could remove the restriction, at which point the skill
-should drop the note.
+`parseCliArgs` in the harness treated any option value beginning with `--` as a
+missing value, so extra CLI flags could only pass through `--dakar-args` with a
+leading space in the quoted value (the recorded evaluation runs used
+`--dakar-args " --budget-gbp 0.15"`).
+
+Resolved: the `issues-identified-during-skill-creation` branch marks
+`dakar-args` as carrying an option-like value, so
+`--dakar-args "--budget-gbp 0.15"` now parses directly; ordinary flags still
+reject a following flag token as a missing value. The leading-space form
+remains accepted, so the recorded invocations replay unchanged.
 
 ### 4.3 Low-reasoning finders are conservative on clean pull requests
 
