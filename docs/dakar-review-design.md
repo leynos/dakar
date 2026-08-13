@@ -20,14 +20,16 @@ to decide whether the approach can beat CodeRabbit's user-supplied benchmark.
 > **Superseded benchmark framing.** The original per-file benchmark below
 > (USD 0.25 per reviewed file) predates
 > [ADR 002](adr-002-deterministic-tiered-review-cost.md), which reframes cost
-> as a hard **per-review** budget (`budgetGbp`, default £0.10, with mean and
+> as a hard **per-review** budget (`budgetGbp`, default £0.15, with mean and
 > 95th-percentile targets of £0.05 and £0.08) rather than a per-file ratio.
 > The `api-key-support` ExecPlan's USD 0.25 acceptance and USD 0.11 stretch
 > figures are independent per-review USD delivery goals chosen for that
 > plan, not currency conversions of ADR 002's GBP targets; see the ExecPlan's
 > "Purpose / big picture" section for the reconciliation and the worst-case
-> arithmetic (about USD 0.133 at default caps). §8 below names the ledger
-> fields that carry the implemented accounting.
+> arithmetic (USD 0.1855625 for four finder packs and one audit, within the
+> USD 0.1905 default budget). That admits the initial calls, not a retry at
+> their maximum caps. §8 below names the ledger fields that carry the
+> implemented accounting.
 
 Dakar is not a deterministic linter. The separate `odw-lint` project should own
 formatting, spelling, line-count, schema, and other rules that can be checked
@@ -318,12 +320,14 @@ spend to review coverage and outcome.
 
 Cost recovery has three layers, now implemented as follows:
 
-- Budget control: a hard per-review `budgetGbp` (default £0.10), enforced
+- Budget control: a hard per-review `budgetGbp` (default £0.15), enforced
   by reserve-first admission — the audit's worst case is reserved before any
   Luna finder dispatch, so an unaffordable review refuses
   (`stage: "admission"`) before spending on finders it could not afford to
   conclude. `maxLunaFlexCalls`, `transactionMaxFiles`, and `maxAuditCandidates`
-  remain as complementary bounded caps.
+  remain as complementary bounded caps. The default admits four initial finder
+  packs and one audit; every retry still requires its own admission and may be
+  refused when those initial calls reach their maximum caps.
 - Attribution: `ledger` entries carry cost per call, phase, lane, and model;
   `admissionRefusals` and `lunaDowngrades` record what did not run, or ran only
   partially, and why.

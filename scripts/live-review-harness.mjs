@@ -690,7 +690,10 @@ export function parseCliArgs(argv) {
       continue
     }
     const value = argv[++index]
-    if (value === undefined || (!spec.optionLikeValue && value.startsWith('--'))) {
+    if (value === undefined) {
+      throw new Error(`--${name} requires a value`)
+    }
+    if (value.startsWith('--') && !spec.optionLikeValue) {
       throw new Error(`--${name} requires a value`)
     }
     options[spec.key] = value

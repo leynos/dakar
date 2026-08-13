@@ -564,10 +564,10 @@ exceeding the ceiling (see "Retries, downgrades, and deferral" below).
 Because admission refuses any finder pack beyond the ordinary budget, a gate
 reviewing a large task branch may need to raise `--budget-gbp` to admit more
 finder packs and so cover the full diff. The default budget covers the default
-caps (four finder packs plus the audit reserve, with modest retry headroom);
-reviews that raise `--max-luna-calls` or the token bounds must raise the
-budget in step, and should lift it only for the runs that warrant the extra
-coverage.
+caps (four initial finder packs plus the audit reserve); it does not guarantee
+retry headroom when those calls reach their maximum caps. Reviews that raise
+`--max-luna-calls` or the token bounds must raise the budget
+in step, and should lift it only for the runs that warrant the extra coverage.
 
 `metrics` carries the cost accounting:
 
