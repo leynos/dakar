@@ -1157,6 +1157,30 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
   )
 })
 
+test('install script stops before installation when npm is unavailable', () => {
+  const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
+  const installMarker = join(toolDir, 'bun-invoked')
+  writeFileSync(join(toolDir, 'bun'), `#!/bin/sh\ntouch '${installMarker}'\n`)
+  writeFileSync(join(toolDir, 'node'), '#!/bin/sh\nexit 0\n')
+  writeFileSync(join(toolDir, 'odw'), '#!/bin/sh\nexit 0\n')
+  writeFileSync(join(toolDir, 'dirname'), '#!/bin/sh\nexec /usr/bin/dirname "$@"\n')
+  for (const command of ['bun', 'node', 'odw', 'dirname']) {
+    chmodSync(join(toolDir, command), 0o755)
+  }
+
+  const result = spawnSync('/bin/sh', [installPath], {
+    cwd: repoRoot,
+    env: { PATH: toolDir },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  assert.equal(result.status, 127)
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /install\.sh: npm is required but was not found on PATH/u)
+  assert.equal(existsSync(installMarker), false, 'Bun must not run without npm')
+})
+
 test('install script help does not install', () => {
   const output = execFileSync(installPath, ['--help'], {
     cwd: repoRoot,
