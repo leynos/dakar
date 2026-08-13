@@ -15,6 +15,10 @@ import assert from 'node:assert/strict'
 
 const repoRoot = resolve(new URL('..', import.meta.url).pathname)
 const cliPath = join(repoRoot, 'bin', 'dakar-review.mjs')
+// The CLI's CodeGraph warmup shells out to the operator's `mcp` CLI and can
+// index real directories; tests must never trigger that. Spawned CLIs inherit
+// this through `{ ...process.env }`.
+process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
 const installPath = join(repoRoot, 'install.sh')
 
 /** Copies the checkout's installation inputs without its dependencies. */

@@ -72,6 +72,7 @@ export interface WorkflowArgs {
   policy?: unknown
   prepared?: PreparedReview
   repoRoot?: string
+  repoSlug?: string
   routingPolicy?: unknown
   stateRoot?: string
   synthesisModel?: string
@@ -215,6 +216,8 @@ export interface PromptContext {
   policy: NormalizedReviewPolicy
   policyPath: string
   repoRoot: string
+  /** `owner/name` slug for DeepWiki lookups, or an empty string when unknown. */
+  repoSlug: string
 }
 
 /** Records one refused model call and why admission control rejected it. */

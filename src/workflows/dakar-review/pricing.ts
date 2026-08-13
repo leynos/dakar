@@ -55,37 +55,39 @@ export function estimateWorstCaseUsd(
   return uncachedInputUsd + cachedInputUsd + outputUsd
 }
 
-/** Seeds the verified 2026-07-18 rates and exchange snapshot for Dakar's models. */
+/** Seeds the verified 2026-08-13 rates and exchange snapshot for Dakar's models. */
 export const DEFAULT_PRICING_TABLE: PricingTable = {
-  version: '2026-07-18',
+  // Rates re-verified against the OpenAI pricing page on 2026-08-13: Luna
+  // Flex fell to a fifth of the 2026-07-18 rates and Terra Flex by a fifth.
+  version: '2026-08-13',
   // Deliberately conservative (haircut) GBP->USD conversion snapshot, chosen
   // below the prevailing spot rate so GBP budgets under-admit rather than
   // over-admit. Versioned data, revised with the rest of this table.
   usdPerGbp: 1.27,
   rates: {
     'gpt-5.6-luna:flex': {
-      inputUsdPerMTok: 0.5,
-      cachedInputUsdPerMTok: 0.05,
-      cacheWriteUsdPerMTok: 0.625,
-      outputUsdPerMTok: 3.0,
+      inputUsdPerMTok: 0.1,
+      cachedInputUsdPerMTok: 0.01,
+      cacheWriteUsdPerMTok: 0.125,
+      outputUsdPerMTok: 0.6,
     },
     'gpt-5.6-terra:flex': {
-      inputUsdPerMTok: 1.25,
-      cachedInputUsdPerMTok: 0.125,
-      cacheWriteUsdPerMTok: 1.5625,
-      outputUsdPerMTok: 7.5,
-    },
-    'gpt-5.6-luna:standard': {
       inputUsdPerMTok: 1.0,
       cachedInputUsdPerMTok: 0.1,
       cacheWriteUsdPerMTok: 1.25,
       outputUsdPerMTok: 6.0,
     },
+    'gpt-5.6-luna:standard': {
+      inputUsdPerMTok: 0.2,
+      cachedInputUsdPerMTok: 0.02,
+      cacheWriteUsdPerMTok: 0.25,
+      outputUsdPerMTok: 1.2,
+    },
     'gpt-5.6-terra:standard': {
-      inputUsdPerMTok: 2.5,
-      cachedInputUsdPerMTok: 0.25,
-      cacheWriteUsdPerMTok: 3.125,
-      outputUsdPerMTok: 15.0,
+      inputUsdPerMTok: 2.0,
+      cachedInputUsdPerMTok: 0.2,
+      cacheWriteUsdPerMTok: 2.5,
+      outputUsdPerMTok: 12.0,
     },
   },
 }

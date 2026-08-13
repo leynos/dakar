@@ -15,7 +15,7 @@ export interface FlexFinderConfig {
   maxLunaFlexCalls: number
   maxTasks: number
   transactionMaxFiles: number
-  lunaRole: 'luna' | 'luna-medium'
+  lunaRole: 'luna' | 'luna-medium' | 'luna-low'
   maxFindings: number
 }
 
