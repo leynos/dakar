@@ -35,7 +35,6 @@ From the root of the repository under review:
 OPENAI_API_KEY=... dakar-review \
   --repo-root "$PWD" \
   --base origin/main \
-  --budget-gbp 0.15 \
   --telemetry > review.json
 ```
 
@@ -52,17 +51,17 @@ OPENAI_API_KEY=... dakar-review \
 
 The admission controller reserves the audit call's worst case (about USD 0.114
 at default token bounds) before admitting any finder pack, and each finder
-pack's worst case is about USD 0.0142. Under the 2026-07-18 pricing table the
-default `--budget-gbp 0.1` (USD 0.127) leaves less than one pack's worth of
-headroom after the audit reserve, so every pack is refused and the run fails
-with a "zero coverage" error rather than reporting a hollow pass. Always pass
-an explicit budget:
+pack's worst case is about USD 0.0142. The default `--budget-gbp 0.15` (USD
+0.1905) covers the default caps — four packs of five files plus the audit
+reserve, with modest retry headroom. A budget too small for even one pack fails
+with a "zero coverage" error rather than reporting a hollow pass, so a lowered
+budget or raised caps must keep the arithmetic in balance:
 
 - Approximate rule: `budgetUsd >= 0.114 + packs x 0.0143`, with
   `packs = ceil(changedFiles / transactionMaxFiles)` capped at
   `maxLunaFlexCalls`. GBP converts at the pricing table's snapshot (1.27).
-- `--budget-gbp 0.15` covers any review at the default caps (up to 4 packs of
-  5 files, i.e. 20 changed files).
+- The default budget suffices for up to 20 changed files at the default caps;
+  no flag is needed for ordinary branch reviews.
 - For larger diffs, raise coverage and budget together, for example
   `--budget-gbp 0.3 --max-luna-calls 8 --transaction-max-files 10` for up to 80
   files. Packs group files by task kind (source, tests, config, docs), so real
@@ -123,10 +122,8 @@ verifies the pinned SHAs, isolates state, and injects the key from
 node scripts/live-review-harness.mjs \
   --repo leynos/gauss --pr 124 \
   --work /tmp/dakar-eval/work --out /tmp/dakar-eval/out \
-  --dakar-args " --budget-gbp 0.15"
+  --dakar-args "--budget-gbp 0.15"
 ```
 
-The leading space in the `--dakar-args` value is required: the harness's flag
-parser rejects an option value that begins with `--`. Fixture provenance and
-the flags used for the recorded evaluation runs are documented in
-`docs/review-skill-design.md`.
+Fixture provenance and the exact flags used for the recorded evaluation runs
+are documented in `docs/review-skill-design.md`.
