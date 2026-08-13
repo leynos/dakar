@@ -274,16 +274,6 @@ function configuredModels(value: unknown): ModelSpec[] {
 }
 
 /**
- * Clamp an untrusted Luna reasoning value to the supported high default.
- *
- * @param value - Candidate finder reasoning value from workflow arguments.
- * @returns A supported reasoning value, defaulting to high.
- */
-function configuredLunaReasoning(value: unknown): Reasoning {
-  return isReasoning(value) ? value : 'high'
-}
-
-/**
  * Resolves untrusted workflow arguments into bounded, immutable configuration.
  *
  * @param value - Raw ODW arguments; malformed fields fall back to safe defaults.
@@ -327,7 +317,7 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     headRef: nonBlankString(args.head, 'HEAD'),
     // High by default since the 2026-08-13 Flex repricing made Luna five
     // times cheaper; 'medium' and 'low' remain as de-escalation values.
-    lunaReasoning: configuredLunaReasoning(args.lunaReasoning),
+    lunaReasoning: isReasoning(args.lunaReasoning) ? args.lunaReasoning : 'high',
     maxAuditCandidates: positiveLimit(args.maxAuditCandidates, 30, 100),
     maxCandidates: positiveLimit(args.maxCandidates, 30, 1_000),
     maxFindings: positiveLimit(args.maxFindings, 20, 200),

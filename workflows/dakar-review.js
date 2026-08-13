@@ -315,9 +315,6 @@ function configuredModels(value) {
     (candidate) => isObject(candidate) && (candidate.label === void 0 || typeof candidate.label === "string") && validModelIdentifier(candidate.model) && (candidate.reasoning === "low" || candidate.reasoning === "medium" || candidate.reasoning === "high") && reasoningFromModel(candidate.model, candidate.reasoning) === candidate.reasoning && (candidate.role === void 0 || typeof candidate.role === "string")
   );
 }
-function configuredLunaReasoning(value) {
-  return isReasoning(value) ? value : "high";
-}
 function resolveWorkflowConfig(value) {
   const args2 = isObject(value) ? value : {};
   const policy = configuredReviewPolicy(args2.policy);
@@ -354,7 +351,7 @@ function resolveWorkflowConfig(value) {
     headRef: nonBlankString(args2.head, "HEAD"),
     // High by default since the 2026-08-13 Flex repricing made Luna five
     // times cheaper; 'medium' and 'low' remain as de-escalation values.
-    lunaReasoning: configuredLunaReasoning(args2.lunaReasoning),
+    lunaReasoning: isReasoning(args2.lunaReasoning) ? args2.lunaReasoning : "high",
     maxAuditCandidates: positiveLimit(args2.maxAuditCandidates, 30, 100),
     maxCandidates: positiveLimit(args2.maxCandidates, 30, 1e3),
     maxFindings: positiveLimit(args2.maxFindings, 20, 200),
