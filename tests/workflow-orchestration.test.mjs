@@ -164,6 +164,34 @@ test('finder packs route through the Luna adapter and the audit through Terra', 
   assert.equal(auditCall.model, 'gpt-5.6-terra')
 })
 
+test('Luna reasoning chooses the matching finder lane without changing the Terra lane', async () => {
+  const expected = [
+    ['high', 'pi-luna-flex-high'],
+    ['medium', 'pi-luna-flex-medium'],
+    ['low', 'pi-luna-flex'],
+  ]
+  for (const [lunaReasoning, adapter] of expected) {
+    const { agentCalls, result } = await runWorkflow({ knobs: { lunaReasoning } })
+    assert.equal(result.ok, true)
+    assert.equal(agentCalls.find((call) => call.label === 'luna-flex-1').adapter, adapter)
+    assert.equal(agentCalls.find((call) => call.label === 'audit').adapter, 'pi-terra-flex-high')
+  }
+})
+
+test('dry-run lane output exposes the default and de-escalation Luna lanes', async () => {
+  const { result } = await runWorkflow({ knobs: { dryRun: true } })
+
+  assert.deepEqual(result.lanes.luna, {
+    role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-high', serviceTier: 'flex', reasoning: 'high',
+  })
+  assert.deepEqual(result.lanes['luna-medium'], {
+    role: 'luna-medium', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-medium', serviceTier: 'flex', reasoning: 'medium',
+  })
+  assert.deepEqual(result.lanes['luna-low'], {
+    role: 'luna-low', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low',
+  })
+})
+
 test('the finder plan never exceeds maxLunaFlexCalls and surfaces truncation', async () => {
   const changedFiles = Array.from({ length: 6 }, (_, index) => `src/module-${index}.js`)
   const { agentCalls, result } = await runWorkflow({

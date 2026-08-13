@@ -360,6 +360,70 @@ function deriveRepoSlug(repoRoot) {
 }
 
 /**
+ * Add the origin-derived GitHub slug to workflow arguments when available.
+ *
+ * @param {object} workflowArgs - Mutable workflow arguments assembled by the CLI.
+ * @param {string} repoRoot - Absolute path to the repository root.
+ * @returns {void}
+ */
+function addRepoSlug(workflowArgs, repoRoot) {
+  const repoSlug = deriveRepoSlug(repoRoot)
+  if (repoSlug) workflowArgs.repoSlug = repoSlug
+}
+
+/**
+ * Determine whether the operator's MCP CLI is available for CodeGraph warmup.
+ *
+ * @returns {boolean} whether the MCP CLI responded successfully to its probe.
+ */
+function isMcpCliAvailable() {
+  const probe = spawnSync('mcp', ['--list'], { encoding: 'utf8', timeout: 30_000 })
+  return !probe.error && probe.status === 0
+}
+
+/**
+ * Invoke one advisory CodeGraph indexing tool and report failures on stderr.
+ *
+ * @param {string} tool - CodeGraph MCP tool name.
+ * @param {object} payload - JSON-serializable tool payload.
+ * @param {number} timeout - Maximum invocation time in milliseconds.
+ * @returns {boolean} whether the tool invocation completed successfully.
+ */
+function warmContextTool(tool, payload, timeout) {
+  const result = spawnSync('mcp', ['codegraph', tool, JSON.stringify(payload)], {
+    encoding: 'utf8',
+    timeout,
+  })
+  if (result.error || result.status !== 0) {
+    process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.\n`)
+    return false
+  }
+  return true
+}
+
+/**
+ * Index bounded, existing, unique Markdown context files and count successes.
+ *
+ * @param {string} repoRoot - Absolute path to the repository root.
+ * @param {string[]} changedFiles - Repository-relative changed paths for this review.
+ * @returns {number} number of successfully indexed Markdown files.
+ */
+function warmMarkdownContext(repoRoot, changedFiles) {
+  const MAX_MARKDOWN_WARMUPS = 20
+  const candidates = ['AGENTS.md', 'README.md'].concat((changedFiles || []).filter((path) => path.endsWith('.md')))
+  const seen = new Set()
+  let indexed = 0
+  for (const relPath of candidates) {
+    if (indexed >= MAX_MARKDOWN_WARMUPS) break
+    const absolute = join(repoRoot, relPath)
+    if (seen.has(absolute) || !existsSync(absolute)) continue
+    seen.add(absolute)
+    if (warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000)) indexed += 1
+  }
+  return indexed
+}
+
+/**
  * Warm the CodeGraph MCP index for the reviewed checkout before finders run.
  *
  * Indexes the repository directory, then the markdown context finders are
@@ -374,40 +438,17 @@ function deriveRepoSlug(repoRoot) {
  * @returns {void}
  */
 function warmContextIndex(repoRoot, changedFiles) {
-  const MAX_MARKDOWN_WARMUPS = 20
   if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
     process.stderr.write('dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n')
     return
   }
-  const probe = spawnSync('mcp', ['--list'], { encoding: 'utf8', timeout: 30_000 })
-  if (probe.error || probe.status !== 0) {
+  if (!isMcpCliAvailable()) {
     process.stderr.write('dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n')
     return
   }
-  const call = (tool, payload, timeout) => {
-    const result = spawnSync('mcp', ['codegraph', tool, JSON.stringify(payload)], {
-      encoding: 'utf8',
-      timeout,
-    })
-    if (result.error || result.status !== 0) {
-      process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.\n`)
-      return false
-    }
-    return true
-  }
   process.stderr.write('dakar-review: warming CodeGraph index for the reviewed checkout.\n')
-  call('codegraph_index_directory', { path: repoRoot }, 600_000)
-  const markdownPaths = ['AGENTS.md', 'README.md']
-    .concat((changedFiles || []).filter((path) => path.endsWith('.md')))
-  const seen = new Set()
-  let indexed = 0
-  for (const relPath of markdownPaths) {
-    if (indexed >= MAX_MARKDOWN_WARMUPS) break
-    const absolute = join(repoRoot, relPath)
-    if (seen.has(absolute) || !existsSync(absolute)) continue
-    seen.add(absolute)
-    if (call('codegraph_index_markdown', { path: absolute }, 120_000)) indexed += 1
-  }
+  warmContextTool('codegraph_index_directory', { path: repoRoot }, 600_000)
+  const indexed = warmMarkdownContext(repoRoot, changedFiles)
   process.stderr.write(`dakar-review: CodeGraph warmup complete (${indexed} markdown file(s) indexed).\n`)
 }
 
@@ -422,10 +463,7 @@ function buildWorkflowArgs(options, repoRoot) {
     policy: resolvedConfig.policy,
     repoRoot,
   }
-  const repoSlug = deriveRepoSlug(repoRoot)
-  if (repoSlug) {
-    workflowArgs.repoSlug = repoSlug
-  }
+  addRepoSlug(workflowArgs, repoRoot)
   if (agentInstructions) {
     workflowArgs.agentInstructions = agentInstructions
   }
@@ -1001,6 +1039,71 @@ function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
 }
 
 /**
+ * Complete the host-side preflight required before a live ODW review.
+ *
+ * This preserves the CLI boundary: preparation and deterministic failures emit
+ * their terminal result before ODW starts, while advisory authentication,
+ * context-index, and timeout warnings remain on stderr.
+ *
+ * @param {object} options - Parsed CLI options.
+ * @param {string} repoRoot - Absolute path to the reviewed repository root.
+ * @param {object} workflowArgs - Mutable workflow arguments for the ODW run.
+ * @param {string} format - Requested final output format.
+ * @returns {number | null} terminal exit code, or null after successful preflight.
+ */
+function prepareLiveReview(options, repoRoot, workflowArgs, format) {
+  const preparation = prepareReview(options, repoRoot, workflowArgs.config)
+  if (preparation.status !== undefined) return preparation.status
+  if (preparation.skip) {
+    // Route the skip result through the shared printer so it honours --format;
+    // a skip has no reportMarkdown, so markdown falls back to the JSON dump.
+    printWorkflowOutput(preparation.skip, format)
+    return 0
+  }
+  workflowArgs.prepared = preparation.prepared
+  const gateConfig = readTrustedGateConfig(workflowArgs.config, repoRoot, workflowArgs.prepared.reviewBase)
+  const trustedPolicy = parseReviewPolicy(gateConfig, {
+    configPath: `${workflowArgs.config} (trusted review base ${workflowArgs.prepared.reviewBase})`,
+  })
+  workflowArgs.policy = trustedPolicy
+  const deterministicGates = runDeterministicGates(trustedPolicy, repoRoot)
+  workflowArgs.prepared.deterministicGates = deterministicGates
+  if (deterministicGates.some((gate) => gate.blocking && gate.status !== 'passed')) {
+    printWorkflowOutput(blockingGateResult(deterministicGates, workflowArgs.config, workflowArgs.prepared), format)
+    return 1
+  }
+  // Every routing policy clamps to the live deterministic-flex-v1 lane
+  // (config.ts), which dispatches through the pi Flex adapters that resolve the
+  // API key from OPENAI_API_KEY. An unknown policy must not suppress this
+  // warning, so the gate keys off the key alone. Warn rather than fail so a
+  // mocked ODW binary still runs.
+  if (!process.env.OPENAI_API_KEY) {
+    process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
+  }
+  // Warm the CodeGraph MCP index (code plus key markdown) before any finder
+  // dispatch so finder-prompt context lookups are cheap and current.
+  warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || [])
+  // Advisory guard: an outer wait shorter than the retry schedule's worst
+  // case can kill a healthy run before the workflow's own deferral logic
+  // fires. The knob bounds mirror resolveWorkflowConfig's defaults.
+  const worstCase = worstCaseReviewSeconds(
+    {
+      flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),
+      flexInitialBackoffSeconds: clampLikeConfig(options.flexInitialBackoffSeconds, 30, 1, 300),
+      flexMaxBackoffSeconds: clampLikeConfig(options.flexMaxBackoffSeconds, 120, 1, 900),
+      flexJitterSeconds: clampLikeConfig(options.flexJitterSeconds, 10, 0, 60),
+    },
+    clampPerCallTimeout(options.perCallTimeoutSeconds),
+  )
+  if ((options.timeout || 3600) < worstCase) {
+    process.stderr.write(
+      `dakar-review: --timeout ${options.timeout || 3600}s is below the retry schedule's worst case (${worstCase}s); the run may be killed before the workflow can defer.\n`,
+    )
+  }
+  return null
+}
+
+/**
  * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
  *
  * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
@@ -1025,56 +1128,8 @@ async function run(argv) {
 
   const workflowArgs = buildWorkflowArgs(options, repoRoot)
   if (!options.dryRun) {
-    const preparation = prepareReview(options, repoRoot, workflowArgs.config)
-    if (preparation.status !== undefined) {
-      return preparation.status
-    }
-    if (preparation.skip) {
-      // Route the skip result through the shared printer so it honours --format;
-      // a skip has no reportMarkdown, so markdown falls back to the JSON dump.
-      printWorkflowOutput(preparation.skip, format)
-      return 0
-    }
-    workflowArgs.prepared = preparation.prepared
-    const gateConfig = readTrustedGateConfig(workflowArgs.config, repoRoot, workflowArgs.prepared.reviewBase)
-    const trustedPolicy = parseReviewPolicy(gateConfig, {
-      configPath: `${workflowArgs.config} (trusted review base ${workflowArgs.prepared.reviewBase})`,
-    })
-    workflowArgs.policy = trustedPolicy
-    const deterministicGates = runDeterministicGates(trustedPolicy, repoRoot)
-    workflowArgs.prepared.deterministicGates = deterministicGates
-    if (deterministicGates.some((gate) => gate.blocking && gate.status !== 'passed')) {
-      printWorkflowOutput(blockingGateResult(deterministicGates, workflowArgs.config, workflowArgs.prepared), format)
-      return 1
-    }
-    // Every routing policy clamps to the live deterministic-flex-v1 lane
-    // (config.ts), which dispatches through the pi Flex adapters that resolve the
-    // API key from OPENAI_API_KEY. An unknown policy must not suppress this
-    // warning, so the gate keys off the key alone. Warn rather than fail so a
-    // mocked ODW binary still runs.
-    if (!process.env.OPENAI_API_KEY) {
-      process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
-    }
-    // Warm the CodeGraph MCP index (code plus key markdown) before any finder
-    // dispatch so finder-prompt context lookups are cheap and current.
-    warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || [])
-    // Advisory guard: an outer wait shorter than the retry schedule's worst
-    // case can kill a healthy run before the workflow's own deferral logic
-    // fires. The knob bounds mirror resolveWorkflowConfig's defaults.
-    const worstCase = worstCaseReviewSeconds(
-      {
-        flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),
-        flexInitialBackoffSeconds: clampLikeConfig(options.flexInitialBackoffSeconds, 30, 1, 300),
-        flexMaxBackoffSeconds: clampLikeConfig(options.flexMaxBackoffSeconds, 120, 1, 900),
-        flexJitterSeconds: clampLikeConfig(options.flexJitterSeconds, 10, 0, 60),
-      },
-      clampPerCallTimeout(options.perCallTimeoutSeconds),
-    )
-    if ((options.timeout || 3600) < worstCase) {
-      process.stderr.write(
-        `dakar-review: --timeout ${options.timeout || 3600}s is below the retry schedule's worst case (${worstCase}s); the run may be killed before the workflow can defer.\n`,
-      )
-    }
+    const preflightStatus = prepareLiveReview(options, repoRoot, workflowArgs, format)
+    if (preflightStatus !== null) return preflightStatus
   }
   // Derive a run-local ODW config that bounds the pi Flex calls with the per-call
   // timeout, then remove it after the run like the usage-log file.

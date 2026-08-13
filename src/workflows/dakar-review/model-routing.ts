@@ -77,6 +77,21 @@ export function isReasoning(value: unknown): value is Reasoning {
   return value === 'low' || value === 'medium' || value === 'high'
 }
 
+/** Luna Flex roles the finder-plan builder accepts. */
+export type LunaFlexLaneRole = 'luna' | 'luna-medium' | 'luna-low'
+
+/**
+ * Select the registered Luna Flex lane for a reasoning value.
+ *
+ * @param reasoning - Resolved or untrusted reasoning value.
+ * @returns The high lane by default, or the matching de-escalation lane.
+ */
+export function lunaFlexLaneRole(reasoning: unknown): LunaFlexLaneRole {
+  if (reasoning === 'medium') return 'luna-medium'
+  if (reasoning === 'low') return 'luna-low'
+  return 'luna'
+}
+
 /** Pins one Flex execution lane to its model, adapter, service tier, and effort. */
 export interface FlexLaneSpec {
   role: string

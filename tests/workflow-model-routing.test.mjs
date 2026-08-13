@@ -9,6 +9,7 @@ import {
   flexLaneRole,
   FLEX_LANE_ROLES,
   isReasoning,
+  lunaFlexLaneRole,
   modelForRole,
   modelName,
   reasoningFromModel,
@@ -42,6 +43,13 @@ test('adapter selection accepts supported reasoning and falls back safely', () =
   assert.equal(isReasoning('medium'), true)
   assert.equal(isReasoning('high'), true)
   assert.equal(isReasoning('experimental'), false)
+})
+
+test('Luna Flex role selection maps each reasoning level to its registered lane', () => {
+  assert.equal(lunaFlexLaneRole('high'), 'luna')
+  assert.equal(lunaFlexLaneRole('medium'), 'luna-medium')
+  assert.equal(lunaFlexLaneRole('low'), 'luna-low')
+  assert.equal(lunaFlexLaneRole('unsupported'), 'luna')
 })
 
 test('role lookup preserves configuration order and has a closed fallback', () => {

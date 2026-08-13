@@ -1,6 +1,7 @@
 /** @file Classify changed files and construct the bounded review task graph. */
 
 import { adapterForReasoning, baseModel, flexLaneRole, modelForRole, modelName } from './model-routing.ts'
+import type { LunaFlexLaneRole } from './model-routing.ts'
 import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'
 
 /** Defines the bounded limits and model set used to construct review tasks. */
@@ -15,7 +16,7 @@ export interface FlexFinderConfig {
   maxLunaFlexCalls: number
   maxTasks: number
   transactionMaxFiles: number
-  lunaRole: 'luna' | 'luna-medium' | 'luna-low'
+  lunaRole: LunaFlexLaneRole
   maxFindings: number
 }
 

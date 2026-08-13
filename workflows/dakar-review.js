@@ -205,6 +205,11 @@ function modelForRole(role, reviewModels) {
 function isReasoning(value) {
   return value === "low" || value === "medium" || value === "high";
 }
+function lunaFlexLaneRole(reasoning) {
+  if (reasoning === "medium") return "luna-medium";
+  if (reasoning === "low") return "luna-low";
+  return "luna";
+}
 var FLEX_LANE_ROLES = Object.freeze({
   luna: Object.freeze({ role: "luna", model: "gpt-5.6-luna", adapter: "pi-luna-flex-high", serviceTier: "flex", reasoning: "high" }),
   "luna-medium": Object.freeze({ role: "luna-medium", model: "gpt-5.6-luna", adapter: "pi-luna-flex-medium", serviceTier: "flex", reasoning: "medium" }),
@@ -310,6 +315,9 @@ function configuredModels(value) {
     (candidate) => isObject(candidate) && (candidate.label === void 0 || typeof candidate.label === "string") && validModelIdentifier(candidate.model) && (candidate.reasoning === "low" || candidate.reasoning === "medium" || candidate.reasoning === "high") && reasoningFromModel(candidate.model, candidate.reasoning) === candidate.reasoning && (candidate.role === void 0 || typeof candidate.role === "string")
   );
 }
+function configuredLunaReasoning(value) {
+  return isReasoning(value) ? value : "high";
+}
 function resolveWorkflowConfig(value) {
   const args2 = isObject(value) ? value : {};
   const policy = configuredReviewPolicy(args2.policy);
@@ -346,7 +354,7 @@ function resolveWorkflowConfig(value) {
     headRef: nonBlankString(args2.head, "HEAD"),
     // High by default since the 2026-08-13 Flex repricing made Luna five
     // times cheaper; 'medium' and 'low' remain as de-escalation values.
-    lunaReasoning: args2.lunaReasoning === "medium" || args2.lunaReasoning === "low" ? args2.lunaReasoning : "high",
+    lunaReasoning: configuredLunaReasoning(args2.lunaReasoning),
     maxAuditCandidates: positiveLimit(args2.maxAuditCandidates, 30, 100),
     maxCandidates: positiveLimit(args2.maxCandidates, 30, 1e3),
     maxFindings: positiveLimit(args2.maxFindings, 20, 200),
@@ -1152,9 +1160,8 @@ async function workflowMain() {
   });
   const WORST_CASE_REVIEW_SECONDS = worstCaseReviewSeconds(RETRY_CONFIG, PER_CALL_TIMEOUT_SECONDS);
   const PRICING_TABLE = DEFAULT_PRICING_TABLE;
-  const LUNA_LANE = flexLaneRole(
-    LUNA_REASONING === "medium" ? "luna-medium" : LUNA_REASONING === "low" ? "luna-low" : "luna"
-  );
+  const LUNA_ROLE = lunaFlexLaneRole(LUNA_REASONING);
+  const LUNA_LANE = flexLaneRole(LUNA_ROLE);
   const TERRA_LANE = flexLaneRole("terra");
   const BUDGET_USD = BUDGET_GBP * PRICING_TABLE.usdPerGbp;
   const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
@@ -1315,7 +1322,7 @@ async function workflowMain() {
       maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
       maxTasks: MAX_TASKS,
       transactionMaxFiles: TRANSACTION_MAX_FILES,
-      lunaRole: LUNA_LANE.role === "luna-medium" || LUNA_LANE.role === "luna-low" ? LUNA_LANE.role : "luna",
+      lunaRole: LUNA_ROLE,
       maxFindings: MAX_FINDINGS
     });
     packs = plan.packs;
