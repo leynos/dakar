@@ -40,5 +40,40 @@
     "pr": 609,
     "base": "1f8abdb4c536090f56892757325c5425a5a3b168",
     "head": "0cf82559ba39209b1f0238333c1920184c1b14e7"
+  },
+  {
+    "tier": "skill-docs-tiny",
+    "repo": "leynos/mdtablefix",
+    "pr": 413,
+    "base": "cbf7cb0705f84ba2564dfa1e51341fcadac9b6b7",
+    "head": "cb89fdd4afd536f59af308f81ddea00efe4a61a8"
+  },
+  {
+    "tier": "skill-small",
+    "repo": "leynos/rstest-bdd",
+    "pr": 627,
+    "base": "1e08dcbf97f24697a38b26744aeb5d9d2214c27e",
+    "head": "9553d00130d48c4ac38a9190218cafb36366a926"
+  },
+  {
+    "tier": "skill-medium",
+    "repo": "leynos/df12-www",
+    "pr": 74,
+    "base": "867d63e6d0896d3a16c0de2a7a749594e3eec467",
+    "head": "fff441f730d65643c54863b30c167a01734cd208"
+  },
+  {
+    "tier": "skill-upper-medium",
+    "repo": "leynos/gauss",
+    "pr": 124,
+    "base": "d1bf6ce7ece9df3f60c720071c5b9ac3f569c57c",
+    "head": "0ea0cf8a8586856b02456b4687905c4b911aaff3"
+  },
+  {
+    "tier": "skill-large",
+    "repo": "leynos/concordat",
+    "pr": 110,
+    "base": "fcf22696f127606da9ef5cdab9cabdea9849f37c",
+    "head": "8e0ece98a3778d93eb90acf0c97beb04608a799c"
   }
 ]
