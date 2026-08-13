@@ -15,16 +15,15 @@ Install Dakar's review command from a checkout with the canonical installer:
 
 The installer requires Node, npm, Bun, and ODW on `PATH`. It restores the exact
 pinned dependencies beside the checkout, then calls Bun with the absolute
-checkout path and exposes `dakar-review`.
-Installing through Bun directly is unsupported because Bun links a local
-package's executable back into its checkout, while Node resolves runtime
-dependencies from that checkout. The package remains private; the command is
-meant for local or git-based installation, not npm publication. `install.sh`
-accepts no install arguments; run `./install.sh --help` for its short usage
-text. On each repeated installer run, `install.sh` first executes
-`bun remove -g dakar` before reinstalling, preventing an interrupted
-installation from leaving duplicate `dakar` entries while keeping the shared
-Bun lockfile and other global packages intact.
+checkout path and exposes `dakar-review`. Installing through Bun directly is
+unsupported because Bun links a local package's executable back into its
+checkout, while Node resolves runtime dependencies from that checkout. The
+package remains private; the command is meant for local or git-based
+installation, not npm publication. `install.sh` accepts no install arguments;
+run `./install.sh --help` for its short usage text. On each repeated installer
+run, `install.sh` first executes `bun remove -g dakar` before reinstalling,
+preventing an interrupted installation from leaving duplicate `dakar` entries
+while keeping the shared Bun lockfile and other global packages intact.
 
 ## Running a branch review
 
@@ -540,9 +539,8 @@ Because admission refuses any finder pack beyond the ordinary budget, a gate
 reviewing a large task branch may need to raise `--budget-gbp` to admit more
 finder packs and so cover the full diff. The default budget covers the default
 caps (four finder packs plus the audit reserve, with modest retry headroom);
-reviews that raise `--max-luna-calls` or the token bounds must raise the
-budget in step, and should lift it only for the runs that warrant the extra
-coverage.
+reviews that raise `--max-luna-calls` or the token bounds must raise the budget
+in step, and should lift it only for the runs that warrant the extra coverage.
 
 `metrics` carries the cost accounting:
 

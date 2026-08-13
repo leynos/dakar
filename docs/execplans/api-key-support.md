@@ -288,10 +288,10 @@ conflict in `Decision Log`, and escalate.
   df12-build side: a `runDakarHostReview` alongside the CodeRabbit path behind
   a review-tool config defaulting to `dakar` — outcome mapping (`verdict: pass`
   → clean, `changes-requested` → findings, `stage: deferred` →
-  backoff-and-retry, other failures → error), severity mapping (Dakar `critical`
-  /`high` block, matching the critical/major CodeRabbit rule), findings-sink
-  parity, and tests mirroring the existing host-review harness. Roadmap step
-  7.6 tracks this work.
+  backoff-and-retry, other failures → error), severity mapping (Dakar
+  `critical` /`high` block, matching the critical/major CodeRabbit rule),
+  findings-sink parity, and tests mirroring the existing host-review harness.
+  Roadmap step 7.6 tracks this work.
   - [x] (2026-07-18 20:45Z) Dakar side: thirteen review-tuning flags
     wired red-first (`--budget-gbp` through `--per-call-timeout`),
     forwarding only — bounds stay in `resolveWorkflowConfig`; help
@@ -495,9 +495,9 @@ conflict in `Decision Log`, and escalate.
   or `!command` API-key resolution. Evidence: `captured-requests.jsonl`,
   `pi-live.out`, `pi-live.err` in the scratchpad, 2026-07-18. Impact: pi
   becomes the adapter vehicle (see Decision Log). Its ~12.8k cache-write-token
-  prompt overhead is smaller than Codex's ~20k and reducible later via `--tools`
-  /`--system-prompt` tuning; overhead tokens land in the cache-write band on
-  first use and the cached band thereafter, which the M1 estimator must
+  prompt overhead is smaller than Codex's ~20k and reducible later via
+  `--tools` /`--system-prompt` tuning; overhead tokens land in the cache-write
+  band on first use and the cached band thereafter, which the M1 estimator must
   include. Two operational notes: pi's `--mode json` blocked indefinitely in
   this environment (use `-p` with an extension logging usage to stderr
   instead), and a model absent from the selected provider's catalogue makes pi
