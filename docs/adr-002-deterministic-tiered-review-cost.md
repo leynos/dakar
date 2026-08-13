@@ -7,6 +7,20 @@ Luna Flex transactional lane, a Terra Flex issue-set audit lane, host-selected
 routing, hard cost admission control, canonical SARIF 2.1.0 evidence, and
 host-executed deterministic gates before semantic review.
 
+Amended (2026-08-13): raise the default `budgetGbp` from 0.10 to 0.15. Live
+evaluation of the implemented route (recorded in
+`docs/review-skill-design.md`, introduced alongside the `dakar-review`
+skill) showed that, at
+pricing table 2026-07-18, the reserve-first audit reservation (USD 0.1141)
+leaves less than one Luna finder pack's worst case (USD 0.0142) inside a
+GBP 0.10 budget (USD 0.127), so the original default refused every finder
+pack and no default-configuration review could run. The risk was anticipated
+in "Known risks and limitations" ("approximately the £0.10 hard budget"); in
+practice the envelope overshoots it. The £0.05 mean and £0.08
+95th-percentile targets for observed spend stand — measured reported spend on
+the evaluation corpus was well inside both — and the hard ceiling remains
+enforced; only its default value changes.
+
 ## Date
 
 2026-07-18.

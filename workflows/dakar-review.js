@@ -343,7 +343,11 @@ function resolveWorkflowConfig(value) {
     adapterOverheadTokens: boundedInteger(args2.adapterOverheadTokens, 13e3, 0, 5e4),
     agentInstructions: configuredAgentInstructions(args2.agentInstructions),
     baseRef: nonBlankString(args2.base, "origin/main"),
-    budgetGbp: boundedNumber(args2.budgetGbp, 0.1, 0.01, 10),
+    // Default 0.15: at pricing table 2026-07-18 the reserve-first audit
+    // (USD 0.1141) plus one finder pack (USD 0.0142) already exceeds ADR
+    // 002's original GBP 0.10 (USD 0.127), which refused every pack; see
+    // the ADR's 2026-08-13 amendment.
+    budgetGbp: boundedNumber(args2.budgetGbp, 0.15, 0.01, 10),
     configArg: nonBlankString(args2.config, ""),
     dryRun: args2.dryRun === true,
     // ADR 002 Flex retry and timeout budget (M5). This slice reduces the ADR's

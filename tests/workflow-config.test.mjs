@@ -38,7 +38,7 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
 test('resolveWorkflowConfig supplies the ADR 002 Flex knob defaults', () => {
   const config = resolveWorkflowConfig(undefined)
 
-  assert.equal(config.budgetGbp, 0.1)
+  assert.equal(config.budgetGbp, 0.15)
   assert.equal(config.maxLunaFlexCalls, 4)
   assert.equal(config.transactionMaxFiles, 5)
   assert.equal(config.transactionMaxInputTokens, 12000)
@@ -98,7 +98,7 @@ test('Flex knobs clamp to their bounds and reject invalid input', () => {
     transactionMaxFiles: 0,
     adapterOverheadTokens: -5,
   })
-  assert.equal(low.budgetGbp, 0.1)
+  assert.equal(low.budgetGbp, 0.15)
   assert.equal(low.maxLunaFlexCalls, 4)
   assert.equal(low.transactionMaxFiles, 5)
   assert.equal(low.adapterOverheadTokens, 13000)
@@ -116,7 +116,7 @@ test('Flex knobs clamp to their bounds and reject invalid input', () => {
 
   assert.equal(resolveWorkflowConfig({ budgetGbp: 0.05 }).budgetGbp, 0.05)
   assert.equal(resolveWorkflowConfig({ adapterOverheadTokens: 0 }).adapterOverheadTokens, 0)
-  assert.equal(resolveWorkflowConfig({ budgetGbp: 'nope' }).budgetGbp, 0.1)
+  assert.equal(resolveWorkflowConfig({ budgetGbp: 'nope' }).budgetGbp, 0.15)
 })
 
 test('lunaReasoning accepts low and medium and rejects other values', () => {
