@@ -129,7 +129,7 @@ only shell-word quoting interface. Runtime JSON Schemas are exported from
 These modules are pure; `main.ts` alone calls the ambient ODW primitives, the
 `sleep()` retry helper, and owns phase sequencing.
 
-Document each module with a top-of-file `/** @file … */` block, and document
+Document each module with a top-of-file `/** … @module */` block, and document
 exported functions plus non-obvious trust, loader, and state boundaries with
 JSDoc. The generated `workflows/dakar-review.js` artefact and ambient
 declarations are outputs or contracts rather than authoring surfaces; assess
@@ -397,15 +397,14 @@ proposed until approved.
 Run `npm run docs:check` (or `make docs-check`) when adding or changing
 authored workflow or CLI symbols. The gate is TypeDoc's `notDocumented`
 validation, configured by `typedoc.json` over `bin`, `scripts`, and
-`src/workflows/dakar-review`: every module must open with a
-`/** … @module */` block and every exported declaration must carry a JSDoc
-block. It requires 100% documentation of that surface, treats warnings as
-errors, emits no documentation artefacts, and reports the qualified name of
-each undocumented declaration. It excludes the generated
-`workflows/dakar-review.js` artefact, ambient `*.d.ts` declarations,
-`meta.js`, and tests; JSON Schema constants are tagged `@internal` so their
-`description` fields remain the per-field documentation. `make lint` and
-therefore `make check` run it automatically.
+`src/workflows/dakar-review`: every module must open with a `/** … @module */`
+block and every exported declaration must carry a JSDoc block. It requires 100%
+documentation of that surface, treats warnings as errors, emits no
+documentation artefacts, and reports the qualified name of each undocumented
+declaration. It excludes the generated `workflows/dakar-review.js` artefact,
+ambient `*.d.ts` declarations, and tests; JSON Schema constants are tagged
+`@internal` so their `description` fields remain the per-field documentation.
+`make lint` and therefore `make check` run it automatically.
 
 Configuration resolution and range preparation no longer make agent calls at
 all: both run as deterministic host code in the CLI before `odw run`, and a
