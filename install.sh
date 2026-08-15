@@ -39,11 +39,18 @@ if ! command -v odw >/dev/null 2>&1; then
   exit 127
 fi
 
-# The checkout owns this lock because npm mutates its node_modules directory and
-# Bun subsequently reads that package tree while changing the shared global
-# installation record. Release it on every shell exit, including failures and
-# handled termination signals, so a failed installation never blocks a retry.
-lock_dir="$script_dir/.dakar-install.lock"
+# Bun's global installation root owns this lock because separate checkouts can
+# mutate its global package record concurrently. Release it on every shell exit,
+# including failures and handled termination signals, so a failed installation
+# never blocks a retry.
+if ! bun_cache_dir=$(bun pm cache); then
+  printf '%s\n' 'install.sh: operation=global-install lock=acquisition-failed elapsed=0s path=unknown; cannot determine Bun global installation root' >&2
+  exit 1
+fi
+
+lock_dir=$(dirname "$bun_cache_dir")/.dakar-install.lock
+lock_wait_started=$(date +%s)
+next_lock_diagnostic=0
 
 release_install_lock() {
   status=$?
@@ -53,6 +60,19 @@ release_install_lock() {
 }
 
 while ! mkdir "$lock_dir" 2>/dev/null; do
+  lock_wait_now=$(date +%s)
+  lock_wait_elapsed=$((lock_wait_now - lock_wait_started))
+
+  if [ ! -d "$lock_dir" ]; then
+    printf '%s\n' "install.sh: operation=global-install lock=acquisition-failed elapsed=${lock_wait_elapsed}s path=$lock_dir; cannot create lock directory" >&2
+    exit 1
+  fi
+
+  if [ "$lock_wait_elapsed" -ge "$next_lock_diagnostic" ]; then
+    printf '%s\n' "install.sh: operation=global-install lock=waiting elapsed=${lock_wait_elapsed}s path=$lock_dir; another Dakar installation may be active" >&2
+    next_lock_diagnostic=$((lock_wait_elapsed + 30))
+  fi
+
   sleep 1
 done
 

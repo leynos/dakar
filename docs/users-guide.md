@@ -25,10 +25,20 @@ text. On each repeated installer run, `install.sh` first executes
 `bun remove -g dakar` before reinstalling, preventing an interrupted
 installation from leaving duplicate `dakar` entries while keeping the shared
 Bun lockfile and other global packages intact. Installer runs are serialized by
-the installer-owned `${script_dir}/.dakar-install.lock` directory, acquired
-before dependency restoration and held through the Bun remove/install sequence.
-Exit cleanup removes the lock on successful, failed, and handled HUP, INT, or
-TERM exits; an existing lock is not automatically reclaimed.
+an installer-owned `.dakar-install.lock` directory under Bun's configured
+global installation root. The lock is acquired before dependency restoration
+and held through both global mutations, from `bun remove -g dakar` through
+`bun install -g "$script_dir"`. While waiting, the installer reports the stable
+operation, lock state, and elapsed time on stderr; acquisition failures are
+reported there as well. Exit cleanup removes the lock on successful, failed,
+and handled HUP, INT, or TERM exits.
+
+An existing lock is not automatically reclaimed. If the wait diagnostics show
+no progress, first confirm that no installer process is still running and use
+the reported lock path to inspect the situation. Only after confirming that
+the owning installation has stopped should you remove that exact lock
+directory and retry; never remove it while another installation may still be
+mutating the checkout or Bun's global state.
 
 ## Running a branch review
 

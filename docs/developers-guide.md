@@ -175,12 +175,22 @@ Dakar from the absolute checkout path, it installs the locked dependencies into
 that checkout. This is required because Bun links a local package's executable
 back to its source, from which Node cannot resolve Bun's separate global
 dependency tree. Keep the clean-checkout installation test in
-`tests/cli.test.mjs` representative of this layout. The installer owns the
-`${script_dir}/.dakar-install.lock` directory and acquires it before `npm ci`;
-the lock remains held through `bun remove -g dakar` and `bun install -g` so
-concurrent runs cannot interleave checkout or global-install mutations. Shell
-exit traps remove the lock on successful, failed, and handled HUP, INT, or TERM
-exits. An existing lock is not automatically reclaimed.
+`tests/cli.test.mjs` representative of this layout. The installer owns an
+`.dakar-install.lock` directory under Bun's configured global installation
+root and acquires it before `npm ci`; the lock remains held through
+`bun remove -g dakar` and `bun install -g "$script_dir"` so concurrent runs
+cannot interleave checkout or global-install mutations. While waiting for the
+lock, the installer emits stable operation, lock-state, and elapsed-time
+diagnostics on stderr, and reports acquisition failures there. Shell exit
+traps remove the lock on successful, failed, and handled HUP, INT, or TERM
+exits.
+
+An existing lock is not automatically reclaimed. If the diagnostics indicate
+that a wait may be stale, an operator must first confirm that no installer
+process remains active and inspect the reported lock path. Remove only that
+exact lock directory after the owning installation has stopped, then retry;
+never remove it while another installation may still be mutating the checkout
+or Bun's global state.
 
 The CLI should run the workflow from Dakar's package root as ODW `--source` and
 pass the reviewed repository as the workflow `repoRoot` argument. This is

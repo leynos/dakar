@@ -821,9 +821,21 @@ result.
 `dakar-review` through `package.json`. It is installed from a Dakar checkout
 with the canonical `install.sh` entry point and supports agent-to-agent
 automation. The installer serializes dependency restoration and Bun global
-linking with its installer-owned `${script_dir}/.dakar-install.lock` directory,
-which is released on successful, failed, and handled HUP, INT, or TERM exits
-and is not automatically reclaimed when it already exists.
+linking with an installer-owned `.dakar-install.lock` directory under Bun's
+configured global installation root. It acquires the lock before dependency
+restoration and holds it across both global mutations, from the
+`bun remove -g dakar` operation through the
+`bun install -g "$script_dir"` operation. While waiting, it emits stable
+operation, lock-state, and elapsed-time diagnostics on stderr and reports
+lock-acquisition failures there. The lock is released on successful, failed,
+and handled HUP, INT, or TERM exits.
+
+An existing lock is not automatically reclaimed. Operators diagnosing a
+possibly stale wait must first confirm that no installer process remains
+active and inspect the reported lock path. Only after the owning installation
+has stopped may they remove that exact lock directory and retry; removing it
+while another installation is active can reintroduce the checkout and global
+state race this lock prevents.
 
 The CLI runs the workflow from Dakar's package root, passes that package root
 as ODW `--source`, and passes the reviewed checkout as workflow `repoRoot`.
