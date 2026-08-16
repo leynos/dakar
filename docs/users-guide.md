@@ -7,31 +7,49 @@ result.
 
 ## Installing the CLI
 
-Agents can install Dakar's review command from a checkout with Bun:
+Install Dakar's review command from a checkout with the canonical installer:
 
 ```bash
 ./install.sh
 ```
 
-The installer calls Bun with the absolute checkout path and exposes
-`dakar-review`. The package remains private; the command is meant for local or
-git-based installation, not npm publication. `install.sh` accepts no install
-arguments; run `./install.sh --help` for its short usage text. On each repeated
-installer run, `install.sh` first executes `bun remove -g dakar` before
-reinstalling, preventing an interrupted installation from leaving duplicate
-`dakar` entries while keeping the shared Bun lockfile and other global packages
-intact.
+The installer requires Node, npm, Bun, and ODW on `PATH`. It restores the exact
+pinned dependencies beside the checkout, then calls Bun with the absolute
+checkout path and exposes `dakar-review`.
+Installing through Bun directly is unsupported because Bun links a local
+package's executable back into its checkout, while Node resolves runtime
+dependencies from that checkout. The package remains private; the command is
+meant for local or git-based installation, not npm publication. `install.sh`
+accepts no install arguments; run `./install.sh --help` for its short usage
+text. On each repeated installer run, `install.sh` first executes
+`bun remove -g dakar` before reinstalling, preventing an interrupted
+installation from leaving duplicate `dakar` entries while keeping the shared
+Bun lockfile and other global packages intact. Installer runs are serialized by
+an installer-owned `.dakar-install.lock` directory under Bun's configured
+global installation root. The lock is acquired before dependency restoration
+and held through both global mutations, from `bun remove -g dakar` through
+`bun install -g "$script_dir"`. While waiting, the installer reports the stable
+operation, lock state, and elapsed time on stderr, with an immediate diagnostic
+and periodic updates while another installer holds the lock; acquisition
+failures are reported there as well. The default lock wait is 300 seconds. Set
+`DAKAR_INSTALL_LOCK_WAIT_SECONDS` to a positive base-10 integer without a
+leading zero to override that limit for automation or tests. An invalid value
+is rejected before lock acquisition. On timeout, `install.sh` exits non-zero
+and reports `operation=global-install`, a `lock=timeout` state, the elapsed
+time, and the exact lock path, together with manual-recovery guidance. Exit
+cleanup removes the lock on successful, failed, and handled HUP, INT, or TERM
+exits.
 
-For direct Bun invocation, use an absolute path or `file:` URL:
+An existing lock is not automatically reclaimed. If the wait diagnostics show
+no progress, first confirm that no installer process is still running and use
+the reported lock path to inspect the situation. A timeout does not prove that
+the lock is stale. Only after confirming that no installer process is active
+and that the owning installation has stopped should you remove the exact lock
+directory reported by the diagnostic and retry; never remove it while another
+installation may still be mutating the checkout or Bun's global state.
 
-```bash
-bun install -g "$PWD"
-bun install -g "file:$PWD"
-```
-
-Do not use `bun install -g .` for this local install path. In Bun 1.3.11, bare
-`.` is parsed as an empty package spec before Dakar's `package.json` is read,
-so Bun installs `@` and creates no `dakar-review` bin link.
+See the [0.1 installation migration guide](migration-0.1.md) for the
+installation contract, lock recovery procedure, and prerequisite changes.
 
 ## Running a branch review
 

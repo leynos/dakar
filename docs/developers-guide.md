@@ -169,13 +169,36 @@ an agent to inspect diffs should use `git -C <repoRoot>` rather than plain
 
 ## 3. CLI conventions
 
-`bin/dakar-review.mjs` is the installable command exposed by `package.json`. It
-must remain usable after Bun installs Dakar from an absolute checkout path or
-package tarball.
+`bin/dakar-review.mjs` is the installable command exposed by `package.json`.
+`install.sh` is the canonical installation method. Before asking Bun to install
+Dakar from the absolute checkout path, it installs the locked dependencies into
+that checkout. This is required because Bun links a local package's executable
+back to its source, from which Node cannot resolve Bun's separate global
+dependency tree. Keep the clean-checkout installation test in
+`tests/cli.test.mjs` representative of this layout. The installer owns an
+`.dakar-install.lock` directory under Bun's configured global installation
+root and acquires it before `npm ci`; the lock remains held through
+`bun remove -g dakar` and `bun install -g "$script_dir"` so concurrent runs
+cannot interleave checkout or global-install mutations. While waiting for the
+lock, the installer emits stable operation, lock-state, and elapsed-time
+diagnostics on stderr, including an immediate diagnostic and periodic updates,
+and reports acquisition failures there. The default lock wait is 300 seconds.
+Automation and tests may set `DAKAR_INSTALL_LOCK_WAIT_SECONDS` to a positive
+base-10 integer without a leading zero; invalid values are rejected before
+lock acquisition. When the limit expires, the installer exits non-zero and
+emits a stable diagnostic containing `operation=global-install`,
+`lock=timeout`, the elapsed time, the exact lock path, and manual-recovery
+guidance. Shell exit traps remove the lock on successful, failed, and handled
+HUP, INT, or TERM exits.
 
-`install.sh` is the preferred local installer. It intentionally calls
-`bun install -g` with Dakar's absolute checkout path because Bun 1.3.11 does
-not create package bin links for bare `bun install -g .`.
+An existing lock is not automatically reclaimed. If the diagnostics indicate
+that a wait may be stale, an operator must first confirm that no installer
+process remains active and inspect the reported lock path. A timeout alone does
+not establish that a lock is stale. Remove only the exact lock directory
+reported by the diagnostic after confirming that no installer process is
+active and the owning installation has stopped, then retry; never remove it
+while another installation may still be mutating the checkout or Bun's global
+state.
 
 The CLI should run the workflow from Dakar's package root as ODW `--source` and
 pass the reviewed repository as the workflow `repoRoot` argument. This is

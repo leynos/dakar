@@ -818,8 +818,32 @@ result.
 ## CLI contract
 
 `bin/dakar-review.mjs` is the globally installable wrapper exposed as
-`dakar-review` through `package.json`. It is designed for
-`bun install -g "$PWD"` from a Dakar checkout and for agent-to-agent automation.
+`dakar-review` through `package.json`. It is installed from a Dakar checkout
+with the canonical `install.sh` entry point and supports agent-to-agent
+automation. The installer serializes dependency restoration and Bun global
+linking with an installer-owned `.dakar-install.lock` directory under Bun's
+configured global installation root. It acquires the lock before dependency
+restoration and holds it across both global mutations, from the
+`bun remove -g dakar` operation through the
+`bun install -g "$script_dir"` operation. While waiting, it emits stable
+operation, lock-state, and elapsed-time diagnostics on stderr, including an
+immediate diagnostic and periodic updates, and reports lock-acquisition
+failures there. The default lock wait is 300 seconds. Automation and tests may
+set `DAKAR_INSTALL_LOCK_WAIT_SECONDS` to a positive base-10 integer without a
+leading zero; invalid values are rejected before lock acquisition. On expiry,
+the installer exits non-zero and reports `operation=global-install`,
+`lock=timeout`, the elapsed time, and the exact lock path, with manual-recovery
+guidance. The lock is released on successful, failed, and handled HUP, INT, or
+TERM exits.
+
+An existing lock is not automatically reclaimed. Operators diagnosing a
+possibly stale wait must first confirm that no installer process remains
+active and inspect the reported lock path. A timeout alone does not establish
+that the lock is stale. Only after confirming that no installer process is
+active and the owning installation has stopped may they remove the exact lock
+directory reported by the diagnostic and retry; removing it while another
+installation is active can reintroduce the checkout and global-state race this
+lock prevents.
 
 The CLI runs the workflow from Dakar's package root, passes that package root
 as ODW `--source`, and passes the reviewed checkout as workflow `repoRoot`.
