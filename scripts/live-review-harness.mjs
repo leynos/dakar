@@ -668,6 +668,57 @@ const CLI_FLAGS = new Map([
 ])
 
 /**
+ * Record one recognised harness option after validating its value when needed.
+ *
+ * @param {Record<string, boolean | string>} options - mutable parsed options.
+ * @param {string} name - option name without its leading dashes.
+ * @param {{key: string, value: boolean, optionLikeValue?: boolean}} spec - option contract.
+ * @param {string | undefined} value - following argument token for value options.
+ * @returns {void}
+ */
+function assignCliOption(options, name, spec, value) {
+  if (!spec.value) {
+    options[spec.key] = true
+    return
+  }
+  assertCliValue(name, spec, value)
+  options[spec.key] = value
+}
+
+/**
+ * Reject a missing value or an option-like value for an ordinary option.
+ *
+ * `dakar-args` carries child CLI arguments, so its option-like values remain
+ * valid and are preserved unchanged for the child parser.
+ *
+ * @param {string} name - option name without its leading dashes.
+ * @param {{optionLikeValue?: boolean}} spec - option value contract.
+ * @param {string | undefined} value - following argument token.
+ * @returns {void}
+ */
+function assertCliValue(name, spec, value) {
+  if (value === undefined) {
+    throw new Error(`--${name} requires a value`)
+  }
+  if (!value.startsWith('--')) return
+  if (spec.optionLikeValue) return
+  throw new Error(`--${name} requires a value`)
+}
+
+/**
+ * Ensure the corpus-selection arguments required by the harness are present.
+ *
+ * @param {Record<string, boolean | string>} options - parsed option values.
+ * @returns {void}
+ */
+function assertRequiredCliOptions(options) {
+  for (const required of ['repo', 'pr', 'work', 'out']) {
+    if (options[required] === undefined) {
+      throw new Error(`--${required} is required`)
+    }
+  }
+}
+/**
  * Parse the harness's own command-line argument vector.
  *
  * @param {string[]} argv - argument tokens, excluding the node/script prefix.
@@ -685,24 +736,10 @@ export function parseCliArgs(argv) {
     if (!spec) {
       throw new Error(`unknown option: --${name}`)
     }
-    if (!spec.value) {
-      options[spec.key] = true
-      continue
-    }
-    const value = argv[++index]
-    if (value === undefined) {
-      throw new Error(`--${name} requires a value`)
-    }
-    if (value.startsWith('--') && !spec.optionLikeValue) {
-      throw new Error(`--${name} requires a value`)
-    }
-    options[spec.key] = value
+    const value = spec.value ? argv[++index] : undefined
+    assignCliOption(options, name, spec, value)
   }
-  for (const required of ['repo', 'pr', 'work', 'out']) {
-    if (options[required] === undefined) {
-      throw new Error(`--${required} is required`)
-    }
-  }
+  assertRequiredCliOptions(options)
   return options
 }
 

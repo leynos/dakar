@@ -16,6 +16,7 @@ import { once } from 'node:events'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -159,7 +160,7 @@ test('parseCliArgs preserves arbitrary option-like dakar arguments', () => {
         '--dakar-args', dakarArgs,
       ])
 
-      assert.equal(options.dakarArgs, dakarArgs)
+      assert.equal(options.dakarArgs, dakarArgs, 'preserves arbitrary option-like --dakar-args values')
     }),
   )
 })
@@ -179,6 +180,7 @@ test('parseCliArgs rejects arbitrary option-like values for ordinary flags', () 
             `--${name}`, `--${suffix}`,
           ]),
           new RegExp(`--${name} requires a value`, 'u'),
+          'rejects option-like values for ordinary flags',
         )
       },
     ),
@@ -219,7 +221,7 @@ if (values[0] === 'run') {
     const child = spawnSync(
       process.execPath,
       [
-        new URL('../scripts/live-review-harness.mjs', import.meta.url).pathname,
+        fileURLToPath(new URL('../scripts/live-review-harness.mjs', import.meta.url)),
         '--repo', 'leynos/comenq',
         '--pr', '140',
         '--work', join(tempRoot, 'work'),

@@ -30,17 +30,18 @@ dispatched.
 
 Cost-goal framing (expert-panel finding, adopted): the USD 0.25 and USD 0.11
 figures are independently chosen delivery goals, not currency conversions of
-ADR 002's GBP targets. ADR 002's hard ordinary-review budget is £0.10, which is
-about USD 0.127 at the pricing table's seed exchange snapshot; the admission
-controller enforces the GBP budget through that versioned snapshot. The worst
-case of the default caps (four Luna transactions plus one Terra audit, uncached
-input priced at the cache-write band) is about USD 0.133, so the USD 0.11
-stretch goal is a typical-case goal — reachable only when fewer transactions
-fire or cached input reduces spend — and a worst-case-shaped run that lands
-near USD 0.13 is expected behaviour, not a near-miss. The USD 0.25 acceptance
-goal holds with roughly 2x headroom over the worst case. Terra dominates the
-ceiling (roughly 70% of worst-case spend), so `terraMaxInputTokens` is the
-lever that matters if cost must come down later, not the Luna caps.
+ADR 002's GBP targets. The current hard ordinary-review budget is £0.15, or
+USD 0.1905 at the pricing table's seed exchange snapshot; the admission
+controller enforces the GBP budget through that versioned snapshot. The current
+default caps (four Luna transactions plus one Terra audit, uncached input
+priced at the cache-write band) total USD 0.1855625, leaving USD 0.0049375
+inside the default budget. The USD 0.11 stretch goal is therefore a
+typical-case goal — reachable only when fewer transactions fire or cached input
+reduces spend — and the USD 0.25 acceptance goal still has headroom. The
+earlier recorded USD 0.133 isolated worst case belongs to the pre-amendment
+cost model and is historical evidence, not the current default-cap total.
+Terra dominates the ceiling, so `terraMaxInputTokens` is the lever that
+matters if cost must come down later, not the Luna caps.
 
 Success is observable: a live review of a selected estate pull request
 completes end to end, the result carries a per-call cost ledger with
@@ -361,8 +362,9 @@ conflict in `Decision Log`, and escalate.
     relabelled as a deliberate conservative haircut; and a fast-check
     property suite over admission, backoff, and compaction
     invariants). Skipped with evidence: multiplying the audit
-    reservation by `flexAttempts` (would refuse every default-budget
-    review — 0.094 x 3 = 0.281 USD against a 0.127 USD budget — and
+    reservation by `flexAttempts` (the historical recorded arithmetic would
+    refuse every £0.10-budget review — 0.094 x 3 = 0.281 USD against the
+    historical USD 0.127 budget — and
     contradicts ADR 002 scheduling rule 6 on unbilled
     resource-unavailable attempts plus the recorded M5 no-re-charge
     decision); making partial-coverage reviews non-recordable
@@ -423,6 +425,12 @@ conflict in `Decision Log`, and escalate.
     the focused suite 71/71 and `make check` with 289/289 Node tests, 230/230
     docstrings (100.00%, threshold 80.00%), and the 68,667-byte generated
     workflow fresh.
+- [x] (2026-08-17) Budget documentation reconciled with the current
+  implementation and ADR 002 amendment: `budgetGbp` defaults to £0.15 (USD
+  0.1905 at pricing table 2026-07-18), and the four-default-finder-plus-audit
+  cap totals USD 0.1855625. The earlier £0.10/USD 0.127 budget and USD 0.133
+  isolated worst-case figures remain only as clearly labelled historical
+  recorded evidence below; dated live results are unchanged.
 
 ## Surprises & discoveries
 
@@ -645,8 +653,10 @@ conflict in `Decision Log`, and escalate.
   operator-visible chain ceiling. This supersedes the M5 no-re-charge decision
   and resolves the round-2 reviewer request for retry-chain accounting via the
   incremental design the operator selected over naive upfront multiplication
-  (which would have refused every default-budget review: 0.094 x 3 = 0.281 USD
-  against a 0.127 USD budget). Charged retries are unaffordable under the
+  (which would have refused every historical recorded £0.10-budget review:
+  0.094 x 3 = 0.281 USD against the historical recorded USD 0.127 budget).
+  Charged retries are
+  unaffordable under the
   default budget at default token sizes — a deliberate property: under budget
   pressure the review degrades to fewer retries, then partial coverage, then
   deferral, never past the ceiling. Rationale: the hard ceiling must bound
@@ -721,11 +731,19 @@ pinning, zero-coverage refusal, state-root containment) each fired at least
 once in anger during a single day of live work; (3) the admission estimator is
 optimistic for first (uncached) calls because pi's agentic loop writes more
 cache than the overhead constant assumes — raise `adapterOverheadTokens` toward
-28k or restrict finder tools when tuning; (4) an isolated worst case (USD
-0.133) understates multi-pack large reviews, where the budget correctly forces
-refusals — the ordinary budget is doing its job, and operators wanting full
-large-diff coverage need the explicit large-review budget that remains future
-work (roadmap 7.5).
+28k or restrict finder tools when tuning; (4) the pre-amendment isolated
+worst-case estimate (historical recorded USD 0.133) understates the current
+default-cap finder-plus-audit total of USD 0.1855625, while the ordinary budget
+correctly forces refusals — the ordinary budget is doing its job, and
+operators wanting full large-diff coverage need the explicit large-review
+budget that remains future work (roadmap 7.5).
+
+Current budget truth (2026-08-17): `resolveWorkflowConfig` defaults to £0.15,
+which is USD 0.1905 at pricing table 2026-07-18. Four maximum Luna finder
+packs at USD 0.017875 each plus the USD 0.1140625 Terra audit reservation total
+USD 0.1855625. The £0.10/USD 0.127 setting and USD 0.133 figure retained above
+are historical recorded evidence only; they do not describe the current
+default.
 
 Remaining work is deliberately out of this slice: SARIF adoption, deterministic
 gate running, and the adjudicated legacy comparison (roadmap 7.5.x), plus the
@@ -1300,7 +1318,10 @@ export function estimateWorstCaseUsd(
 ): number;
 ```
 
-Worked examples (the M1 red tests assert these verbatim):
+Historical M1 worked examples (the red tests assert these verbatim): these
+retain the original per-call inputs and are not the current default-cap
+arithmetic. The resulting USD 0.13275 five-call total is historical recorded
+evidence from that test fixture.
 
 - One Luna Flex transaction, 12,000 input / 0 cached / 750 output:
   12,000 x 0.625 / 1,000,000 + 750 x 3.00 / 1,000,000 = 0.0075 + 0.00225 = USD
@@ -1310,6 +1331,20 @@ Worked examples (the M1 red tests assert these verbatim):
   USD 0.09375.
 - Worst case, four Luna plus one Terra: 4 x 0.00975 + 0.09375
   = USD 0.13275.
+
+Current default-cap arithmetic (pricing table 2026-07-18):
+
+- One Luna Flex finder pack, 25,000 input tokens including the 13,000-token
+  adapter overhead, plus 750 output tokens:
+  25,000 x 0.625 / 1,000,000 + 750 x 3.00 / 1,000,000 = 0.015625 +
+  0.00225 = USD 0.017875.
+- One Terra Flex audit, 61,000 input tokens including the 13,000-token
+  adapter overhead, plus 2,500 output tokens:
+  61,000 x 1.5625 / 1,000,000 + 2,500 x 7.50 / 1,000,000 = 0.0953125 +
+  0.01875 = USD 0.1140625.
+- Default caps, four Luna finder packs plus one Terra audit:
+  4 x 0.017875 + 0.1140625 = USD 0.1855625, against the £0.15 / USD
+  0.1905 default, leaving USD 0.0049375.
 
 In `src/workflows/dakar-review/admission.ts`:
 
@@ -1399,8 +1434,9 @@ its result unchanged.
 
 Revised after the three-panel expert review (structure and contracts; cost and
 failure modes; alternatives and viability). Material changes: cost-goal framing
-corrected (USD goals declared independent of ADR 002's GBP targets; worst case
-USD 0.133 stated; stretch goal identified as typical-case); cache-write band
+corrected (USD goals declared independent of ADR 002's GBP targets; historical
+recorded pre-amendment worst case USD 0.133 stated; stretch goal identified as
+typical-case); cache-write band
 added to the pricing interfaces and worked examples; admission inequalities
 made normative; M0 strengthened to require provider-side applied-tier evidence
 and a failure-shape capture; the old M3 split into M3 (audit on standard
