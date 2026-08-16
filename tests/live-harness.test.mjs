@@ -19,6 +19,8 @@ import { join, resolve } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import fc from 'fast-check'
+
 import {
   createUsageScanner,
   extractUsageLines,
@@ -145,15 +147,56 @@ test('parseCliArgs still rejects an option-like value for ordinary flags', () =>
   )
 })
 
+test('parseCliArgs preserves arbitrary option-like dakar arguments', () => {
+  fc.assert(
+    fc.property(fc.string(), (suffix) => {
+      const dakarArgs = `--${suffix}`
+      const options = parseCliArgs([
+        '--repo', 'leynos/comenq',
+        '--pr', '140',
+        '--work', '/tmp/work',
+        '--out', '/tmp/out',
+        '--dakar-args', dakarArgs,
+      ])
+
+      assert.equal(options.dakarArgs, dakarArgs)
+    }),
+  )
+})
+
+test('parseCliArgs rejects arbitrary option-like values for ordinary flags', () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom('repo', 'pr', 'work', 'out', 'key-file'),
+      fc.string(),
+      (name, suffix) => {
+        assert.throws(
+          () => parseCliArgs([
+            '--repo', 'leynos/comenq',
+            '--pr', '140',
+            '--work', '/tmp/work',
+            '--out', '/tmp/out',
+            `--${name}`, `--${suffix}`,
+          ]),
+          new RegExp(`--${name} requires a value`, 'u'),
+        )
+      },
+    ),
+  )
+})
+
 test('harness entry point forwards flag-like child arguments', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-harness-forwarding-'))
   try {
     const toolsDir = join(tempRoot, 'tools')
     const fakeGit = join(toolsDir, 'git')
-    const fakeOdw = join(tempRoot, 'capture-odw.mjs')
+    const spacedRoot = join(tempRoot, 'paths with spaces')
+    const fakeOdw = join(spacedRoot, 'capture-odw.mjs')
+    const runsRoot = join(spacedRoot, 'runs')
     const capturePath = join(tempRoot, 'workflow-args.json')
     const keyPath = join(tempRoot, 'api-key.txt')
     mkdirSync(toolsDir)
+    mkdirSync(spacedRoot)
     writeFileSync(fakeGit, '#!/bin/sh\nif [ "$1" = clone ]; then mkdir -p "$3/.git"; fi\nexit 0\n')
     writeFileSync(
       fakeOdw,
@@ -182,7 +225,7 @@ if (values[0] === 'run') {
         '--work', join(tempRoot, 'work'),
         '--out', join(tempRoot, 'out'),
         '--key-file', keyPath,
-        '--dakar-args', `--dry-run --odw-bin ${fakeOdw} --runs-root ${join(tempRoot, 'runs')} --budget-gbp 0.05`,
+        '--dakar-args', `--dry-run --odw-bin "${fakeOdw}" --runs-root "${runsRoot}" --budget-gbp 0.05`,
       ],
       {
         encoding: 'utf8',
