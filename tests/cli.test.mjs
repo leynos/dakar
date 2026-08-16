@@ -53,6 +53,122 @@ async function waitForExit(child) {
   return { code, signal }
 }
 
+/** Starts an installer and retains its stderr for assertions. */
+function startInstaller(installFixture, env, detached = false) {
+  const child = spawn('/bin/sh', [join(installFixture, 'install.sh')], {
+    cwd: installFixture,
+    detached,
+    env,
+  })
+  let stderr = ''
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk
+  })
+  return { child, exit: waitForExit(child), stderr: () => stderr }
+}
+
+/** Reads the serialized installer-operation trace maintained by the fake tools. */
+function readInstallerEvents(eventLog) {
+  if (!existsSync(eventLog)) {
+    return []
+  }
+  return readFileSync(eventLog, 'utf8').trim().split('\n').filter(Boolean)
+}
+
+/** Creates two clean checkouts and deterministic fake installer dependencies. */
+function makeInstallerHarness(t) {
+  const firstFixture = makeCleanInstallFixture(t)
+  const secondFixture = makeCleanInstallFixture(t)
+  const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
+  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
+  t.after(() => rmSync(toolDir, { recursive: true, force: true }))
+  t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
+  mkdirSync(join(bunInstall, 'install'), { recursive: true })
+
+  const blocked = join(toolDir, 'operation-blocked')
+  const eventLog = join(toolDir, 'events')
+  const lockDir = join(bunInstall, 'install', '.dakar-install.lock')
+  const lockWaiter = join(toolDir, 'lock-waiter')
+  const release = join(toolDir, 'release')
+
+  writeFileSync(
+    join(toolDir, 'mkdir'),
+    `#!/bin/sh
+if [ "$1" = "$DAKAR_TEST_LOCK_DIR" ] && [ -d "$1" ]; then
+  : > "$DAKAR_TEST_LOCK_WAITER"
+fi
+exec /usr/bin/mkdir "$@"
+`,
+  )
+  writeFileSync(
+    join(toolDir, 'npm'),
+    `#!/bin/sh
+printf '%s\\n' "$DAKAR_TEST_INSTALLER:npm" >> "$DAKAR_TEST_EVENTS"
+if [ "$DAKAR_TEST_NPM_EXIT_CODE" != 0 ]; then
+  exit "$DAKAR_TEST_NPM_EXIT_CODE"
+fi
+`,
+  )
+  writeFileSync(
+    join(toolDir, 'bun'),
+    `#!/bin/sh
+case "$1:$2:$3" in
+  pm:cache:) printf '%s\\n' "$BUN_INSTALL/install/cache" ;;
+  remove:-g:dakar) operation=remove ;;
+  install:-g:*) operation=install ;;
+  *) exit 0 ;;
+esac
+
+if [ -n "$operation" ]; then
+  printf '%s\\n' "$DAKAR_TEST_INSTALLER:$operation" >> "$DAKAR_TEST_EVENTS"
+  if [ "$DAKAR_TEST_INSTALLER" = first ] && [ "$DAKAR_TEST_BLOCK_OPERATION" = "$operation" ]; then
+    : > "$DAKAR_TEST_BLOCKED"
+    while [ ! -e "$DAKAR_TEST_RELEASE" ]; do
+      sleep 0.01
+    done
+  fi
+fi
+`,
+  )
+  for (const command of ['node', 'odw']) {
+    writeFileSync(join(toolDir, command), '#!/bin/sh\nexit 0\n')
+  }
+  for (const command of ['bun', 'mkdir', 'node', 'npm', 'odw']) {
+    chmodSync(join(toolDir, command), 0o755)
+  }
+
+  const baseEnv = {
+    ...process.env,
+    BUN_INSTALL: bunInstall,
+    DAKAR_TEST_BLOCKED: blocked,
+    DAKAR_TEST_EVENTS: eventLog,
+    DAKAR_TEST_LOCK_DIR: lockDir,
+    DAKAR_TEST_LOCK_WAITER: lockWaiter,
+    DAKAR_TEST_RELEASE: release,
+    PATH: `${toolDir}:${process.env.PATH}`,
+  }
+
+  return {
+    blocked,
+    events: () => readInstallerEvents(eventLog),
+    firstFixture,
+    lockDir,
+    lockWaiter,
+    release,
+    secondFixture,
+    env(installer, overrides = {}) {
+      return {
+        ...baseEnv,
+        DAKAR_TEST_BLOCK_OPERATION: 'none',
+        DAKAR_TEST_INSTALLER: installer,
+        DAKAR_TEST_NPM_EXIT_CODE: '0',
+        ...overrides,
+      }
+    },
+  }
+}
+
 function runCli(args, options = {}) {
   return execFileSync(process.execPath, [cliPath, ...args], {
     cwd: repoRoot,
@@ -1184,105 +1300,157 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
   )
 })
 
-test('install script serializes concurrent installation from shared Bun global state', async (t) => {
-  const installFixture = makeCleanInstallFixture(t)
-  const secondInstallFixture = makeCleanInstallFixture(t)
-  const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
-  t.after(() => rmSync(toolDir, { recursive: true, force: true }))
-  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
-  t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
-  mkdirSync(join(bunInstall, 'install'), { recursive: true })
-  const lockDir = join(bunInstall, 'install', '.dakar-install.lock')
-  const npmStarted = join(toolDir, 'npm-started')
-  const lockWaiter = join(toolDir, 'lock-waiter')
-  const release = join(toolDir, 'release')
-  const npmInvocations = join(toolDir, 'npm-invocations')
+test('install script serializes each Bun global mutation across checkouts', async (t) => {
+  for (const blockedOperation of ['remove', 'install']) {
+    await t.test(`blocks a second installer during Bun ${blockedOperation}`, async (t) => {
+      const harness = makeInstallerHarness(t)
+      const first = startInstaller(
+        harness.firstFixture,
+        harness.env('first', { DAKAR_TEST_BLOCK_OPERATION: blockedOperation }),
+      )
+      let second
 
-  writeFileSync(
-    join(toolDir, 'mkdir'),
-    `#!/bin/sh
-if [ "$1" = "$DAKAR_TEST_LOCK_DIR" ] && [ -d "$1" ]; then
-  : > "$DAKAR_TEST_LOCK_WAITER"
-fi
-exec /usr/bin/mkdir "$@"
-`,
-  )
-  writeFileSync(
-    join(toolDir, 'npm'),
-    `#!/bin/sh
-printf '%s\\n' "$$" >> "$DAKAR_TEST_NPM_INVOCATIONS"
-if ! /usr/bin/mkdir "$DAKAR_TEST_NPM_ACTIVE"; then
-  exit 1
-fi
-: > "$DAKAR_TEST_NPM_STARTED"
-while [ ! -e "$DAKAR_TEST_RELEASE" ]; do
-  sleep 0.01
-done
-/usr/bin/rmdir "$DAKAR_TEST_NPM_ACTIVE"
-`,
-  )
-  writeFileSync(
-    join(toolDir, 'bun'),
-    `#!/bin/sh
-case "$1:$2" in
-  pm:cache) printf '%s\\n' "$BUN_INSTALL/install/cache" ;;
-  *) exit 0 ;;
-esac
-`,
-  )
-  for (const command of ['node', 'odw']) {
-    writeFileSync(join(toolDir, command), '#!/bin/sh\nexit 0\n')
-  }
-  for (const command of ['bun', 'mkdir', 'node', 'npm', 'odw']) {
-    chmodSync(join(toolDir, command), 0o755)
-  }
+      try {
+        await waitForPath(harness.blocked, `the first Bun ${blockedOperation} operation`)
+        assert.equal(existsSync(harness.lockDir), true)
 
-  const env = {
-    ...process.env,
-    PATH: `${toolDir}:${process.env.PATH}`,
-    BUN_INSTALL: bunInstall,
-    DAKAR_TEST_LOCK_DIR: lockDir,
-    DAKAR_TEST_LOCK_WAITER: lockWaiter,
-    DAKAR_TEST_NPM_ACTIVE: join(toolDir, 'npm-active'),
-    DAKAR_TEST_NPM_INVOCATIONS: npmInvocations,
-    DAKAR_TEST_NPM_STARTED: npmStarted,
-    DAKAR_TEST_RELEASE: release,
-  }
-  const first = spawn('/bin/sh', [join(installFixture, 'install.sh')], { cwd: installFixture, env })
-  const firstExit = waitForExit(first)
-  let secondExit
-  let secondStderr = ''
+        second = startInstaller(harness.secondFixture, harness.env('second'))
+        await waitForPath(harness.lockWaiter, 'the second installer to wait for the lock')
+        await waitFor(
+          () => second.stderr().includes('operation=global-install lock=waiting'),
+          'the waiting lock diagnostic',
+        )
+        assert.match(second.stderr(), /elapsed=\d+s path=/u)
+        assert.equal(existsSync(harness.lockDir), true)
+        assert.equal(harness.events().some((event) => event.startsWith('second:')), false)
 
-  try {
-    await waitForPath(npmStarted, 'the first dependency restoration')
-    const second = spawn('/bin/sh', [join(secondInstallFixture, 'install.sh')], {
-      cwd: secondInstallFixture,
-      env,
+        writeFileSync(harness.release, '')
+        assert.deepEqual(await first.exit, { code: 0, signal: null })
+        assert.deepEqual(await second.exit, { code: 0, signal: null })
+        assert.deepEqual(harness.events(), [
+          'first:npm',
+          'first:remove',
+          'first:install',
+          'second:npm',
+          'second:remove',
+          'second:install',
+        ])
+        assert.equal(existsSync(harness.lockDir), false)
+      } finally {
+        writeFileSync(harness.release, '')
+        await first.exit
+        if (second) {
+          await second.exit
+        }
+      }
     })
-    second.stderr.setEncoding('utf8')
-    second.stderr.on('data', (chunk) => {
-      secondStderr += chunk
-    })
-    secondExit = waitForExit(second)
-    await waitForPath(lockWaiter, 'the second installer to wait for the lock')
-    await waitFor(
-      () => secondStderr.includes('operation=global-install lock=waiting'),
-      'the waiting lock diagnostic',
-    )
-    assert.match(secondStderr, /elapsed=\d+s path=/u)
-    assert.equal(readFileSync(npmInvocations, 'utf8').trim().split('\n').length, 1)
-    writeFileSync(release, '')
+  }
+})
 
-    assert.deepEqual(await firstExit, { code: 0, signal: null })
-    assert.deepEqual(await secondExit, { code: 0, signal: null })
-    assert.equal(readFileSync(npmInvocations, 'utf8').trim().split('\n').length, 2)
-    assert.equal(existsSync(lockDir), false)
-  } finally {
-    writeFileSync(release, '')
-    await firstExit
-    if (secondExit) {
-      await secondExit
-    }
+test('install script releases its lock after a failed dependency restoration', async (t) => {
+  const harness = makeInstallerHarness(t)
+  const installer = startInstaller(
+    harness.firstFixture,
+    harness.env('first', { DAKAR_TEST_NPM_EXIT_CODE: '17' }),
+  )
+
+  assert.notEqual((await installer.exit).code, 0)
+  assert.deepEqual(harness.events(), ['first:npm'])
+  assert.equal(existsSync(harness.lockDir), false)
+})
+
+test('install script releases its own lock after handled signals', async (t) => {
+  for (const signal of ['SIGHUP', 'SIGINT', 'SIGTERM']) {
+    await t.test(signal, async (t) => {
+      const harness = makeInstallerHarness(t)
+      const installer = startInstaller(
+        harness.firstFixture,
+        harness.env('first', { DAKAR_TEST_BLOCK_OPERATION: 'remove' }),
+        true,
+      )
+
+      try {
+        await waitForPath(harness.blocked, `a blocked Bun remove before ${signal}`)
+        assert.equal(existsSync(harness.lockDir), true)
+        process.kill(-installer.child.pid, signal)
+
+        assert.notEqual((await installer.exit).code, 0)
+        assert.deepEqual(harness.events(), ['first:npm', 'first:remove'])
+        assert.equal(existsSync(harness.lockDir), false)
+      } finally {
+        writeFileSync(harness.release, '')
+        await installer.exit
+      }
+    })
+  }
+})
+
+test('cancelling a waiting installer preserves another installer lock', async (t) => {
+  for (const signal of ['SIGHUP', 'SIGINT', 'SIGTERM']) {
+    await t.test(signal, async (t) => {
+      const harness = makeInstallerHarness(t)
+      const holder = startInstaller(
+        harness.firstFixture,
+        harness.env('first', { DAKAR_TEST_BLOCK_OPERATION: 'remove' }),
+      )
+      let waiter
+
+      try {
+        await waitForPath(harness.blocked, 'the lock-owning installer to block in Bun remove')
+        waiter = startInstaller(harness.secondFixture, harness.env('second'), true)
+        await waitForPath(harness.lockWaiter, 'the second installer to wait for the lock')
+        process.kill(-waiter.child.pid, signal)
+
+        assert.notEqual((await waiter.exit).code, 0)
+        assert.equal(existsSync(harness.lockDir), true)
+        assert.deepEqual(harness.events(), ['first:npm', 'first:remove'])
+
+        writeFileSync(harness.release, '')
+        assert.deepEqual(await holder.exit, { code: 0, signal: null })
+        assert.equal(existsSync(harness.lockDir), false)
+      } finally {
+        writeFileSync(harness.release, '')
+        await holder.exit
+        if (waiter) {
+          await waiter.exit
+        }
+      }
+    })
+  }
+})
+
+test('install script times out without reclaiming another installer lock', async (t) => {
+  const harness = makeInstallerHarness(t)
+  mkdirSync(harness.lockDir)
+  const installer = startInstaller(
+    harness.firstFixture,
+    harness.env('first', { DAKAR_INSTALL_LOCK_WAIT_SECONDS: '1' }),
+  )
+
+  const result = await installer.exit
+  assert.notEqual(result.code, 0)
+  assert.match(installer.stderr(), /operation=global-install lock=timeout/u)
+  assert.match(installer.stderr(), /elapsed=\d+s/u)
+  assert.match(installer.stderr(), new RegExp(`path=${harness.lockDir}`, 'u'))
+  assert.match(installer.stderr(), /confirm no installer process is active/u)
+  assert.deepEqual(harness.events(), [])
+  assert.equal(existsSync(harness.lockDir), true)
+})
+
+test('install script rejects invalid lock-wait limits before mutation', async (t) => {
+  for (const lockWaitLimit of ['0', '01', '10seconds']) {
+    await t.test(lockWaitLimit, async (t) => {
+      const harness = makeInstallerHarness(t)
+      const installer = startInstaller(
+        harness.firstFixture,
+        harness.env('first', { DAKAR_INSTALL_LOCK_WAIT_SECONDS: lockWaitLimit }),
+      )
+
+      assert.equal((await installer.exit).code, 2)
+      assert.match(installer.stderr(), /DAKAR_INSTALL_LOCK_WAIT_SECONDS must be a positive base-10 integer/u)
+      assert.deepEqual(harness.events(), [])
+      assert.equal(existsSync(harness.lockDir), false)
+    })
   }
 })
 

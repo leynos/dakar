@@ -181,16 +181,24 @@ root and acquires it before `npm ci`; the lock remains held through
 `bun remove -g dakar` and `bun install -g "$script_dir"` so concurrent runs
 cannot interleave checkout or global-install mutations. While waiting for the
 lock, the installer emits stable operation, lock-state, and elapsed-time
-diagnostics on stderr, and reports acquisition failures there. Shell exit
-traps remove the lock on successful, failed, and handled HUP, INT, or TERM
-exits.
+diagnostics on stderr, including an immediate diagnostic and periodic updates,
+and reports acquisition failures there. The default lock wait is 300 seconds.
+Automation and tests may set `DAKAR_INSTALL_LOCK_WAIT_SECONDS` to a positive
+base-10 integer without a leading zero; invalid values are rejected before
+lock acquisition. When the limit expires, the installer exits non-zero and
+emits a stable diagnostic containing `operation=global-install`,
+`lock=timeout`, the elapsed time, the exact lock path, and manual-recovery
+guidance. Shell exit traps remove the lock on successful, failed, and handled
+HUP, INT, or TERM exits.
 
 An existing lock is not automatically reclaimed. If the diagnostics indicate
 that a wait may be stale, an operator must first confirm that no installer
-process remains active and inspect the reported lock path. Remove only that
-exact lock directory after the owning installation has stopped, then retry;
-never remove it while another installation may still be mutating the checkout
-or Bun's global state.
+process remains active and inspect the reported lock path. A timeout alone does
+not establish that a lock is stale. Remove only the exact lock directory
+reported by the diagnostic after confirming that no installer process is
+active and the owning installation has stopped, then retry; never remove it
+while another installation may still be mutating the checkout or Bun's global
+state.
 
 The CLI should run the workflow from Dakar's package root as ODW `--source` and
 pass the reviewed repository as the workflow `repoRoot` argument. This is

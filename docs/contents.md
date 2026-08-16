@@ -16,6 +16,12 @@ document for a task, then follow the inline links.
 - [Documentation style guide](documentation-style-guide.md) — conventions for
   authoring documentation across df12 Productions projects.
 
+## Migration
+
+- [0.1 installation migration guide](migration-0.1.md) — migrate from direct
+  Bun global installation to `./install.sh`, including prerequisites and safe
+  installer-lock recovery.
+
 ## Design documents
 
 - [Dakar review design](dakar-review-design.md) — the living architecture

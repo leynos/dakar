@@ -40,9 +40,33 @@ if ! command -v odw >/dev/null 2>&1; then
 fi
 
 # Bun's global installation root owns this lock because separate checkouts can
-# mutate its global package record concurrently. Release it on every shell exit,
-# including failures and handled termination signals, so a failed installation
-# never blocks a retry.
+# mutate its global package record concurrently. The default five-minute limit
+# avoids waiting forever; automation may set DAKAR_INSTALL_LOCK_WAIT_SECONDS.
+lock_wait_limit=${DAKAR_INSTALL_LOCK_WAIT_SECONDS:-300}
+
+case "$lock_wait_limit" in
+  '' | 0* | *[!0-9]* )
+    printf '%s\n' 'install.sh: DAKAR_INSTALL_LOCK_WAIT_SECONDS must be a positive base-10 integer without a leading zero' >&2
+    exit 2
+    ;;
+  * )
+    ;;
+esac
+
+lock_acquired=false
+
+release_install_lock() {
+  status=$?
+  if [ "$lock_acquired" = true ]; then
+    rmdir "$lock_dir" 2>/dev/null || true
+  fi
+  trap - 0
+  exit "$status"
+}
+
+trap release_install_lock 0
+trap 'exit 1' HUP INT TERM
+
 if ! bun_cache_dir=$(bun pm cache); then
   printf '%s\n' 'install.sh: operation=global-install lock=acquisition-failed elapsed=0s path=unknown; cannot determine Bun global installation root' >&2
   exit 1
@@ -52,19 +76,17 @@ lock_dir=$(dirname "$bun_cache_dir")/.dakar-install.lock
 lock_wait_started=$(date +%s)
 next_lock_diagnostic=0
 
-release_install_lock() {
-  status=$?
-  rmdir "$lock_dir" 2>/dev/null || true
-  trap - 0
-  exit "$status"
-}
-
 while ! mkdir "$lock_dir" 2>/dev/null; do
   lock_wait_now=$(date +%s)
   lock_wait_elapsed=$((lock_wait_now - lock_wait_started))
 
   if [ ! -d "$lock_dir" ]; then
     printf '%s\n' "install.sh: operation=global-install lock=acquisition-failed elapsed=${lock_wait_elapsed}s path=$lock_dir; cannot create lock directory" >&2
+    exit 1
+  fi
+
+  if [ "$lock_wait_elapsed" -ge "$lock_wait_limit" ]; then
+    printf '%s\n' "install.sh: operation=global-install lock=timeout elapsed=${lock_wait_elapsed}s path=$lock_dir; confirm no installer process is active, then remove only this exact stale lock directory before retrying" >&2
     exit 1
   fi
 
@@ -76,8 +98,7 @@ while ! mkdir "$lock_dir" 2>/dev/null; do
   sleep 1
 done
 
-trap release_install_lock 0
-trap 'exit 1' HUP INT TERM
+lock_acquired=true
 
 # Bun links local-package executables back into their source checkout. Node then
 # resolves runtime imports from that checkout rather than Bun's global module
