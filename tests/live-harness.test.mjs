@@ -4,12 +4,14 @@
  * These tests never touch the network or spend live provider budget: they
  * exercise `loadCorpusEntry`, the state-root escape guard, the SHA-pinning
  * comparison, the `DAKAR-USAGE:` stderr parser, and `summarize`'s output
- * shape against fixtures. A hermetic child process also loads the production
- * Flex extension against a fake pi host; it never starts pi or a provider.
- * Cloning and spawning `dakar-review` remain live-operator-only activities.
+ * shape against fixtures. Hermetic child processes also load the production
+ * Flex extension against a fake pi host and exercise harness forwarding with
+ * fake Git and ODW binaries; neither path starts pi, a provider, nor a network
+ * clone. Real corpus clones and provider-billed `dakar-review` runs remain
+ * live-operator-only activities.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { once } from 'node:events'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -128,14 +130,77 @@ test('parseCliArgs accepts a --dakar-args value that begins with dashes', () => 
     '--dakar-args', '--budget-gbp 0.15 --max-luna-calls 8',
   ])
 
-  assert.equal(options.dakarArgs, '--budget-gbp 0.15 --max-luna-calls 8')
+  assert.equal(
+    options.dakarArgs,
+    '--budget-gbp 0.15 --max-luna-calls 8',
+    'preserves flag-like child arguments passed through --dakar-args',
+  )
 })
 
 test('parseCliArgs still rejects an option-like value for ordinary flags', () => {
   assert.throws(
     () => parseCliArgs(['--repo', '--pr', '140', '--work', '/tmp/w', '--out', '/tmp/o']),
     /--repo requires a value/u,
+    'rejects option-like values as missing ordinary-option values',
   )
+})
+
+test('harness entry point forwards flag-like child arguments', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-harness-forwarding-'))
+  try {
+    const toolsDir = join(tempRoot, 'tools')
+    const fakeGit = join(toolsDir, 'git')
+    const fakeOdw = join(tempRoot, 'capture-odw.mjs')
+    const capturePath = join(tempRoot, 'workflow-args.json')
+    const keyPath = join(tempRoot, 'api-key.txt')
+    mkdirSync(toolsDir)
+    writeFileSync(fakeGit, '#!/bin/sh\nif [ "$1" = clone ]; then mkdir -p "$3/.git"; fi\nexit 0\n')
+    writeFileSync(
+      fakeOdw,
+      `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs'
+const values = process.argv.slice(2)
+if (values[0] === 'run') {
+  const input = JSON.parse(values[values.indexOf('--args') + 1])
+  writeFileSync(process.env.DAKAR_CAPTURE_ARGS, JSON.stringify(input))
+  process.stdout.write('20260816-000000-deadbeef\\n')
+} else if (values[0] === 'result') {
+  process.stdout.write(JSON.stringify({ ok: true, dryRun: true, metrics: {} }))
+}
+`,
+    )
+    writeFileSync(keyPath, 'test-key\n')
+    chmodSync(fakeGit, 0o755)
+    chmodSync(fakeOdw, 0o755)
+
+    const child = spawnSync(
+      process.execPath,
+      [
+        new URL('../scripts/live-review-harness.mjs', import.meta.url).pathname,
+        '--repo', 'leynos/comenq',
+        '--pr', '140',
+        '--work', join(tempRoot, 'work'),
+        '--out', join(tempRoot, 'out'),
+        '--key-file', keyPath,
+        '--dakar-args', `--dry-run --odw-bin ${fakeOdw} --runs-root ${join(tempRoot, 'runs')} --budget-gbp 0.05`,
+      ],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          DAKAR_CAPTURE_ARGS: capturePath,
+          PATH: `${toolsDir}:${process.env.PATH}`,
+        },
+      },
+    )
+
+    assert.equal(child.status, 0, child.stderr)
+    const workflowArgs = JSON.parse(readFileSync(capturePath, 'utf8'))
+    assert.equal(workflowArgs.budgetGbp, 0.05, 'forwards the child --budget-gbp value through the harness')
+    assert.equal(workflowArgs.dryRun, true, 'forwards the child --dry-run flag through the harness')
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
 })
 
 test('loadCorpusEntry throws for an unknown repo or PR', () => {

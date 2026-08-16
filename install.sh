@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
+# Install the dakar-review CLI from this checkout: npm restores its exact
+# dependencies, then Bun installs the CLI globally. The checkout supplies the
+# workflow at runtime, so ODW must also be installed on PATH.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

@@ -483,6 +483,10 @@ test('CLI help documents the review-tuning flags', () => {
   const output = runCli(['--help'])
 
   assert.match(output, /Review tuning/u)
+  assert.ok(
+    output.includes('  --budget-gbp <n>                   Hard admission budget in GBP (default: 0.15)'),
+    'help documents the current --budget-gbp default',
+  )
   for (const { flag } of REVIEW_TUNING_FLAGS) {
     assert.ok(output.includes(flag), `help lists ${flag}`)
   }
