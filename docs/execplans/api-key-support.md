@@ -363,7 +363,7 @@ conflict in `Decision Log`, and escalate.
     property suite over admission, backoff, and compaction
     invariants). Skipped with evidence: multiplying the audit
     reservation by `flexAttempts` (the historical recorded arithmetic would
-    refuse every £0.10-budget review — 0.094 x 3 = 0.281 USD against the
+    refuse every £0.10-budget review — 0.09375 x 3 = 0.28125 USD against the
     historical USD 0.127 budget — and
     contradicts ADR 002 scheduling rule 6 on unbilled
     resource-unavailable attempts plus the recorded M5 no-re-charge
@@ -649,17 +649,17 @@ conflict in `Decision Log`, and escalate.
   stop, and both non-recordable under the full-coverage rule. The upfront
   reserve-first audit reservation remains one attempt's worst case so defaults
   keep working; the dry run additionally reports `reservedAuditChainUsd`
-  (reservation times `flexAttempts`, 0.28125 USD at defaults) as the
+  (reservation times `flexAttempts`, 0.3421875 USD at defaults) as the
   operator-visible chain ceiling. This supersedes the M5 no-re-charge decision
   and resolves the round-2 reviewer request for retry-chain accounting via the
   incremental design the operator selected over naive upfront multiplication
   (which would have refused every historical recorded £0.10-budget review:
-  0.094 x 3 = 0.281 USD against the historical recorded USD 0.127 budget).
-  Charged retries are
-  unaffordable under the
-  default budget at default token sizes — a deliberate property: under budget
-  pressure the review degrades to fewer retries, then partial coverage, then
-  deferral, never past the ceiling. Rationale: the hard ceiling must bound
+  0.09375 x 3 = 0.28125 USD against the historical recorded USD 0.127 budget).
+  Charged retries are refused only when the remaining headroom cannot cover the
+  next attempt. After the full default initial envelope, no headroom remains
+  for a maximum-cost retry, although smaller retries can still fit. Under
+  budget pressure the review degrades to fewer retries, then partial coverage,
+  then deferral, never past the ceiling. Rationale: the hard ceiling must bound
   actual worst-case spend including retries, without repealing the ordinary
   budget or the retry policy as upfront chain reservation would. Date/Author:
   2026-07-19, implementing agent, per operator direction.
