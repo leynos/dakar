@@ -887,7 +887,7 @@ var CANDIDATE_SCHEMA = {
     taskId: { type: "string", description: "Identifier of the task that produced these findings." },
     summary: { type: "string", description: "Task-level natural-language summary of the review." },
     noFindingsReason: { type: "string", description: "Explanation supplied when the task deliberately reports no findings." },
-    candidates: { type: "array", description: "Proposed findings, each an untrusted candidate for verification.", items: { type: "object", additionalProperties: false, properties: {
+    candidates: { type: "array", description: "Proposed findings, each an untrusted candidate for verification.", items: { type: "object", additionalProperties: false, description: "One proposed finding, pending adversarial verification.", properties: {
       title: { type: "string", description: "Short finding title." },
       severity: { type: "string", enum: ["critical", "high", "medium", "low"], description: "Finder-reported severity of the finding." },
       path: { type: "string", description: "Repository-relative file path the finding refers to." },
