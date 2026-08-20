@@ -50,7 +50,7 @@ jobs:
       - name: Validate diagrams
         run: make nixie
       - name: Install Node.js dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
       - name: Install the ODW CLI
         # odw is not published to npm and ships no built dist in git, so
         # build it from a pinned upstream commit; `make check`'s typecheck
@@ -60,9 +60,21 @@ jobs:
           git clone https://github.com/xz1220/open-dynamic-workflows /tmp/odw
           git -C /tmp/odw checkout "${ODW_GIT_REV}"
           cd /tmp/odw
-          npm ci
-          npm run build
-          npm install --global .
-          odw --version
+          bun install --frozen-lockfile
+          bun run build
+          # Expose the CLI from this lockfile-verified tree rather than
+          # installing it globally. Neither bun nor npm links a package's own
+          # bin into its own node_modules/.bin — that only happens when the
+          # package is installed as someone else's dependency — so create the
+          # link here. tsc preserves the source shebang in dist/cli.js, so the
+          # symlink is directly executable.
+          mkdir -p node_modules/.bin
+          chmod +x dist/cli.js
+          ln -sf /tmp/odw/dist/cli.js node_modules/.bin/odw
+          echo "/tmp/odw/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify the ODW CLI
+        # A separate step: $GITHUB_PATH only affects subsequent steps, so this
+        # also proves `make check` below resolves odw from that directory.
+        run: odw --version
       - name: Run commit gates
         run: make check
