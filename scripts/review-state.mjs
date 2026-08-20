@@ -722,24 +722,27 @@ function integerField(input, camelKey, snakeKey) {
 }
 
 /**
- * @typedef {object} AppendReviewResult Confirmation that a review entry was
- * durably recorded, echoing the state file and head commit so callers can
- * log or verify the write.
+ * @typedef {object} AppendReviewResult Confirmation that a review's head
+ * commit is present in the state file, echoing the state file and head
+ * commit so callers can log or verify the outcome. The entry may have been
+ * newly appended by this call, or already recorded from a prior call.
  * @property {boolean} ok Always `true`; failures throw instead.
- * @property {string} stateFile Path of the TOML state file the entry was appended to.
- * @property {string} headCommit Head commit id recorded in the new entry.
+ * @property {string} stateFile Path of the TOML state file holding the entry.
+ * @property {string} headCommit Head commit id confirmed present in the state file.
  */
 /**
- * Append a completed review entry to the `reviews.toml` state file.
+ * Append a completed review entry to the `reviews.toml` state file, unless
+ * an entry for the same head commit is already recorded.
  *
  * Creates the parent directories if absent, then atomically appends a
  * `[[reviews]]` TOML block under an exclusive file lock. Accepts both camelCase
- * and snake_case field names for interoperability with the ODW workflow.
+ * and snake_case field names for interoperability with the ODW workflow. Idempotent:
+ * if the head commit is already present in the state file, the call is a no-op.
  *
  * @param {object} input - record input; must include `headCommit`, `commitCount`, and `findingsTotal`. It must include
  * `stateFile` only when `trustedLocation` is absent.
  * @param {object | null} [trustedLocation] - trusted repository and state-root arguments used to derive the state file.
- * @returns {AppendReviewResult} confirmation of the recorded entry.
+ * @returns {AppendReviewResult} confirmation that the head commit is recorded, whether newly appended or already present.
  */
 function appendReview(input, trustedLocation = null) {
   const rawStateFile = input.stateFile || input.state_file
@@ -781,9 +784,9 @@ function appendReview(input, trustedLocation = null) {
   return {
     /** Always true: a thrown error otherwise short-circuits this function. */
     ok: true,
-    /** Absolute path to the `reviews.toml` file the entry was appended to. */
+    /** Absolute path to the `reviews.toml` file holding the entry. */
     stateFile,
-    /** Normalized lowercase commit id recorded for this review entry. */
+    /** Normalized lowercase commit id confirmed present in the state file. */
     headCommit,
   }
 }

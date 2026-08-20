@@ -66,7 +66,7 @@ export interface WorkflowConfig {
   readonly reviewModels: readonly Readonly<ModelSpec>[]
   /** Live routing policy identifier, constrained to a known value and defaulting to `deterministic-flex-v1`. */
   readonly routingPolicy: string
-  /** Non-blank XDG state root for review-history state, defaulting to empty when unset. */
+  /** XDG state root for review-history state, defaulting to empty when unset or blank. */
   readonly stateRoot: string
   /** Codex adapter selected for the synthesis reasoning level. */
   readonly synthesisAdapter: string
