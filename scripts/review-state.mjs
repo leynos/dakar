@@ -725,24 +725,27 @@ function integerField(input, camelKey, snakeKey) {
  * @typedef {object} AppendReviewResult Confirmation that a review's head
  * commit is present in the state file, echoing the state file and head
  * commit so callers can log or verify the outcome. The entry may have been
- * newly appended by this call, or already recorded from a prior call.
+ * newly appended by this call, or already recorded from a prior call whose
+ * status was absent or `completed`.
  * @property {boolean} ok Always `true`; failures throw instead.
  * @property {string} stateFile Path of the TOML state file holding the entry.
  * @property {string} headCommit Head commit id confirmed present in the state file.
  */
 /**
  * Append a completed review entry to the `reviews.toml` state file, unless
- * an entry for the same head commit is already recorded.
+ * an entry for the same head commit is already recorded with no status or
+ * `completed`.
  *
  * Creates the parent directories if absent, then atomically appends a
  * `[[reviews]]` TOML block under an exclusive file lock. Accepts both camelCase
- * and snake_case field names for interoperability with the ODW workflow. Idempotent:
- * if the head commit is already present in the state file, the call is a no-op.
+ * and snake_case field names for interoperability with the ODW workflow. Idempotent
+ * only for that case: an existing entry for the same head commit under any other
+ * status does not suppress the append.
  *
  * @param {object} input - record input; must include `headCommit`, `commitCount`, and `findingsTotal`. It must include
  * `stateFile` only when `trustedLocation` is absent.
  * @param {object | null} [trustedLocation] - trusted repository and state-root arguments used to derive the state file.
- * @returns {AppendReviewResult} confirmation that the head commit is recorded, whether newly appended or already present.
+ * @returns {AppendReviewResult} confirmation that the head commit is recorded, whether newly appended or already present with no status or `completed`.
  */
 function appendReview(input, trustedLocation = null) {
   const rawStateFile = input.stateFile || input.state_file

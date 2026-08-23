@@ -156,6 +156,30 @@ test('allOf, anyOf, and not subschemas are traversed', () => {
   assert.deepEqual(findMissingDescriptions(negated, 'FIXTURE'), ['FIXTURE.properties.value.not'])
 })
 
+test('composed keywords are traversed in a fixed allOf, anyOf, oneOf order', () => {
+  const undocumented = () => ({ type: 'object', properties: {} })
+  const schema = {
+    type: 'object',
+    description: 'Composed hand-off.',
+    properties: {
+      value: {
+        description: 'Constrained value.',
+        oneOf: [undocumented()],
+        allOf: [undocumented()],
+        anyOf: [undocumented()],
+      },
+    },
+  }
+
+  // Declaration order here is oneOf, allOf, anyOf; the walk order is fixed by
+  // the helper, so the report must not follow the object's key order.
+  assert.deepEqual(findMissingDescriptions(schema, 'FIXTURE'), [
+    'FIXTURE.properties.value.allOf[0]',
+    'FIXTURE.properties.value.anyOf[0]',
+    'FIXTURE.properties.value.oneOf[0]',
+  ])
+})
+
 test('a self-referential schema terminates instead of recursing forever', () => {
   const schema = { type: 'object', description: 'Recursive hand-off.', properties: {} }
   schema.properties.child = schema

@@ -14,6 +14,24 @@
 const COMPOSED_LIST_KEYWORDS = ['allOf', 'anyOf', 'oneOf']
 
 /**
+ * @typedef {object} VisitContext Everything one visit needs to judge a node.
+ * @property {string} path Dotted path reported when the description is absent.
+ * @property {Set<object>} ancestors Schemas already open on this branch, so a
+ * self-referential schema terminates instead of recursing forever.
+ * @property {boolean} isNamedProperty Whether the node is a `properties` entry,
+ * which must always be documented.
+ * @property {string[]} missing Accumulator of offending paths, in walk order.
+ */
+
+/**
+ * @typedef {object} BranchContext A node's context, extended for its children.
+ * @property {string} path Dotted path of the node being descended from.
+ * @property {Set<object>} ancestors This branch's open schemas, including the
+ * node itself.
+ * @property {string[]} missing Accumulator shared with every other visit.
+ */
+
+/**
  * Report whether a value is a plain schema object rather than an array or scalar.
  *
  * @param {unknown} value - candidate subschema.
@@ -52,43 +70,115 @@ function isStructuralSchema(node) {
 }
 
 /**
- * Walk one subschema, recording the paths that lack a required description.
+ * Record the node's path when it must carry a description but does not.
  *
- * @param {unknown} node - subschema to inspect.
- * @param {string} path - dotted path used to report a missing description.
- * @param {Set<object>} ancestors - schemas already open on this branch, so a
- * self-referential schema terminates instead of recursing forever.
- * @param {boolean} isNamedProperty - whether the node is a `properties` entry,
- * which must always be documented.
- * @param {string[]} missing - accumulator of offending paths, in walk order.
+ * @param {object} node - schema object being visited.
+ * @param {VisitContext} context - position and accumulated state.
  * @returns {void}
  */
-function walk(node, path, ancestors, isNamedProperty, missing) {
-  if (!isSchemaObject(node) || ancestors.has(node)) return
-  const branch = new Set(ancestors).add(node)
-
-  if ((isNamedProperty || isStructuralSchema(node)) && !hasNonBlankDescription(node)) {
-    missing.push(path)
+function recordMissingDescription(node, context) {
+  if ((context.isNamedProperty || isStructuralSchema(node)) && !hasNonBlankDescription(node)) {
+    context.missing.push(context.path)
   }
+}
 
-  if (isSchemaObject(node.properties)) {
-    for (const key of Object.keys(node.properties)) {
-      walk(node.properties[key], `${path}.properties.${key}`, branch, true, missing)
-    }
+/**
+ * Build the context for one subschema reached from a branch.
+ *
+ * @param {BranchContext} branch - context of the schema being descended from.
+ * @param {string} suffix - path segment identifying the subschema.
+ * @param {boolean} isNamedProperty - whether the subschema is a `properties` entry.
+ * @returns {VisitContext} context for visiting that subschema.
+ */
+function childContext(branch, suffix, isNamedProperty) {
+  return {
+    path: `${branch.path}${suffix}`,
+    ancestors: branch.ancestors,
+    isNamedProperty,
+    missing: branch.missing,
   }
+}
 
+/**
+ * Visit each entry of a schema's `properties`, in declaration order.
+ *
+ * @param {object} node - schema object being descended from.
+ * @param {BranchContext} branch - branch state for its children.
+ * @returns {void}
+ */
+function visitProperties(node, branch) {
+  if (!isSchemaObject(node.properties)) return
+  for (const key of Object.keys(node.properties)) {
+    visitSchema(node.properties[key], childContext(branch, `.properties.${key}`, true))
+  }
+}
+
+/**
+ * Visit a schema's `items`, whether a tuple of subschemas or a single one.
+ *
+ * @param {object} node - schema object being descended from.
+ * @param {BranchContext} branch - branch state for its children.
+ * @returns {void}
+ */
+function visitItems(node, branch) {
   if (Array.isArray(node.items)) {
-    node.items.forEach((item, index) => walk(item, `${path}.items[${index}]`, branch, false, missing))
-  } else if (node.items !== undefined) {
-    walk(node.items, `${path}.items`, branch, false, missing)
+    node.items.forEach((item, index) => visitSchema(item, childContext(branch, `.items[${index}]`, false)))
+    return
   }
+  if (node.items !== undefined) visitSchema(node.items, childContext(branch, '.items', false))
+}
 
+/**
+ * Visit the subschemas of every composed keyword holding a list.
+ *
+ * @param {object} node - schema object being descended from.
+ * @param {BranchContext} branch - branch state for its children.
+ * @returns {void}
+ */
+function visitComposedLists(node, branch) {
   for (const keyword of COMPOSED_LIST_KEYWORDS) {
     if (!Array.isArray(node[keyword])) continue
-    node[keyword].forEach((sub, index) => walk(sub, `${path}.${keyword}[${index}]`, branch, false, missing))
+    node[keyword].forEach((sub, index) => visitSchema(sub, childContext(branch, `.${keyword}[${index}]`, false)))
   }
+}
 
-  if (node.not !== undefined) walk(node.not, `${path}.not`, branch, false, missing)
+/**
+ * Visit the subschema of a `not` keyword.
+ *
+ * @param {object} node - schema object being descended from.
+ * @param {BranchContext} branch - branch state for its children.
+ * @returns {void}
+ */
+function visitNot(node, branch) {
+  if (node.not === undefined) return
+  visitSchema(node.not, childContext(branch, '.not', false))
+}
+
+/**
+ * Judge one subschema, then descend into the subschemas it holds.
+ *
+ * Descent order is fixed — `properties`, `items`, the composed lists, then
+ * `not` — so reported paths stay in a deterministic order. The branch extends
+ * `ancestors` with this node, which keeps cycle detection local to the current
+ * chain: a schema shared between two branches is still visited on both.
+ *
+ * @param {unknown} node - subschema to inspect.
+ * @param {VisitContext} context - position and accumulated state.
+ * @returns {void}
+ */
+function visitSchema(node, context) {
+  if (!isSchemaObject(node) || context.ancestors.has(node)) return
+  recordMissingDescription(node, context)
+
+  const branch = {
+    path: context.path,
+    ancestors: new Set(context.ancestors).add(node),
+    missing: context.missing,
+  }
+  visitProperties(node, branch)
+  visitItems(node, branch)
+  visitComposedLists(node, branch)
+  visitNot(node, branch)
 }
 
 /**
@@ -106,6 +196,6 @@ function walk(node, path, ancestors, isNamedProperty, missing) {
  */
 export function findMissingDescriptions(schema, rootLabel = 'schema') {
   const missing = []
-  walk(schema, rootLabel, new Set(), false, missing)
+  visitSchema(schema, { path: rootLabel, ancestors: new Set(), isNamedProperty: false, missing })
   return missing
 }
