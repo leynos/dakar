@@ -10,6 +10,8 @@
  *
  * The mutation cases prove the validator can fail: a fixture with a removed or
  * blanked description must be reported, and reported at the right path.
+ *
+ * @module
  */
 
 import assert from 'node:assert/strict'
@@ -185,4 +187,19 @@ test('a self-referential schema terminates instead of recursing forever', () => 
   schema.properties.child = schema
 
   assert.deepEqual(findMissingDescriptions(schema, 'FIXTURE'), [])
+})
+
+test('a cyclic named property reports each missing description before terminating', () => {
+  const child = { type: 'object', properties: {} }
+  child.properties.self = child
+  const schema = {
+    type: 'object',
+    description: 'Recursive hand-off.',
+    properties: { child },
+  }
+
+  assert.deepEqual(findMissingDescriptions(schema, 'ROOT'), [
+    'ROOT.properties.child',
+    'ROOT.properties.child.properties.self',
+  ])
 })

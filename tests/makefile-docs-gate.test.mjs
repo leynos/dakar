@@ -10,6 +10,8 @@
  * arguments the recipe assembles, not TypeDoc's own behaviour. `make -n` prints
  * each recipe without running it, so the suite resolves the real dependency
  * graph without invoking TypeDoc.
+ *
+ * @module
  */
 
 import assert from 'node:assert/strict'

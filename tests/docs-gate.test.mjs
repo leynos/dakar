@@ -11,6 +11,8 @@
  * This replaces the end-to-end coverage lost when the docstring audit and its
  * CLI-boundary test were retired. `emit` is `none`, so no documentation
  * artefacts are written.
+ *
+ * @module
  */
 
 import assert from 'node:assert/strict'

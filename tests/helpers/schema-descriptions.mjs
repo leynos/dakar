@@ -8,6 +8,8 @@
  *
  * The walk is pure and data-driven: it inspects a schema object that the
  * caller already holds and never reads, parses, or executes a repository file.
+ *
+ * @module
  */
 
 /** Composed-schema keywords whose value is an array of subschemas. */
@@ -73,13 +75,15 @@ function isStructuralSchema(node) {
  * Record the node's path when it must carry a description but does not.
  *
  * @param {object} node - schema object being visited.
- * @param {VisitContext} context - position and accumulated state.
+ * @param {boolean} isNamedProperty - whether the schema is a `properties` entry.
+ * @param {string} path - diagnostic path of the schema.
+ * @param {string[]} missing - mutable diagnostic accumulator.
  * @returns {void}
  */
-function recordMissingDescription(node, context) {
-  if ((context.isNamedProperty || isStructuralSchema(node)) && !hasNonBlankDescription(node)) {
-    context.missing.push(context.path)
-  }
+function recordMissingDescription(node, isNamedProperty, path, missing) {
+  if (!isNamedProperty && !isStructuralSchema(node)) return
+  if (hasNonBlankDescription(node)) return
+  missing.push(path)
 }
 
 /**
@@ -167,8 +171,9 @@ function visitNot(node, branch) {
  * @returns {void}
  */
 function visitSchema(node, context) {
-  if (!isSchemaObject(node) || context.ancestors.has(node)) return
-  recordMissingDescription(node, context)
+  if (!isSchemaObject(node)) return
+  recordMissingDescription(node, context.isNamedProperty, context.path, context.missing)
+  if (context.ancestors.has(node)) return
 
   const branch = {
     path: context.path,

@@ -9,6 +9,8 @@
  * the path of each field it deliberately leaves undocumented as it constructs
  * the graph, so the property compares discovery against construction rather
  * than against a re-implementation of the walker.
+ *
+ * @module
  */
 
 import assert from 'node:assert/strict'
