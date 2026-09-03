@@ -1,4 +1,8 @@
-/** @file Match normalized review policy to bounded workflow evidence packs. */
+/**
+ * Match normalized review policy to bounded workflow evidence packs.
+ *
+ * @module
+ */
 
 import type { NormalizedReviewPolicy, PolicyPathInstruction } from './types.ts'
 
@@ -83,7 +87,10 @@ export function policyPathMatches(path: string, pattern: string): boolean {
 export function pathInstructionsFor(
   policy: NormalizedReviewPolicy,
   paths: string[],
-): Array<PolicyPathInstruction & { matchingPaths: string[] }> {
+): Array<PolicyPathInstruction & {
+  /** Changed paths from the pack that matched this instruction's glob. */
+  matchingPaths: string[]
+}> {
   return policy.pathInstructions.flatMap((instruction) => {
     const matchingPaths = paths.filter((path) => policyPathMatches(path, instruction.path))
     return matchingPaths.length === 0 ? [] : [{ ...instruction, matchingPaths }]

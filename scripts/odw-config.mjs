@@ -1,5 +1,5 @@
 /**
- * @file Derive a per-run ODW adapter configuration that bounds the pi Flex calls.
+ * Derive a per-run ODW adapter configuration that bounds the pi Flex calls.
  *
  * The packaged `odw.config.json` declares the adapters but leaves each call
  * unbounded. The `--per-call-timeout` CLI option (default 300 s) must actually
@@ -9,6 +9,8 @@
  * handles, so no workflow change is needed. The Codex adapters are left
  * untouched. The derivation is a pure function so it can be unit-tested away from
  * the CLI's process side effects.
+ *
+ * @module
  */
 
 /** The pi Flex adapters whose model calls the per-call timeout must bound. */

@@ -7,6 +7,13 @@ the audit trail for the completed work.
 
 Status: COMPLETE
 
+The docstring-coverage audit cited below (`npm run docstrings`,
+`make docstrings`, `check-docstrings.mjs`, and its percentage thresholds and
+coverage counts) was retired on 2026-08-20 and replaced by `make docs-check`,
+which runs TypeDoc's zero-tolerance `notDocumented` validation. The commands
+and figures below are preserved as historical record and should not be run
+today.
+
 ## Purpose / big picture
 
 Dakar previously shipped a valid but 966-line Open Dynamic Workflows (ODW)

@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 20
     env:
       MERMAN_CLI_VERSION: '0.7.0'
+      ODW_GIT_REV: '856f2b9fd83d454fb7256bbad7096742db853ad1'
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
@@ -48,3 +49,32 @@ jobs:
           cargo +1.95.0 install merman-cli --version "=${MERMAN_CLI_VERSION}" --locked
       - name: Validate diagrams
         run: make nixie
+      - name: Install Node.js dependencies
+        run: bun install --frozen-lockfile
+      - name: Install the ODW CLI
+        # odw is not published to npm and ships no built dist in git, so
+        # build it from a pinned upstream commit; `make check`'s typecheck
+        # stage runs an `odw run --args '{"dryRun":true}'` contract check.
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/xz1220/open-dynamic-workflows /tmp/odw
+          git -C /tmp/odw checkout "${ODW_GIT_REV}"
+          cd /tmp/odw
+          bun install --frozen-lockfile
+          bun run build
+          # Expose the CLI from this lockfile-verified tree rather than
+          # installing it globally. Neither bun nor npm links a package's own
+          # bin into its own node_modules/.bin — that only happens when the
+          # package is installed as someone else's dependency — so create the
+          # link here. tsc preserves the source shebang in dist/cli.js, so the
+          # symlink is directly executable.
+          mkdir -p node_modules/.bin
+          chmod +x dist/cli.js
+          ln -sf /tmp/odw/dist/cli.js node_modules/.bin/odw
+          echo "/tmp/odw/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify the ODW CLI
+        # A separate step: $GITHUB_PATH only affects subsequent steps, so this
+        # also proves `make check` below resolves odw from that directory.
+        run: odw --version
+      - name: Run commit gates
+        run: make check

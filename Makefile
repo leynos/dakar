@@ -1,11 +1,11 @@
-.PHONY: check fmt check-fmt docstrings lint typecheck markdownlint nixie test spelling \
+.PHONY: check fmt check-fmt docs-check lint typecheck markdownlint nixie test spelling \
 	spelling-config spelling-config-write spelling-phrase-check \
 	spelling-helper-test workflow-build workflow-freshness workflow-check
 
 MD_FILES := $(shell git ls-files '*.md')
 # Explicit bin/ and scripts/ entries, then every tracked test module via a glob
 # so a newly added test cannot silently escape the node --check pre-flight.
-NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/check-docstrings.mjs scripts/live-review-harness.mjs scripts/odw-config.mjs scripts/review-config.mjs scripts/review-state.mjs $(shell git ls-files 'tests/*.test.mjs' 'tests/helpers/*.mjs')
+NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/live-review-harness.mjs scripts/odw-config.mjs scripts/review-config.mjs scripts/review-state.mjs $(shell git ls-files 'tests/*.test.mjs' 'tests/helpers/*.mjs')
 UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
 UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
 RUFF_VERSION ?= 0.15.12
@@ -35,10 +35,10 @@ check-fmt:
 	@git ls-files -z -- bin docs scripts tests workflows AGENTS.md install.sh | \
 		xargs -0 -r sh -c 'for file do test "$$(tail -c 1 "$$file")" = "" || { printf "%s: missing final newline\n" "$$file"; exit 1; }; done' sh
 
-lint: markdownlint nixie docstrings
+lint: markdownlint nixie docs-check
 
-docstrings:
-	@npm run docstrings
+docs-check:
+	@npm run docs:check
 
 typecheck:
 	@for file in $(NODE_MODULES); do node --check "$$file"; done

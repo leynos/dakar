@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * @file Drive live, provider-billed Dakar reviews against the pinned M7 corpus.
+ * Drive live, provider-billed Dakar reviews against the pinned M7 corpus.
  *
  * The harness clones (or reuses) a corpus repository, fetches and verifies the
  * pull-request head against `scripts/live-corpus.json`, guards a scratch state
@@ -10,6 +10,8 @@
  * summary JSON, matching the CLI's own contract. `--skip-review` stops after
  * the clone and SHA-pinning guard so an operator can warm corpus checkouts
  * without spending provider budget.
+ *
+ * @module
  */
 
 import { spawn, spawnSync } from 'node:child_process'
@@ -91,11 +93,19 @@ function tallyMalformedCategories(diagnostics) {
 }
 
 /**
+ * @typedef {object} CorpusEntry One pinned pull request from the corpus manifest.
+ * @property {string} tier Billing tier the entry belongs to.
+ * @property {string} repo `owner/name` slug of the source repository.
+ * @property {number} pr Pull-request number.
+ * @property {string} base Pinned base commit SHA of the review range.
+ * @property {string} head Pinned head commit SHA of the review range.
+ */
+/**
  * Load the pinned corpus manifest and find the entry for a repo and PR number.
  *
  * @param {string} repo - `owner/name` slug, e.g. `'leynos/comenq'`.
  * @param {number} pr - pull-request number.
- * @returns {{ tier: string, repo: string, pr: number, base: string, head: string }} the pinned entry.
+ * @returns {CorpusEntry} the pinned entry.
  */
 export function loadCorpusEntry(repo, pr) {
   const corpus = JSON.parse(readFileSync(corpusPath, 'utf8'))
@@ -281,6 +291,17 @@ export async function prepareClone(entry, workDir) {
 }
 
 /**
+ * @typedef {object} MarkerDiagnostic One malformed `DAKAR-USAGE` marker line,
+ * carrying only its position and failure mode, never any payload content.
+ * @property {number} line One-based position of the marker line in the stderr stream.
+ * @property {'invalid-json' | 'non-object' | 'invalid-fields'} category Failure mode of the malformed line.
+ */
+/**
+ * @typedef {object} ExtractedUsage Telemetry partitioned out of a stderr capture.
+ * @property {Array<Record<string, number>>} usages Valid usage payloads, in stream order.
+ * @property {MarkerDiagnostic[]} malformed One diagnostic per malformed marker line.
+ */
+/**
  * Parse `DAKAR-USAGE: ` marker lines out of the pi Flex adapter's stderr
  * telemetry, separating valid usage records from an explicit, non-sensitive
  * account of the malformed ones. Unrelated stderr lines (with no marker) are
@@ -292,8 +313,7 @@ export async function prepareClone(entry, workDir) {
  * or raw text — are ever placed in a diagnostic.
  *
  * @param {string} stderrText - the full stderr capture from a review run.
- * @returns {{ usages: Array<Record<string, number>>, malformed: Array<{ line: number, category: 'invalid-json' | 'non-object' | 'invalid-fields' }> }}
- *   the valid usage payloads in order, plus one diagnostic per malformed marker line.
+ * @returns {ExtractedUsage} the valid usage payloads in order, plus one diagnostic per malformed marker line.
  */
 export function extractUsageLines(stderrText) {
   const usages = []
@@ -335,6 +355,17 @@ function collectUsageLine(line, lineNumber, usages, malformed) {
 }
 
 /**
+ * @typedef {object} ScannerSnapshot A point-in-time copy of the scanner's parsed
+ * telemetry, detached from the scanner's own accumulators.
+ * @property {Array<Record<string, number>>} usages Valid usage payloads scanned so far, in stream order.
+ * @property {MarkerDiagnostic[]} malformed One diagnostic per malformed or oversized marker line.
+ */
+/**
+ * @typedef {object} UsageScanner A streaming stderr sink paired with a telemetry snapshot accessor.
+ * @property {Writable} stream Writable sink to pipe child stderr into.
+ * @property {() => ScannerSnapshot} result Returns a fresh snapshot of the telemetry parsed to date.
+ */
+/**
  * Build a bounded streaming scanner for `DAKAR-USAGE:` stderr records.
  *
  * The scanner decodes across chunk boundaries and retains at most
@@ -344,8 +375,7 @@ function collectUsageLine(line, lineNumber, usages, malformed) {
  *
  * @param {object} [options] - scanner bounds.
  * @param {number} [options.maxLineChars] - maximum retained characters per line.
- * @returns {{ stream: Writable, result: () => { usages: Array<Record<string, number>>, malformed: Array<{ line: number, category: string }> } }}
- *   a writable stderr sink and a snapshot function for parsed telemetry.
+ * @returns {UsageScanner} a writable stderr sink and a snapshot function for parsed telemetry.
  */
 export function createUsageScanner({ maxLineChars = MAX_TELEMETRY_LINE_CHARS } = {}) {
   const decoder = new StringDecoder('utf8')
@@ -433,10 +463,17 @@ function partitionReportedUsage(records) {
 }
 
 /**
+ * @typedef {object} UsageTotals Summed token counts across usage payloads.
+ * @property {number} input Total input (prompt) tokens.
+ * @property {number} output Total output (completion) tokens.
+ * @property {number} cacheRead Total cached-input tokens read.
+ * @property {number} cacheWrite Total tokens written to the prompt cache.
+ */
+/**
  * Sum reported token usage across parsed `DAKAR-USAGE` payloads.
  *
  * @param {Array<Record<string, number>>} usages - parsed usage payloads.
- * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number }} totals.
+ * @returns {UsageTotals} totals.
  */
 export function sumUsage(usages) {
   const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
@@ -449,6 +486,15 @@ export function sumUsage(usages) {
   return totals
 }
 
+/**
+ * @typedef {object} ReviewRun The outputs of a single `dakar-review` child run.
+ * @property {object} resultJson Parsed CLI result JSON read back from the result file.
+ * @property {Array<Record<string, number>>} usages Valid `DAKAR-USAGE` payloads from the stderr scan.
+ * @property {MarkerDiagnostic[]} malformedTelemetry Non-sensitive diagnostics for malformed stderr telemetry.
+ * @property {string} resultPath Path the child's stdout result JSON was written to.
+ * @property {string} stderrPath Path the child's stderr log was written to.
+ * @property {number | null} exitCode Child exit code, or null when it was terminated by a signal.
+ */
 /**
  * Spawn `bin/dakar-review.mjs` for one corpus entry, reading the API key
  * inside this process and passing it to the child only via its environment.
@@ -464,8 +510,7 @@ export function sumUsage(usages) {
  * @param {string[]} [options.extraArgs] - additional arguments passed through to `dakar-review`.
  * @param {string} options.keyPath - path to the file holding the provider API key.
  * @param {string} options.packageRoot - Dakar's package root, containing `bin/dakar-review.mjs`.
- * @returns {Promise<{ resultJson: object, usages: Array<Record<string, number>>, malformedTelemetry: Array<{ line: number, category: string }>, resultPath: string, stderrPath: string, exitCode: number | null }>}
- *   the run's outputs, including the valid usage records and non-sensitive malformed-telemetry diagnostics from the stderr scan.
+ * @returns {Promise<ReviewRun>} the run's outputs, including the valid usage records and non-sensitive malformed-telemetry diagnostics from the stderr scan.
  */
 export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs = [], keyPath, packageRoot }) {
   const apiKey = readFileSync(keyPath, 'utf8').trim()

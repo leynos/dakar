@@ -1,17 +1,28 @@
-/** @file Price worst-case token usage against a versioned Dakar rate table. */
+/**
+ * Price worst-case token usage against a versioned Dakar rate table.
+ *
+ * @module
+ */
 
 /** Describes one model/service-tier band's per-million-token USD rates. */
 export interface PricingBand {
+  /** USD per million uncached input tokens. */
   inputUsdPerMTok: number
+  /** USD per million cached input tokens. */
   cachedInputUsdPerMTok: number
+  /** USD per million cache-write input tokens. */
   cacheWriteUsdPerMTok: number
+  /** USD per million output tokens. */
   outputUsdPerMTok: number
 }
 
 /** Bundles a versioned exchange snapshot with rates keyed by model and tier. */
 export interface PricingTable {
+  /** Version identifier for this rate table snapshot. */
   version: string
+  /** Versioned GBP-to-USD exchange snapshot, not a constant. */
   usdPerGbp: number // versioned exchange snapshot, not a constant
+  /** Pricing bands keyed by `${model}:${serviceTier}`. */
   rates: Record<string, PricingBand> // key: `${model}:${serviceTier}`
 }
 

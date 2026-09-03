@@ -1,21 +1,32 @@
-/** @file Classify changed files and construct the bounded review task graph. */
-
-import { adapterForReasoning, baseModel, flexLaneRole, modelForRole, modelName } from './model-routing.ts'
+/**
+ * Classify changed files and construct the bounded review task graph.
+ *
+ * @module
+ */
 import type { ModelSpec, PreparedReview, ReviewTask } from './types.ts'
+import { adapterForReasoning, baseModel, flexLaneRole, modelForRole, modelName } from './model-routing.ts'
 
 /** Defines the bounded limits and model set used to construct review tasks. */
 export interface TaskGraphConfig {
+  /** Workflow-wide findings cap; each task further tightens this per its kind. */
   maxFindings: number
+  /** Total task budget, including the mandatory review-summary task. */
   maxTasks: number
+  /** Ordered model assignments used to route tasks by role. */
   reviewModels: readonly Readonly<ModelSpec>[]
 }
 
 /** Bounds and lane selection for the deterministic Flex finder plan. */
 export interface FlexFinderConfig {
+  /** Upper bound on the number of Luna Flex finder calls the plan may dispatch. */
   maxLunaFlexCalls: number
+  /** Planned-task cap that composes with the Luna call cap to bound dispatched packs. */
   maxTasks: number
+  /** Maximum number of changed files packed into each homogeneous finder pack. */
   transactionMaxFiles: number
+  /** Luna finder lane, either the default or the pre-registered escalation lane. */
   lunaRole: 'luna' | 'luna-medium'
+  /** Per-pack findings cap, further tightened by kind when tasks are built. */
   maxFindings: number
 }
 
@@ -167,7 +178,12 @@ export function buildTaskGraph(prepared: PreparedReview, config: TaskGraphConfig
 export function buildFlexFinderPlan(
   prepared: PreparedReview,
   config: FlexFinderConfig,
-): { packs: ReviewTask[]; truncatedFiles: string[] } {
+): {
+  /** Bounded, deterministic finder packs ready for dispatch. */
+  packs: ReviewTask[]
+  /** Changed files left outside the coverage window and thus not packed. */
+  truncatedFiles: string[]
+} {
   const lane = flexLaneRole(config.lunaRole)
   const perPack = Math.max(1, config.transactionMaxFiles)
   const buckets = new Map<string, string[]>()

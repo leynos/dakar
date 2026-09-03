@@ -1,4 +1,8 @@
-/** @file Declare ODW's injected globals for compile-time checking only. */
+/**
+ * Declare ODW's injected globals for compile-time checking only.
+ *
+ * @module
+ */
 
 type JsonSchema = Readonly<Record<string, unknown>>
 

@@ -1,8 +1,11 @@
-/** @file Build bounded, trust-aware prompts for each workflow phase. */
-
-import { shellWord } from './shell.ts'
-import { policyGuidanceBlock } from './policy.ts'
+/**
+ * Build bounded, trust-aware prompts for each workflow phase.
+ *
+ * @module
+ */
 import type { Candidate, Discarded, PreparedReview, PromptContext, ReviewTask } from './types.ts'
+import { policyGuidanceBlock } from './policy.ts'
+import { shellWord } from './shell.ts'
 
 /**
  * Formats trusted repository instructions with Dakar's precedence warning.

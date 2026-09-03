@@ -1,4 +1,8 @@
-/** @file Validate workflow arguments and resolve immutable runtime configuration. */
+/**
+ * Validate workflow arguments and resolve immutable runtime configuration.
+ *
+ * @module
+ */
 
 import { adapterForReasoning, baseModel, DEFAULT_REVIEW_MODELS, isReasoning, modelName, reasoningFromModel } from './model-routing.ts'
 import type {
@@ -14,41 +18,77 @@ import type {
 
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
+  /** Per-call token overhead the adapter reserves, bounded to 0–50,000 tokens. */
   readonly adapterOverheadTokens: number
+  /** Validated trusted-base instructions, or null when the raw argument was absent or malformed. */
   readonly agentInstructions: AgentInstructions | null
+  /** Non-blank base ref to diff against, defaulting to `origin/main`. */
   readonly baseRef: string
+  /** Hard review budget in GBP, bounded to £0.01–£10 and defaulting to £0.10. */
   readonly budgetGbp: number
+  /** Raw `config` argument, defaulting to empty (auto-resolution) when blank. */
   readonly configArg: string
+  /** Whether the workflow should short-circuit with the dry-run contract instead of calling agents. */
   readonly dryRun: boolean
+  /** Number of Flex attempts per model call, a positive integer no greater than 6 and defaulting to 3. */
   readonly flexAttempts: number
+  /** Initial Flex retry backoff in seconds, a positive integer no greater than 300. */
   readonly flexInitialBackoffSeconds: number
+  /** Random jitter added to the Flex backoff in seconds, bounded to 0–60. */
   readonly flexJitterSeconds: number
+  /** Maximum Flex retry backoff in seconds, a positive integer no greater than 900. */
   readonly flexMaxBackoffSeconds: number
+  /** Non-blank head ref to review up to, defaulting to `HEAD`. */
   readonly headRef: string
+  /** Reasoning level for the Luna Flex finder lane, either `low` (default) or `medium`. */
   readonly lunaReasoning: 'low' | 'medium'
+  /** Per-agent-call timeout in seconds, bounded to 30–900. */
   readonly perCallTimeoutSeconds: number
+  /** Whether the supplied review-policy hand-off validated successfully. */
   readonly policyValid: boolean
+  /** Cap on candidates retained for the audit pass, a positive integer no greater than 100. */
   readonly maxAuditCandidates: number
+  /** Global cap on normalized candidates, a positive integer no greater than 1,000. */
   readonly maxCandidates: number
+  /** Cap on accepted findings retained in the final report, clamped to a positive integer no greater than 200. */
   readonly maxFindings: number
+  /** Cap on Luna Flex finder calls the review may issue, a positive integer no greater than 16 and defaulting to 4. */
   readonly maxLunaFlexCalls: number
+  /** Cap on review tasks the task graph may schedule, a positive integer no greater than 64. */
   readonly maxTasks: number
+  /** Pre-resolved review range and state supplied by the caller, or undefined to prepare it during the run. */
   readonly prepared: PreparedReview | undefined
+  /** Non-blank repository root, defaulting to `.` when blank. */
   readonly repoRoot: string
+  /** Validated, normalized review policy governing scope, tone, and custom checks. */
   readonly reviewPolicy: Readonly<NormalizedReviewPolicy>
+  /** Validated review model specifications, falling back to `DEFAULT_REVIEW_MODELS` when none are configured. */
   readonly reviewModels: readonly Readonly<ModelSpec>[]
+  /** Live routing policy identifier, constrained to a known value and defaulting to `deterministic-flex-v1`. */
   readonly routingPolicy: string
+  /** XDG state root for review-history state, defaulting to empty when unset or blank. */
   readonly stateRoot: string
+  /** Codex adapter selected for the synthesis reasoning level. */
   readonly synthesisAdapter: string
+  /** Base synthesis model identifier with any reasoning suffix stripped. */
   readonly synthesisModelBase: string
+  /** Full `model/reasoning` identifier used for synthesis agent calls. */
   readonly synthesisModelName: string
+  /** Reasoning level applied to synthesis calls, resolved from the requested value or defaulting to `high`. */
   readonly synthesisReasoning: Reasoning
+  /** Fixed ordered set of task kinds the workflow can classify changed files into. */
   readonly taskKinds: readonly string[]
+  /** Maximum input tokens for a Terra audit call, bounded to 1–1,000,000 and defaulting to 48,000. */
   readonly terraMaxInputTokens: number
+  /** Maximum output tokens for a Terra task call, bounded to 1–100,000. */
   readonly terraMaxOutputTokens: number
+  /** Cap on files bundled into one transaction, a positive integer no greater than 20. */
   readonly transactionMaxFiles: number
+  /** Maximum input tokens for a transaction call, bounded to 1–200,000. */
   readonly transactionMaxInputTokens: number
+  /** Maximum output tokens for a transaction call, bounded to 1–100,000. */
   readonly transactionMaxOutputTokens: number
+  /** Fixed workflow-strategy version identifier surfaced in run metrics. */
   readonly workflowVersion: string
 }
 
