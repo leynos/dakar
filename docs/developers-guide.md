@@ -34,6 +34,12 @@ Do not use `node --check workflows/dakar-review.js` as a workflow syntax gate.
 ODW files permit top-level `return`, which ordinary Node syntax checking
 rejects. Use `odw run ... --args '{"dryRun":true}'` instead.
 
+Markdown linting and the docstring gate run under Node, and their tooling
+requires a recent runtime: `markdownlint-cli2@0.23.2` declares `node >= 22` in
+its own package metadata, so contributors must use Node.js 22 or later for
+`make lint` and Markdown linting. Dakar's `package.json` declares no `engines`
+field, so npm does not enforce this requirement for you.
+
 ### Spelling policy
 
 Run `make spelling` to enforce en-GB-oxendict spelling. The dictionary-based
@@ -265,6 +271,31 @@ When changing CLI arguments or output, update these places together:
 - `docs/users-guide.md`;
 - the workflow contract section in `docs/dakar-review-design.md` when the
   underlying ODW result changes.
+
+### Live review harness
+
+`scripts/live-review-harness.mjs` is the maintainer-facing driver for live,
+provider-billed reviews against the pinned corpus in
+`scripts/live-corpus.json`. It is evaluation tooling, not part of the
+installable CLI: it clones (or reuses) a corpus repository, guards a scratch
+state root, and spawns `bin/dakar-review.mjs` as a child process. It requires
+`--repo`, `--pr`, `--work`, and `--out`, and also accepts `--key-file`,
+`--skip-review`, and `--dakar-args`.
+
+The harness's own argument parser is distinct from the child CLI's parser, and
+the boundary matters. `--dakar-args` takes one string of child `dakar-review`
+arguments, so its value may itself begin with `--`: it forwards child CLI
+flags such as `--budget-gbp 0.2`, and the harness must not mistake the child
+flag for a missing harness value. Ordinary value-taking harness options keep
+the strict rule and reject a following token that begins with `--` as a
+missing value; unknown options and positional arguments fail closed. When
+extending either parser, preserve the distinction between harness options and
+child `dakar-review` arguments.
+
+`parseCliArgs(argv)` is exported only so `tests/live-harness.test.mjs` can
+test the parser directly; it is not part of the public `dakar-review` CLI API,
+and nothing outside the harness and its tests should import it. Parser and
+forwarding regressions for the harness belong in that same test file.
 
 ## 4. Routed review conventions
 
