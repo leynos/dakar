@@ -75,15 +75,13 @@ function isStructuralSchema(node) {
  * Record the node's path when it must carry a description but does not.
  *
  * @param {object} node - schema object being visited.
- * @param {boolean} isNamedProperty - whether the schema is a `properties` entry.
- * @param {string} path - diagnostic path of the schema.
- * @param {string[]} missing - mutable diagnostic accumulator.
+ * @param {VisitContext} context - position and accumulated state.
  * @returns {void}
  */
-function recordMissingDescription(node, isNamedProperty, path, missing) {
-  if (!isNamedProperty && !isStructuralSchema(node)) return
+function recordMissingDescription(node, context) {
+  if (!context.isNamedProperty && !isStructuralSchema(node)) return
   if (hasNonBlankDescription(node)) return
-  missing.push(path)
+  context.missing.push(context.path)
 }
 
 /**
@@ -172,7 +170,7 @@ function visitNot(node, branch) {
  */
 function visitSchema(node, context) {
   if (!isSchemaObject(node)) return
-  recordMissingDescription(node, context.isNamedProperty, context.path, context.missing)
+  recordMissingDescription(node, context)
   if (context.ancestors.has(node)) return
 
   const branch = {
