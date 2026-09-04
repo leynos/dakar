@@ -1276,6 +1276,7 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
 
   const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
   t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
+  const installFixture = makeCleanInstallFixture(t)
   const globalDir = join(bunInstall, 'install', 'global')
   mkdirSync(globalDir, { recursive: true })
   writeFileSync(
@@ -1287,8 +1288,8 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
     '{\n  "packages": {\n    "dakar": ["old"],\n    "dakar": ["older"]\n  }\n}\n',
   )
 
-  const result = spawnSync(installPath, {
-    cwd: repoRoot,
+  const result = spawnSync(join(installFixture, 'install.sh'), {
+    cwd: installFixture,
     env: { ...process.env, BUN_INSTALL: bunInstall },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
