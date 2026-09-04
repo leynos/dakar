@@ -7,6 +7,24 @@ Luna Flex transactional lane, a Terra Flex issue-set audit lane, host-selected
 routing, hard cost admission control, canonical SARIF 2.1.0 evidence, and
 host-executed deterministic gates before semantic review.
 
+Amended (2026-08-13): raise the default `budgetGbp` from 0.10 to 0.15. This
+records a correction to the original £0.10 hard-budget benchmark; £0.15 is the
+current default. Live evaluation of the implemented route (recorded in
+`docs/review-skill-design.md`, introduced alongside the `dakar-review` skill)
+showed that, at pricing table 2026-07-18, the reserve-first audit reservation
+(USD 0.1140625) plus four maximum Luna finder packs (25,000 input tokens
+including overhead and 750 output tokens; USD 0.017875 each) totals USD
+0.1855625 against the default USD 0.1905, leaving USD 0.0049375, which is
+insufficient for another maximum-cost retry. Under the historical £0.10 setting
+(USD 0.127 at that table), the envelope left USD 0.0129375, below one maximum
+finder pack (USD 0.017875), so no finder pack could be admitted and no
+default-configuration review could run. The £0.05 mean and £0.08
+95th-percentile targets for observed spend stand — measured reported spend on
+the evaluation corpus was well inside both — and the hard ceiling remains
+enforced; only its default value changes. Invalid `budgetGbp` values or values
+below 0.01 fall back to 0.15; valid 0.05 remains 0.05, and values above 10
+clamp to 10.
+
 ## Date
 
 2026-07-18.
@@ -427,7 +445,8 @@ incremental reviews are:
 
 - mean provider cost at or below £0.05;
 - 95th-percentile provider cost at or below £0.08;
-- a hard ordinary-review budget of £0.10; and
+- a hard ordinary-review budget of £0.15 under the current default; the
+  original £0.10 setting is retained only as a historical benchmark; and
 - no admitted call whose worst-case estimate would breach the remaining budget.
 
 The expected steady-state objective is approximately £0.025 to £0.04 for the
@@ -545,12 +564,15 @@ Negative consequences:
 
 ## Known risks and limitations
 
-- At decision-date prices, the worst-case spend of the default caps (four Luna
-  transactions plus one Terra audit, all input priced at the cache-write band)
-  is approximately the £0.10 hard budget. The admission controller, not the
-  call caps, is the effective ceiling, and the second large-review Terra call
-  can never fit the ordinary budget. Large reviews must use the explicit larger
-  budget.
+- At pricing table 2026-07-18, the current default caps reserve USD 0.1140625
+  for the audit and admit up to four maximum finder packs (25,000 input tokens
+  including overhead and 750 output tokens; USD 0.017875 each): USD 0.1855625
+  against the USD 0.1905 (£0.15) default, leaving USD 0.0049375, which is
+  insufficient for another maximum-cost retry. The admission
+  controller, not the call caps, is the effective ceiling, and the second
+  large-review Terra call cannot fit the current ordinary budget. The original
+  £0.10 setting is a historical benchmark; large reviews must use the explicit
+  larger budget.
 - The partitioning strategy for large reviews is intentionally undefined. It
   must be designed before migration steps 8 and 9 can exercise
   `maxTerraFlexCallsLargeReview`.

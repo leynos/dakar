@@ -483,6 +483,10 @@ test('CLI help documents the review-tuning flags', () => {
   const output = runCli(['--help'])
 
   assert.match(output, /Review tuning/u)
+  assert.ok(
+    output.includes('  --budget-gbp <n>                   Hard admission budget in GBP (default: 0.15)'),
+    'help documents the current --budget-gbp default',
+  )
   for (const { flag } of REVIEW_TUNING_FLAGS) {
     assert.ok(output.includes(flag), `help lists ${flag}`)
   }
@@ -1272,6 +1276,7 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
 
   const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
   t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
+  const installFixture = makeCleanInstallFixture(t)
   const globalDir = join(bunInstall, 'install', 'global')
   mkdirSync(globalDir, { recursive: true })
   writeFileSync(
@@ -1283,8 +1288,8 @@ test('install script repairs stale duplicate Bun global entries', (t) => {
     '{\n  "packages": {\n    "dakar": ["old"],\n    "dakar": ["older"]\n  }\n}\n',
   )
 
-  const result = spawnSync(installPath, {
-    cwd: repoRoot,
+  const result = spawnSync(join(installFixture, 'install.sh'), {
+    cwd: installFixture,
     env: { ...process.env, BUN_INSTALL: bunInstall },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],

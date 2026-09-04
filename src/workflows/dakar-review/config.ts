@@ -338,7 +338,11 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     adapterOverheadTokens: boundedInteger(args.adapterOverheadTokens, 13_000, 0, 50_000),
     agentInstructions: configuredAgentInstructions(args.agentInstructions),
     baseRef: nonBlankString(args.base, 'origin/main'),
-    budgetGbp: boundedNumber(args.budgetGbp, 0.1, 0.01, 10),
+    // Default 0.15: at pricing table 2026-07-18 the reserve-first audit
+    // (USD 0.1140625) plus one maximum finder pack (USD 0.017875, with
+    // prompt, adapter-overhead, and output caps) exceeds ADR 002's original
+    // GBP 0.10 (USD 0.127), which refused every pack; see its 2026-08-13 amendment.
+    budgetGbp: boundedNumber(args.budgetGbp, 0.15, 0.01, 10),
     configArg: nonBlankString(args.config, ''),
     dryRun: args.dryRun === true,
     // ADR 002 Flex retry and timeout budget (M5). This slice reduces the ADR's

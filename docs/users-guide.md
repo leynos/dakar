@@ -137,12 +137,18 @@ checkout being reviewed.
 
 The following review-tuning flags forward directly to the workflow arguments.
 The CLI only parses and forwards them; the workflow enforces every bound, so
-values outside the documented range clamp to the nearest permitted value rather
-than fail. See "Cost, budget, and the ledger" and "Retries, downgrades, and
-deferral" below for what each knob controls.
+values above a documented maximum clamp to that maximum, while invalid values
+or values below a minimum use the option's default rather than fail. For
+`budgetGbp`, invalid values or values below `0.01` fall back to `0.15`, a valid
+`0.05` remains `0.05`, and values above `10` clamp to `10`. See "Cost, budget,
+and the ledger" and "Retries, downgrades, and deferral" below for what each
+knob controls.
 
 - `--budget-gbp <number>` sets the hard admission budget in GBP. The default is
-  `0.1`.
+  `0.15`, raised from ADR 002's historical `0.1` hard-budget setting because,
+  at pricing table 2026-07-18, the reserve-first audit left less than one
+  finder pack's worst case inside that old benchmark (see the ADR's
+  2026-08-13 amendment).
 - `--max-luna-calls <number>` caps the Luna Flex finder calls. The default is
   `4`. It composes with `--max-tasks`: the effective finder-pack cap is the
   smaller of the two.
@@ -413,8 +419,8 @@ Dry-run output is also JSON, but it describes the contract instead of a review:
       "adapter": "pi-terra-flex", "serviceTier": "flex", "reasoning": "medium"
     }
   },
-  "budgetGbp": 0.1,
-  "budgetUsd": 0.127,
+  "budgetGbp": 0.15,
+  "budgetUsd": 0.1905,
   "pricingTableVersion": "2026-07-18",
   "reservedAuditUsd": 0.1140625,
   "reservedAuditChainUsd": 0.3421875,
@@ -520,7 +526,7 @@ The following optional limits are supported:
   `over_audit_cap`.
 - `maxLunaFlexCalls`: maximum finder evidence packs, default `4`.
 - `transactionMaxFiles`: maximum files per finder pack, default `5`.
-- `budgetGbp`: hard per-review budget in GBP, default `0.10`, converted to
+- `budgetGbp`: hard per-review budget in GBP, default `0.15`, converted to
   USD through the pricing table's `usdPerGbp` snapshot.
 - `routingPolicy`: recorded in metrics and the dry run; the only supported
   value is `deterministic-flex-v1`.
@@ -561,9 +567,11 @@ exceeding the ceiling (see "Retries, downgrades, and deferral" below).
 
 Because admission refuses any finder pack beyond the ordinary budget, a gate
 reviewing a large task branch may need to raise `--budget-gbp` to admit more
-finder packs and so cover the full diff. The ordinary default deliberately
-forces refusals on multi-pack large reviews; lift the budget only for the runs
-that warrant the extra coverage.
+finder packs and so cover the full diff. The default budget covers the default
+caps (four initial finder packs plus the audit reserve); it does not guarantee
+retry headroom when those calls reach their maximum caps. Reviews that raise
+`--max-luna-calls` or the token bounds must raise the budget
+in step, and should lift it only for the runs that warrant the extra coverage.
 
 `metrics` carries the cost accounting:
 
@@ -611,9 +619,11 @@ admission only ever reserves the single-attempt `reservedAuditUsd`.
 
 A deferred review retried later re-pays its Luna finder calls: Luna output is
 not cached across separate `dakar-review` invocations, so a retry after a
-deferral repeats the finder phase's spend (roughly USD 0.04 worst case at
-default limits). Operators should space retries after a deferral rather than
-tight-looping them.
+deferral repeats the finder phase's admitted spend. At the current maximum
+finder estimate (25,000 input tokens including overhead and 750 output tokens),
+one pack costs USD 0.017875 and four initial packs cost USD 0.0715; these are
+upper bounds, not typical spend. Operators should space retries after a
+deferral rather than tight-looping them.
 
 `worstCaseReviewSeconds` (2,020 s at default limits, shown in the dry run) is
 the worst-case wall clock for one review's finder and audit retry chains.

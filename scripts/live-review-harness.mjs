@@ -660,17 +660,71 @@ const CLI_FLAGS = new Map([
   ['work', { key: 'work', value: true }],
   ['out', { key: 'out', value: true }],
   ['key-file', { key: 'keyFile', value: true }],
-  ['dakar-args', { key: 'dakarArgs', value: true }],
+  // optionLikeValue: the value is itself a flag string for the child CLI
+  // (e.g. "--budget-gbp 0.15"), so a leading "--" must not be mistaken for
+  // a missing value.
+  ['dakar-args', { key: 'dakarArgs', value: true, optionLikeValue: true }],
   ['skip-review', { key: 'skipReview', value: false }],
 ])
 
+/**
+ * Record one recognised harness option after validating its value when needed.
+ *
+ * @param {Record<string, boolean | string>} options - mutable parsed options.
+ * @param {string} name - option name without its leading dashes.
+ * @param {{key: string, value: boolean, optionLikeValue?: boolean}} spec - option contract.
+ * @param {string | undefined} value - following argument token for value options.
+ * @returns {void}
+ */
+function assignCliOption(options, name, spec, value) {
+  if (!spec.value) {
+    options[spec.key] = true
+    return
+  }
+  assertCliValue(name, spec, value)
+  options[spec.key] = value
+}
+
+/**
+ * Reject a missing value or an option-like value for an ordinary option.
+ *
+ * `dakar-args` carries child CLI arguments, so its option-like values remain
+ * valid and are preserved unchanged for the child parser.
+ *
+ * @param {string} name - option name without its leading dashes.
+ * @param {{optionLikeValue?: boolean}} spec - option value contract.
+ * @param {string | undefined} value - following argument token.
+ * @returns {void}
+ */
+function assertCliValue(name, spec, value) {
+  if (value === undefined) {
+    throw new Error(`--${name} requires a value`)
+  }
+  if (!value.startsWith('--')) return
+  if (spec.optionLikeValue) return
+  throw new Error(`--${name} requires a value`)
+}
+
+/**
+ * Ensure the corpus-selection arguments required by the harness are present.
+ *
+ * @param {Record<string, boolean | string>} options - parsed option values.
+ * @returns {void}
+ */
+function assertRequiredCliOptions(options) {
+  for (const required of ['repo', 'pr', 'work', 'out']) {
+    if (options[required] === undefined) {
+      throw new Error(`--${required} is required`)
+    }
+  }
+}
 /**
  * Parse the harness's own command-line argument vector.
  *
  * @param {string[]} argv - argument tokens, excluding the node/script prefix.
  * @returns {object} parsed options, with `keyFile` defaulted to `~/dakar-api-key.txt`.
  */
-function parseCliArgs(argv) {
+export function parseCliArgs(argv) {
   const options = { keyFile: join(homedir(), 'dakar-api-key.txt') }
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]
@@ -682,21 +736,10 @@ function parseCliArgs(argv) {
     if (!spec) {
       throw new Error(`unknown option: --${name}`)
     }
-    if (!spec.value) {
-      options[spec.key] = true
-      continue
-    }
-    const value = argv[++index]
-    if (value === undefined || value.startsWith('--')) {
-      throw new Error(`--${name} requires a value`)
-    }
-    options[spec.key] = value
+    const value = spec.value ? argv[++index] : undefined
+    assignCliOption(options, name, spec, value)
   }
-  for (const required of ['repo', 'pr', 'work', 'out']) {
-    if (options[required] === undefined) {
-      throw new Error(`--${required} is required`)
-    }
-  }
+  assertRequiredCliOptions(options)
   return options
 }
 

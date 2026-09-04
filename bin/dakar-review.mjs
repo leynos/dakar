@@ -790,7 +790,7 @@ Options:
   --help                      Show this help
 
 Review tuning (bounds enforced by the workflow; the CLI only forwards):
-  --budget-gbp <n>                   Hard admission budget in GBP (default: 0.1)
+  --budget-gbp <n>                   Hard admission budget in GBP (default: 0.15)
   --max-luna-calls <n>               Maximum Luna Flex finder calls (default: 4)
   --transaction-max-files <n>        Maximum files per finder pack (default: 5)
   --transaction-max-input-tokens <n> Finder input-token estimate (default: 12000)
