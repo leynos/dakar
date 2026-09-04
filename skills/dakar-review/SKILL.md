@@ -32,7 +32,8 @@ security, behavioural regressions, and missing context, not formatting.
 From the root of the repository under review:
 
 ```bash
-OPENAI_API_KEY=... dakar-review \
+export OPENAI_API_KEY="$(<"$HOME/dakar-api-key.txt")"
+dakar-review \
   --repo-root "$PWD" \
   --base origin/main \
   --telemetry > review.json

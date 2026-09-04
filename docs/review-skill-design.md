@@ -177,10 +177,12 @@ attempt demonstrated this on all five fixtures.
 
 Resolved: the default `budgetGbp` was raised to 0.15 (USD 0.1905) on the
 `issues-identified-during-skill-creation` branch, with a dated amendment to ADR
-002 recording the arithmetic. The recorded evaluation runs passed
-`--budget-gbp 0.15` explicitly because they predate the new default; replays at
-default settings now admit the same coverage. If default token bounds or
-pricing change, revisit the skill's budget arithmetic.
+002 recording the arithmetic. The clean-corpus runs above passed
+`--budget-gbp 0.15` explicitly because they predate the new default. The
+finding-oriented runs below use the new GBP 0.15 default unless their table
+entry records other flags. Replays at default settings now admit the same
+coverage. If default token bounds or pricing change, revisit the skill's budget
+arithmetic.
 
 ### 4.2 The harness rejects `--dakar-args` values starting with dashes
 
