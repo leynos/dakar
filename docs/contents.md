@@ -29,6 +29,9 @@ document for a task, then follow the inline links.
   evolution.
 - [Initial workflow design](design/initial-workflow.md) — the design of the
   first routed divide-and-conquer review pass and the compiled-source boundary.
+- [Review skill design](review-skill-design.md) — the pinned evaluation
+  fixtures, remote replay tags, recorded live runs, and maintenance guidance
+  behind the `dakar-review` skill in `skills/dakar-review/`.
 
 ## Decision records
 
