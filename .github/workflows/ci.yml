@@ -50,7 +50,10 @@ jobs:
       - name: Validate diagrams
         run: make nixie
       - name: Install Node.js dependencies
-        run: bun install --frozen-lockfile
+        # The committed npm lockfile is the authoritative lockfile for
+        # Node-based checks; Bun would migrate it to an untracked Bun
+        # lockfile, leaving devDependencies such as fast-check unresolved.
+        run: npm ci
       - name: Install the ODW CLI
         # odw is not published to npm and ships no built dist in git, so
         # build it from a pinned upstream commit; `make check`'s typecheck
