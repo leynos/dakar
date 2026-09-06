@@ -247,7 +247,6 @@ When the reviewed repository has a root `AGENTS.md`, the CLI should pass its
 content as `agentInstructions`. Keep this as context for review agents, not as
 an override for Dakar's schema, output, or safety rules.
 
-
 ### MCP context and repository identity
 
 For a live review, `prepareLiveReview()` calls the CLI's

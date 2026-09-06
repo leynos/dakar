@@ -10,6 +10,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -26,18 +27,6 @@ import {
   renderSarifMarkdown,
 } from '../src/workflows/dakar-review/sarif.ts'
 import { appendReview, prepare } from '../scripts/review-state.mjs'
-
-
-#!/usr/bin/env node
-/**
- * Run Dakar's ODW review workflow from an installable CLI.
- *
- * The command preserves a parseable stdout result for automation while handling
- * repository-local configuration, AGENTS.md context, live ODW telemetry, and
- * deterministic review-history recording around the workflow runtime.
- *
- * @module
- */
 
 /** ODW's documented default per-model-call timeout in seconds. */
 const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300

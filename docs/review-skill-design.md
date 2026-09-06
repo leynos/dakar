@@ -164,7 +164,6 @@ Accepted findings, in brief:
   copying timeout event attributes into span events, and an expanded test
   module exceeds the 400-line policy.
 
-
 ### 3.2 Re-evaluation with context tools, high reasoning, and the repricing
 
 The finding corpus was re-run on 2026-08-13 after three workflow changes landed
