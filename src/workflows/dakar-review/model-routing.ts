@@ -127,7 +127,7 @@ export const FLEX_LANE_ROLES: Readonly<Record<'luna' | 'luna-medium' | 'luna-low
 /**
  * Resolves a Flex lane role to its pinned lane specification.
  *
- * @param role - One of `luna`, `luna-medium`, or `terra`.
+ * @param role - One of `luna`, `luna-medium`, `luna-low`, or `terra`.
  * @returns The frozen lane specification for that role.
  * @throws {Error} When the role is not a registered Flex lane.
  */

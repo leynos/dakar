@@ -343,7 +343,7 @@ process.stdout.write(JSON.stringify(result))
 test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout', () => {
   const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpConfigCaptureRepo()
   const packagedConfig = join(repoRoot, 'odw.config.json')
-  const piAdapters = ['pi-luna-flex', 'pi-luna-flex-medium', 'pi-terra-flex']
+  const piAdapters = ['pi-luna-flex', 'pi-luna-flex-medium', 'pi-luna-flex-high', 'pi-terra-flex', 'pi-terra-flex-high']
   const runOnce = (extraArgs) =>
     JSON.parse(
       runCli(
@@ -1644,6 +1644,124 @@ process.exitCode = supported ? 0 : 1
   assert.equal(markdownCalls.filter((entry) => JSON.parse(entry[2]).path.endsWith('README.md')).length, 1)
   assert.equal(markdownCalls.length, 2)
   assert.match(result.stderr, /CodeGraph warmup complete \(2 markdown file\(s\) indexed\)\./u)
+})
+
+test('advisory warmup bounds failed Markdown attempts and still launches the review', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-mcp-failures-'))
+  const targetRepo = join(tempRoot, 'repo')
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const mcpLog = join(tempRoot, 'mcp.jsonl')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  mkdirSync(targetRepo, { recursive: true })
+  mkdirSync(mcpDir, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  writeFileSync(join(targetRepo, 'AGENTS.md'), '# Agent instructions\n')
+  writeFileSync(join(targetRepo, 'README.md'), '# Base README\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'AGENTS.md', 'README.md'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base context'])
+  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  for (let index = 0; index < 25; index += 1) {
+    const docs = join(targetRepo, 'docs')
+    mkdirSync(docs, { recursive: true })
+    writeFileSync(join(docs, `changed-${index}.md`), `# Changed ${index}\n`)
+  }
+  execFileSync('git', ['-C', targetRepo, 'add', 'docs'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'many changed markdown files'])
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.DAKAR_MCP_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+process.exitCode = process.argv[2] === '--list' ? 0 : 1
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '', DAKAR_MCP_LOG: mcpLog, PATH: `${mcpDir}:${process.env.PATH}` },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true)
+  const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(invocations[0], ['--list'])
+  assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_directory').length, 1)
+  assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_markdown').length, 20)
+  assert.match(result.stderr, /CodeGraph warmup call codegraph_index_directory failed; continuing without it\./u)
+  assert.match(result.stderr, /CodeGraph warmup complete \(0 markdown file\(s\) indexed\)\./u)
+})
+
+test('live reviews skip CodeGraph warmup unless the reviewed head is cleanly checked out', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-mcp-snapshot-'))
+  const targetRepo = join(tempRoot, 'repo')
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  mkdirSync(targetRepo, { recursive: true })
+  mkdirSync(mcpDir, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  writeFileSync(join(targetRepo, 'base.txt'), 'base\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'base.txt'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base'])
+  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(targetRepo, 'reviewed.txt'), 'reviewed\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'reviewed.txt'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'reviewed head'])
+  const reviewedHead = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(targetRepo, 'later.txt'), 'later\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'later.txt'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'later checkout'])
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.DAKAR_MCP_LOG, 'called\\n')
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const run = (suffix) => {
+    const mcpLog = join(tempRoot, `${suffix}.mcp.log`)
+    const result = spawnSync(
+      process.execPath,
+      [cliPath, '--repo-root', targetRepo, '--base', base, '--head', reviewedHead, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, `${suffix}-runs`)],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '', DAKAR_MCP_LOG: mcpLog, PATH: `${mcpDir}:${process.env.PATH}` },
+      },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(JSON.parse(result.stdout).ok, true)
+    assert.equal(existsSync(mcpLog), false, 'the MCP CLI must not run for a different checked-out head')
+    assert.match(result.stderr, /reviewed head is not checked out cleanly; skipping CodeGraph warmup\./u)
+  }
+
+  run('different-head')
+  execFileSync('git', ['-C', targetRepo, 'checkout', '--detach', reviewedHead])
+  writeFileSync(join(targetRepo, 'dirty.txt'), 'dirty\n')
+  run('dirty-checkout')
 })
 
 test('a hung log follow still fetches and records the completed result', () => {

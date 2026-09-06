@@ -560,8 +560,8 @@ The following optional limits are supported:
   USD through the pricing table's `usdPerGbp` snapshot.
 - `routingPolicy`: recorded in metrics and the dry run; the only supported
   value is `deterministic-flex-v1`.
-- `lunaReasoning`: `low` (default) or `medium`, selecting the Luna
-  escalation adapter.
+- `lunaReasoning`: `high` (default), `medium`, or `low`; `medium` and `low`
+  select the pre-registered Luna de-escalation adapters.
 - `flexAttempts`, `flexInitialBackoffSeconds`, `flexMaxBackoffSeconds`,
   `flexJitterSeconds`, and `perCallTimeoutSeconds`: the Flex retry schedule
   (see "Retries, downgrades, and deferral" below).
