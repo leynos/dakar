@@ -197,7 +197,7 @@ Observations:
   reasoning under the new rates than at low reasoning under the old rates. The
   two larger fixtures reported around USD 0.18 each, dominated by
   high-reasoning output tokens across four packs plus the audit.
-- The audit discarded nothing across the four runs; at high reasoning both
+- The audit discarded nothing across the four runs; at high reasoning, both
   the finders and the audit converged on the same accepted sets.
 
 ## 4. Findings that shaped the skill
