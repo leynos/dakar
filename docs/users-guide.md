@@ -259,7 +259,6 @@ the workflow as repository-local review context. Workflow schema rules,
 machine-readable output requirements, and Dakar safety rules still take
 precedence over repository instructions.
 
-
 ### Context tools: CodeGraph and DeepWiki
 
 When the operator's `mcp` CLI is on `PATH`, finder prompts describe two

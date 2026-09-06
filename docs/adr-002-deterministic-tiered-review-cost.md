@@ -198,7 +198,6 @@ This mirrors the `df12-build` policy of running host gates before scarce
 reviewer agents and avoiding reviewer spend when cheaper evidence already
 blocks the work.[^1]
 
-
 ### MCP context and repository-identity boundary
 
 MCP context preparation remains host-owned. After trusted range preparation and

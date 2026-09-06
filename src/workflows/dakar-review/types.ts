@@ -138,6 +138,7 @@ export interface WorkflowArgs {
   transactionMaxInputTokens?: unknown
   /** Raw output-token cap for the Luna finder lane; validated and bounded before use. */
   transactionMaxOutputTokens?: unknown
+  /** Optional GitHub `owner/name` slug used to scope DeepWiki repository lookups. */
   repoSlug?: string
 }
 
