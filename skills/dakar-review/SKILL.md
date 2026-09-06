@@ -93,7 +93,6 @@ meaningful. Pass `--luna-reasoning low` (or `medium`) only when squeezing cost
 on routine incremental reviews of trusted branches where a shallower pass is
 acceptable.
 
-
 ## Context tools
 
 When the operator's `mcp` CLI is on `PATH`, the CLI warms a CodeGraph index of
