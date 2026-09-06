@@ -42,6 +42,11 @@ import { appendReview, prepare } from '../scripts/review-state.mjs'
 /** ODW's documented default per-model-call timeout in seconds. */
 const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
 
+/** Cap all advisory CodeGraph warmup work, including the CLI probe. */
+const CONTEXT_WARMUP_TIMEOUT_MILLISECONDS = 30_000
+
+/** Bound Markdown indexing attempts even when every MCP call fails. */
+const MAX_MARKDOWN_WARMUP_ATTEMPTS = 20
 /**
  * Clamp a per-call timeout to the same default and bounds the workflow applies.
  *
@@ -97,7 +102,7 @@ const piAgentDir = join(packageRoot, 'adapters', 'pi')
  * adapters, returning the temp file path for the CLI's own ODW spawns.
  *
  * The packaged config leaves each adapter call unbounded, so a run-local copy
- * carries the `--per-call-timeout` value (or the documented default) on the three
+ * carries the `--per-call-timeout` value (or the documented default) on every
  * pi Flex adapters only. The file lives under the OS temp directory and is
  * removed after the run, exactly like the usage-log file.
  *
@@ -389,23 +394,38 @@ function addRepoSlug(workflowArgs, repoRoot) {
  *
  * @returns {boolean} whether the MCP CLI responded successfully to its probe.
  */
-function isMcpCliAvailable() {
-  const probe = spawnSync('mcp', ['--list'], { encoding: 'utf8', timeout: 30_000 })
+function isMcpCliAvailable(timeout) {
+  if (timeout === null) return false
+  const probe = spawnSync('mcp', ['--list'], { encoding: 'utf8', timeout })
   return !probe.error && probe.status === 0
 }
 
+/**
+ * Bound one warmup call to the remaining shared deadline.
+ *
+ * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
+ * @param {number} requestedTimeout - Maximum timeout for this operation.
+ * @returns {number | null} A positive bounded timeout, or null once time expires.
+ */
+function warmupTimeout(deadline, requestedTimeout) {
+  const remaining = deadline - Date.now()
+  return remaining > 0 ? Math.min(requestedTimeout, remaining) : null
+}
 /**
  * Invoke one advisory CodeGraph indexing tool and report failures on stderr.
  *
  * @param {string} tool - CodeGraph MCP tool name.
  * @param {object} payload - JSON-serializable tool payload.
  * @param {number} timeout - Maximum invocation time in milliseconds.
+ * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
  * @returns {boolean} whether the tool invocation completed successfully.
  */
-function warmContextTool(tool, payload, timeout) {
+function warmContextTool(tool, payload, timeout, deadline) {
+  const boundedTimeout = warmupTimeout(deadline, timeout)
+  if (boundedTimeout === null) return false
   const result = spawnSync('mcp', ['codegraph', tool, JSON.stringify(payload)], {
     encoding: 'utf8',
-    timeout,
+    timeout: boundedTimeout,
   })
   if (result.error || result.status !== 0) {
     process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.\n`)
@@ -419,19 +439,21 @@ function warmContextTool(tool, payload, timeout) {
  *
  * @param {string} repoRoot - Absolute path to the repository root.
  * @param {string[]} changedFiles - Repository-relative changed paths for this review.
+ * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
  * @returns {number} number of successfully indexed Markdown files.
  */
-function warmMarkdownContext(repoRoot, changedFiles) {
-  const MAX_MARKDOWN_WARMUPS = 20
+function warmMarkdownContext(repoRoot, changedFiles, deadline) {
   const candidates = ['AGENTS.md', 'README.md'].concat((changedFiles || []).filter((path) => path.endsWith('.md')))
   const seen = new Set()
+  let attempts = 0
   let indexed = 0
   for (const relPath of candidates) {
-    if (indexed >= MAX_MARKDOWN_WARMUPS) break
+    if (attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS || warmupTimeout(deadline, 1) === null) break
     const absolute = join(repoRoot, relPath)
     if (seen.has(absolute) || !existsSync(absolute)) continue
     seen.add(absolute)
-    if (warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000)) indexed += 1
+    attempts += 1
+    if (warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000, deadline)) indexed += 1
   }
   return indexed
 }
@@ -454,14 +476,28 @@ function warmContextIndex(repoRoot, changedFiles) {
     process.stderr.write('dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n')
     return
   }
-  if (!isMcpCliAvailable()) {
+  const deadline = Date.now() + CONTEXT_WARMUP_TIMEOUT_MILLISECONDS
+  if (!isMcpCliAvailable(warmupTimeout(deadline, CONTEXT_WARMUP_TIMEOUT_MILLISECONDS))) {
     process.stderr.write('dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n')
     return
   }
   process.stderr.write('dakar-review: warming CodeGraph index for the reviewed checkout.\n')
-  warmContextTool('codegraph_index_directory', { path: repoRoot }, 600_000)
-  const indexed = warmMarkdownContext(repoRoot, changedFiles)
+  warmContextTool('codegraph_index_directory', { path: repoRoot }, 600_000, deadline)
+  const indexed = warmMarkdownContext(repoRoot, changedFiles, deadline)
   process.stderr.write(`dakar-review: CodeGraph warmup complete (${indexed} markdown file(s) indexed).\n`)
+}
+
+/**
+ * Determine whether the mutable checkout exactly represents the reviewed head.
+ *
+ * @param {string} repoRoot - Absolute path to the reviewed repository root.
+ * @param {string} headCommit - Immutable commit selected for review.
+ * @returns {boolean} Whether HEAD matches and the worktree has no changes.
+ */
+function isCheckedOutReviewHead(repoRoot, headCommit) {
+  const head = spawnSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+  const status = spawnSync('git', ['-C', repoRoot, 'status', '--porcelain', '--untracked-files=all'], { encoding: 'utf8' })
+  return !head.error && head.status === 0 && head.stdout.trim() === headCommit && !status.error && status.status === 0 && status.stdout === ''
 }
 function buildWorkflowArgs(options, repoRoot) {
   const resolvedConfig = resolveReviewConfig({ repoRoot, config: options.config, packageRoot })
@@ -1091,9 +1127,14 @@ function prepareLiveReview(options, repoRoot, workflowArgs, format) {
   if (!process.env.OPENAI_API_KEY) {
     process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
   }
-  // Warm the CodeGraph MCP index (code plus key markdown) before any finder
-  // dispatch so finder-prompt context lookups are cheap and current.
-  warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || [])
+  // Only a clean checkout at the immutable review head can safely populate a
+  // CodeGraph index. The user may select a different --head or have unrelated
+  // local edits; indexing either would corrupt finder context for this review.
+  if (process.env.DAKAR_SKIP_CONTEXT_WARMUP || isCheckedOutReviewHead(repoRoot, workflowArgs.prepared.headCommit)) {
+    warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || [])
+  } else {
+    process.stderr.write('dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n')
+  }
   // Advisory guard: an outer wait shorter than the retry schedule's worst
   // case can kill a healthy run before the workflow's own deferral logic
   // fires. The knob bounds mirror resolveWorkflowConfig's defaults.
