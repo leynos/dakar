@@ -933,8 +933,21 @@ test('CLI warns about a missing OPENAI_API_KEY even for an unknown routing polic
   assert.match(result.stderr, /OPENAI_API_KEY is not set/u)
 })
 
-test('CLI fails closed with a record stage when appendReview rejects the review', () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-failure-'))
+test('CLI fails closed with a record stage when appendReview rejects the review', (t) => {
+  // Scenario: a review completes, but the record input it carries is invalid.
+  // Invariant: the CLI fails closed. It reports stage 'record', keeps
+  // recordInput so the operator can retry by hand, claims no recorded entry,
+  // and exits non-zero.
+  //
+  // The review runs against a purpose-built fixture repository with a commit
+  // ahead of an explicit base, never the checkout under test. Pointed at its
+  // own checkout the CLI finds no unreviewed commits, short-circuits with
+  // `skipped: true` before the fake ODW is ever spawned, and exits 0, so the
+  // case silently stopped testing anything it claims to.
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-record-failure-xdg-'))
+  t.after(() => rmSync(xdgConfig, { recursive: true, force: true }))
   const fakeOdw = join(tempRoot, 'odw')
   // recordInput carries an invalid headCommit so appendReview throws; the CLI
   // must surface stage: 'record', keep recordInput for manual retry, and exit
@@ -972,7 +985,9 @@ test('CLI fails closed with a record stage when appendReview rejects the review'
     [
       cliPath,
       '--repo-root',
-      repoRoot,
+      targetRepo,
+      '--base',
+      base,
       '--state-root',
       join(tempRoot, 'trusted-state'),
       '--odw-bin',
@@ -980,7 +995,12 @@ test('CLI fails closed with a record stage when appendReview rejects the review'
       '--runs-root',
       join(tempRoot, 'runs'),
     ],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    {
+      cwd: targetRepo,
+      encoding: 'utf8',
+      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
   )
   const output = JSON.parse(result.stdout)
 
@@ -992,8 +1012,19 @@ test('CLI fails closed with a record stage when appendReview rejects the review'
   assert.equal(output.recordInput.headCommit, 'not-a-real-commit')
 })
 
-test('CLI leaves reviews.toml untouched and exits non-zero for a deferred result', () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-deferred-'))
+test('CLI leaves reviews.toml untouched and exits non-zero for a deferred result', (t) => {
+  // Scenario: the workflow defers instead of producing a verdict.
+  // Invariant: nothing is recorded. The deferred JSON goes to stdout, no
+  // reviews.toml appears under the trusted state root, and the exit status is
+  // non-zero, so the head stays unreviewed and a later run picks it up again.
+  //
+  // As above, the review runs against a purpose-built fixture repository so the
+  // case cannot depend on whether the checkout under test happens to have
+  // commits ahead of its review base.
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-record-deferred-xdg-'))
+  t.after(() => rmSync(xdgConfig, { recursive: true, force: true }))
   const stateRoot = join(tempRoot, 'trusted-state')
   const fakeOdw = join(tempRoot, 'odw')
   // A deferred workflow result carries ok:false, stage:'deferred', and crucially
@@ -1022,7 +1053,9 @@ test('CLI leaves reviews.toml untouched and exits non-zero for a deferred result
     [
       cliPath,
       '--repo-root',
-      repoRoot,
+      targetRepo,
+      '--base',
+      base,
       '--state-root',
       stateRoot,
       '--odw-bin',
@@ -1030,7 +1063,12 @@ test('CLI leaves reviews.toml untouched and exits non-zero for a deferred result
       '--runs-root',
       join(tempRoot, 'runs'),
     ],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    {
+      cwd: targetRepo,
+      encoding: 'utf8',
+      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
   )
   const output = JSON.parse(result.stdout)
 
