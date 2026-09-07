@@ -21,7 +21,11 @@ TypeScript or JavaScript assumptions do not override the ODW contract.
   describing its purpose and responsibilities. `make docs-check` (TypeDoc's
   `notDocumented` validation, zero tolerance) enforces this and a JSDoc block
   on every exported declaration; JSON Schema constants are tagged `@internal`
-  so their `description` fields remain the per-field documentation. Prefer
+  so their `description` fields remain the per-field documentation. Every
+  TypeDoc warning is an error there, so use only block tags TypeDoc knows (a
+  `/** @file … */` header fails the gate) and only `{@link}` targets that reach
+  the documentation; refer to a module-private symbol in backticks instead.
+  Prefer
   small cohesive functions, precise names, immutable data, and comments that
   explain why rather than what.
 - `bin/dakar-review.mjs` is the user-facing CLI. Keep stdout reserved for the

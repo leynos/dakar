@@ -447,6 +447,22 @@ ambient `*.d.ts` declarations, and tests; JSON Schema constants are tagged
 `@internal` so their `description` fields remain the per-field documentation.
 `make lint` and therefore `make check` run it automatically.
 
+The gate also validates the references inside those comments. `invalidLink`
+rejects a `{@link …}` that names no symbol, and also one that resolves to a
+symbol the documentation does not include, which is what a link to a
+module-private constant does. `invalidPath` rejects a relative link in a
+comment that names no file. When the target is deliberately internal, write the
+reference as prose in backticks rather than as an `{@link}`.
+
+Two settings promote findings to failures and they are not interchangeable.
+`treatValidationWarningsAsErrors` promotes the `validation` findings only;
+`treatWarningsAsErrors` promotes every other warning, most importantly an
+unknown block tag, such as a `/** @file … */` header, which TypeDoc reports
+while still exiting 0. Both are set. The broader flag currently subsumes the
+narrower one, which is kept so that removing it later still leaves validation
+findings fatal. `tests/docs-gate.test.mjs` holds a behavioural case per
+setting, and its module comment records the mutation run proving each one.
+
 Configuration resolution and range preparation no longer make agent calls at
 all: both run as deterministic host code in the CLI before `odw run`, and a
 failure there is reported by the CLI with stage `config` or `prepare`, never by

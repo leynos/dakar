@@ -60,6 +60,18 @@ test('the docs:check script assembles the TypeDoc options file', () => {
   assert.ok(existsSync(join(REPO_ROOT, 'typedoc.json')), 'the referenced options file must exist')
 })
 
+test('the docs-check recipe does not ignore the gate exit status', () => {
+  const makefile = readFileSync(join(REPO_ROOT, 'Makefile'), 'utf8')
+  const recipe = /^docs-check:\n((?:\t.*\n)+)/m.exec(makefile)?.[1]
+
+  assert.ok(recipe, 'the Makefile must define a docs-check recipe')
+  const lines = recipe.split('\n').filter((line) => line.length > 0)
+  // A leading `-` tells Make to ignore the command's exit status, which would
+  // leave the gate running and reporting while never failing the build. `@`
+  // only suppresses echoing and is fine.
+  assert.deepEqual(lines.map((line) => line.replace(/^\t@*/, '')), [DOCS_SCRIPT])
+})
+
 test('the retired docstring audit is no longer wired in', () => {
   const { scripts } = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
   const makefile = readFileSync(join(REPO_ROOT, 'Makefile'), 'utf8')
