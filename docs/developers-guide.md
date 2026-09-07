@@ -264,6 +264,16 @@ standard error, then fetches `odw result <run-id>` for the final output. Keep
 all progress, run ids, and log-follow warnings on standard error so standard
 output remains reserved for JSON or Markdown result data.
 
+A CLI test that exercises a review must run against its own fixture
+repository, never the checkout under test. `setUpRecordRepo` in
+`tests/cli.test.mjs` builds one: a base commit, a second commit ahead of it,
+and the base revision to pass as `--base`. Pointed at its own checkout the CLI
+resolves the review base to the current head, finds no unreviewed commits, and
+short-circuits with `skipped: true` before ODW is ever spawned, so the case
+passes or fails according to what the developer happens to have committed. Set
+`XDG_CONFIG_HOME` to an empty temporary directory in the same breath, or the
+run reads the developer's own `dakar/config.yaml`.
+
 When changing CLI arguments or output, update these places together:
 
 - `bin/dakar-review.mjs`;
