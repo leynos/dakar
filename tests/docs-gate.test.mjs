@@ -18,7 +18,9 @@
  *
  * - `validation.notDocumented: false` fails two, the undocumented export and
  *   the missing module header, one per diagnostic site.
- * - `validation.invalidLink: false` fails the unresolvable-link case.
+ * - `validation.invalidLink: false` fails two, the unresolvable-name case and
+ *   the excluded-symbol case. TypeDoc reaches those two diagnostics by
+ *   different routes, so neither stands in for the other.
  * - `validation.invalidPath: false` fails the relative-path case. That
  *   validation covers relative links in comments, not `@document` targets.
  * - removing `treatWarningsAsErrors` fails the unknown-block-tag case. TypeDoc
@@ -146,6 +148,19 @@ test('the gate fails a link to a symbol that is not documented', () => {
 
   assert.notEqual(status, 0, 'an unresolvable link must fail the gate')
   assert.match(output, /Failed to resolve link to "nonExistentSymbol"/)
+})
+
+test('the gate fails a link to a symbol the documentation excludes', () => {
+  // This is the case that motivated enabling invalidLink: `STALE_LOCK_MS` in
+  // scripts/review-state.mjs resolved but, being module-private, never reached
+  // the documentation. The unresolvable-name case above cannot stand in for it,
+  // because TypeDoc reaches this diagnostic by a different route.
+  const { status, output } = runGate(
+    `${MODULE_HEADER}\nconst modulePrivate = 1\n\n/** A documented exported value. See {@link modulePrivate}. */\nexport const documented = modulePrivate\n`,
+  )
+
+  assert.notEqual(status, 0, 'a link to an excluded symbol must fail the gate')
+  assert.match(output, /links to "modulePrivate" which was resolved but is not included in the documentation/)
 })
 
 test('the gate fails a relative link that names no file', () => {
