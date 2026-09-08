@@ -460,8 +460,12 @@ Two settings promote findings to failures and they are not interchangeable.
 unknown block tag, such as a `/** @file … */` header, which TypeDoc reports
 while still exiting 0. Both are set. The broader flag currently subsumes the
 narrower one, which is kept so that removing it later still leaves validation
-findings fatal. `tests/docs-gate.test.mjs` holds a behavioural case per
-setting, and its module comment records the mutation run proving each one.
+findings fatal. `tests/docs-gate.test.mjs` holds a behavioural case for each
+of the three validations and for `treatWarningsAsErrors`; each fails when its
+setting is cleared. `treatValidationWarningsAsErrors` has no behavioural case
+and cannot have one while the broader flag is set, precisely because the
+broader flag subsumes it, so the configuration case is what holds it in place.
+The suite's module comment records the mutation run behind each.
 
 Three suites hold the chain together, and each covers a link the others cannot
 see. `tests/docs-gate.test.mjs` proves the gate decides.
