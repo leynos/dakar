@@ -447,6 +447,36 @@ ambient `*.d.ts` declarations, and tests; JSON Schema constants are tagged
 `@internal` so their `description` fields remain the per-field documentation.
 `make lint` and therefore `make check` run it automatically.
 
+The gate also validates the references inside those comments. `invalidLink`
+rejects a `{@link …}` that names no symbol, and also one that resolves to a
+symbol the documentation does not include, which is what a link to a
+module-private constant does. `invalidPath` rejects a relative link in a
+comment that names no file. When the target is deliberately internal, write the
+reference as prose in backticks rather than as an `{@link}`.
+
+Two settings promote findings to failures and they are not interchangeable.
+`treatValidationWarningsAsErrors` promotes the `validation` findings only;
+`treatWarningsAsErrors` promotes every other warning, most importantly an
+unknown block tag, such as a `/** @file … */` header, which TypeDoc reports
+while still exiting 0. Both are set. The broader flag currently subsumes the
+narrower one, which is kept so that removing it later still leaves validation
+findings fatal. `tests/docs-gate.test.mjs` holds a behavioural case for each
+of the three validations and for `treatWarningsAsErrors`; each fails when its
+setting is cleared. `treatValidationWarningsAsErrors` has no behavioural case
+and cannot have one while the broader flag is set, precisely because the
+broader flag subsumes it, so the configuration case is what holds it in place.
+The suite's module comment records the mutation run behind each.
+
+Three suites hold the chain together, and each covers a link the others cannot
+see. `tests/docs-gate.test.mjs` proves the gate decides.
+`tests/makefile-docs-gate.test.mjs` proves `make check` reaches it and that the
+recipe does not ignore its exit status. `tests/ci-workflow-gate.test.mjs`
+proves CI still invokes `make check`: it parses the workflow rather than
+searching its text, requires a step whose whole run value is the command, and
+requires neither that step nor its job to carry a condition. A condition is how
+a gate is disarmed without the command changing, so the assertion is that the
+`if` key is absent rather than that it holds any particular value.
+
 Configuration resolution and range preparation no longer make agent calls at
 all: both run as deterministic host code in the CLI before `odw run`, and a
 failure there is reported by the CLI with stage `config` or `prepare`, never by

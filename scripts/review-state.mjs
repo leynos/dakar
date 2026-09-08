@@ -466,7 +466,10 @@ function processIsAlive(pid) {
 /**
  * Reap a review-state lock left behind by a terminated process.
  *
- * A lock younger than {@link STALE_LOCK_MS} is considered live and left intact.
+ * A lock younger than the module's `STALE_LOCK_MS` threshold is considered live
+ * and left intact. That constant is module-private, so this reference is prose
+ * rather than an `{@link}`: the gate's `invalidLink` validation rejects a link
+ * to a symbol that resolves but never appears in the documentation.
  * A stale or already-vanished lock is removed so acquisition can proceed.
  *
  * @param {string} lockPath - path to the lock sentinel file.
