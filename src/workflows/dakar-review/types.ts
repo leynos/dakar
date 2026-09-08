@@ -138,6 +138,8 @@ export interface WorkflowArgs {
   transactionMaxInputTokens?: unknown
   /** Raw output-token cap for the Luna finder lane; validated and bounded before use. */
   transactionMaxOutputTokens?: unknown
+  /** Optional GitHub `owner/name` slug used to scope DeepWiki repository lookups. */
+  repoSlug?: string
 }
 
 /** Captures the deterministic review range returned by the state helper. */
@@ -355,6 +357,8 @@ export interface PromptContext {
   policyPath: string
   /** Repository root shared across prompts. */
   repoRoot: string
+  /** `owner/name` slug for DeepWiki lookups, or an empty string when unknown. */
+  repoSlug: string
 }
 
 /** Records one refused model call and why admission control rejected it. */

@@ -14,7 +14,7 @@ test('Luna Flex worked example prices uncached input at the cache-write band', (
     maxOutputTokens: 750,
   })
 
-  assert.equal(usd, 0.00975)
+  assert.equal(usd, 0.00195)
 })
 
 test('Terra Flex worked example prices uncached input at the cache-write band', () => {
@@ -26,16 +26,16 @@ test('Terra Flex worked example prices uncached input at the cache-write band', 
     maxOutputTokens: 2_500,
   })
 
-  assert.equal(usd, 0.09375)
+  assert.equal(usd, 0.075)
 })
 
 test('cached input tokens are priced at the cached band, not the cache-write band', () => {
-  // Luna Flex band: input 0.50, cached 0.05, cache-write 0.625, output 3.00 (USD per MTok).
+  // Luna Flex band: input 0.10, cached 0.01, cache-write 0.125, output 0.60 (USD per MTok).
   // 10,000 uncached (cache-write) + 2,000 cached + 500 output.
   const expected =
-    (10_000 * 0.625) / 1_000_000 +
-    (2_000 * 0.05) / 1_000_000 +
-    (500 * 3.0) / 1_000_000
+    (10_000 * 0.125) / 1_000_000 +
+    (2_000 * 0.01) / 1_000_000 +
+    (500 * 0.6) / 1_000_000
 
   const usd = estimateWorstCaseUsd(DEFAULT_PRICING_TABLE, {
     model: 'gpt-5.6-luna',
@@ -62,31 +62,31 @@ test('an unknown model/service-tier key throws a clear, structured error', () =>
   )
 })
 
-test('the default pricing table carries the verified 2026-07-18 rates', () => {
-  assert.equal(DEFAULT_PRICING_TABLE.version, '2026-07-18')
+test('the default pricing table carries the verified 2026-08-13 rates', () => {
+  assert.equal(DEFAULT_PRICING_TABLE.version, '2026-08-13')
   assert.equal(DEFAULT_PRICING_TABLE.usdPerGbp, 1.27)
   assert.deepEqual(DEFAULT_PRICING_TABLE.rates['gpt-5.6-luna:flex'], {
-    inputUsdPerMTok: 0.5,
-    cachedInputUsdPerMTok: 0.05,
-    cacheWriteUsdPerMTok: 0.625,
-    outputUsdPerMTok: 3.0,
+    inputUsdPerMTok: 0.1,
+    cachedInputUsdPerMTok: 0.01,
+    cacheWriteUsdPerMTok: 0.125,
+    outputUsdPerMTok: 0.6,
   })
   assert.deepEqual(DEFAULT_PRICING_TABLE.rates['gpt-5.6-terra:flex'], {
-    inputUsdPerMTok: 1.25,
-    cachedInputUsdPerMTok: 0.125,
-    cacheWriteUsdPerMTok: 1.5625,
-    outputUsdPerMTok: 7.5,
-  })
-  assert.deepEqual(DEFAULT_PRICING_TABLE.rates['gpt-5.6-luna:standard'], {
     inputUsdPerMTok: 1.0,
     cachedInputUsdPerMTok: 0.1,
     cacheWriteUsdPerMTok: 1.25,
     outputUsdPerMTok: 6.0,
   })
+  assert.deepEqual(DEFAULT_PRICING_TABLE.rates['gpt-5.6-luna:standard'], {
+    inputUsdPerMTok: 0.2,
+    cachedInputUsdPerMTok: 0.02,
+    cacheWriteUsdPerMTok: 0.25,
+    outputUsdPerMTok: 1.2,
+  })
   assert.deepEqual(DEFAULT_PRICING_TABLE.rates['gpt-5.6-terra:standard'], {
-    inputUsdPerMTok: 2.5,
-    cachedInputUsdPerMTok: 0.25,
-    cacheWriteUsdPerMTok: 3.125,
-    outputUsdPerMTok: 15.0,
+    inputUsdPerMTok: 2.0,
+    cachedInputUsdPerMTok: 0.2,
+    cacheWriteUsdPerMTok: 2.5,
+    outputUsdPerMTok: 12.0,
   })
 })

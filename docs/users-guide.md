@@ -120,7 +120,7 @@ checkout being reviewed.
   accepted for backward compatibility and still appear in the dry-run contract's
   `synthesisModel`/`synthesisAdapter` fields, but under the
   `deterministic-flex-v1` route the audit call always runs on the fixed Terra
-  Flex lane (`gpt-5.6-terra`, medium reasoning); these flags no longer change
+  Flex lane (`gpt-5.6-terra`, high reasoning); these flags no longer change
   which model or adapter performs the audit.
 - `--timeout <seconds>` sets the ODW wait timeout. The default is `3600`.
   Operators overriding this should keep it above the review's
@@ -156,17 +156,20 @@ knob controls.
   default is `5`.
 - `--transaction-max-input-tokens <number>` and
   `--transaction-max-output-tokens <number>` set the per-finder token estimates
-  used for admission. The defaults are `12000` and `750`.
+  used for admission. The defaults are `12000` and `2000`.
 - `--terra-max-input-tokens <number>` and `--terra-max-output-tokens <number>`
-  set the audit-call token estimates. The defaults are `48000` and `2500`.
+  set the audit-call token estimates. The defaults are `48000` and `5000`. The
+  output defaults allow for reasoning tokens, which bill as output under the
+  high-reasoning default lanes.
 - `--adapter-overhead-tokens <number>` sets the per-call adapter overhead added
   to every admission estimate. The default is `13000`; raising it towards
   `28000` better models the cache pi's agentic loop writes on first, uncached
   calls.
 - `--max-audit-candidates <number>` caps the candidates forwarded to the audit.
   The default is `30`.
-- `--luna-reasoning <low|medium>` selects the Luna finder reasoning effort. The
-  default is `low`.
+- `--luna-reasoning <low|medium|high>` selects the Luna finder reasoning
+  effort. The default is `high` (since the 2026-08-13 Flex repricing); `medium`
+  and `low` de-escalate to the cheaper adapters.
 - `--routing-policy <policy>` selects the routing policy. The default and sole
   live value is `deterministic-flex-v1`.
 - `--flex-attempts <number>` sets the Flex retry attempts per call. The default
@@ -255,6 +258,27 @@ If the reviewed repository has a root `AGENTS.md`, `dakar-review` passes it to
 the workflow as repository-local review context. Workflow schema rules,
 machine-readable output requirements, and Dakar safety rules still take
 precedence over repository instructions.
+
+### Context tools: CodeGraph and DeepWiki
+
+When the operator's `mcp` CLI is on `PATH`, finder prompts describe two
+optional context tools, and the CLI warms the CodeGraph index before any finder
+is dispatched: it calls `codegraph_index_directory` on the reviewed checkout,
+then `codegraph_index_markdown` on the root `AGENTS.md`, `README.md`, and any
+markdown files in the review's changed set (bounded). Warmup is advisory — a
+missing `mcp` command or a failed call warns on standard error and never blocks
+the review — and can be disabled by setting `DAKAR_SKIP_CONTEXT_WARMUP` in the
+environment. Finders are directed at the CodeGraph query tools (context,
+callers, impact, symbol, and documentation search) in preference to broad file
+reads.
+
+The CLI also derives the repository's `owner/name` slug from the `origin`
+remote and passes it to the workflow so finder prompts can parameterize
+DeepWiki lookups (`ask_question`, `read_wiki_structure`, `read_wiki_contents`).
+The prompt carries an explicit caveat: DeepWiki is not realtime. It helps a
+finder understand dependencies and the overall purpose of the codebase, but it
+may not incorporate changes made over the past week, so it must never be cited
+as evidence about the head under review.
 
 For a syntax and contract check that does not call review agents, run either:
 
@@ -407,30 +431,34 @@ Dry-run output is also JSON, but it describes the contract instead of a review:
   "lanes": {
     "luna": {
       "role": "luna", "model": "gpt-5.6-luna",
-      "adapter": "pi-luna-flex", "serviceTier": "flex", "reasoning": "low"
+      "adapter": "pi-luna-flex-high", "serviceTier": "flex", "reasoning": "high"
     },
     "luna-medium": {
       "role": "luna-medium", "model": "gpt-5.6-luna",
       "adapter": "pi-luna-flex-medium", "serviceTier": "flex",
       "reasoning": "medium"
     },
+    "luna-low": {
+      "role": "luna-low", "model": "gpt-5.6-luna",
+      "adapter": "pi-luna-flex", "serviceTier": "flex", "reasoning": "low"
+    },
     "terra": {
       "role": "terra", "model": "gpt-5.6-terra",
-      "adapter": "pi-terra-flex", "serviceTier": "flex", "reasoning": "medium"
+      "adapter": "pi-terra-flex-high", "serviceTier": "flex", "reasoning": "high"
     }
   },
   "budgetGbp": 0.15,
   "budgetUsd": 0.1905,
-  "pricingTableVersion": "2026-07-18",
-  "reservedAuditUsd": 0.1140625,
-  "reservedAuditChainUsd": 0.3421875,
+  "pricingTableVersion": "2026-08-13",
+  "reservedAuditUsd": 0.10625,
+  "reservedAuditChainUsd": 0.31875,
   "flexLimits": {
     "maxLunaFlexCalls": 4,
     "transactionMaxFiles": 5,
     "transactionMaxInputTokens": 12000,
-    "transactionMaxOutputTokens": 750,
+    "transactionMaxOutputTokens": 2000,
     "terraMaxInputTokens": 48000,
-    "terraMaxOutputTokens": 2500,
+    "terraMaxOutputTokens": 5000,
     "adapterOverheadTokens": 13000
   },
   "flexRetry": {
@@ -506,15 +534,16 @@ unchanged. The same head remains eligible and is reviewed again on a later run.
 The workflow groups changed files into bounded finder evidence packs
 (`buildFlexFinderPlan`) of at most `transactionMaxFiles` files each, up to
 `maxLunaFlexCalls` packs. Each admitted pack is reviewed by the Luna Flex lane
-(`gpt-5.6-luna`, low reasoning by default, escalating to the pre-registered
-`pi-luna-flex-medium` medium-reasoning adapter when `lunaReasoning` is set to
-`medium`). Files beyond the `maxLunaFlexCalls x transactionMaxFiles` coverage
-window are not packed and are listed in `metrics.truncatedFiles`. Deterministic
-host code then deduplicates and severity-orders the resulting candidates and
-caps them at `maxAuditCandidates`; the surviving set goes to a single Terra
-Flex audit call (`gpt-5.6-terra`, medium reasoning) that returns one verdict
-per candidate. Findings that survive the audit are accepted; the rest are
-discarded with a reason.
+(`gpt-5.6-luna`, high reasoning by default since the 2026-08-13 Flex repricing,
+de-escalating to the pre-registered `pi-luna-flex-medium` or `pi-luna-flex`
+adapters when `lunaReasoning` is set to `medium` or `low`). Files beyond the
+`maxLunaFlexCalls x transactionMaxFiles` coverage window are not packed and are
+listed in `metrics.truncatedFiles`. Deterministic host code then deduplicates
+and severity-orders the resulting candidates and caps them at
+`maxAuditCandidates`; the surviving set goes to a single Terra Flex audit call
+(`gpt-5.6-terra`, high reasoning) that returns one verdict per candidate.
+Findings that survive the audit are accepted; the rest are discarded with a
+reason.
 
 The following optional limits are supported:
 
@@ -530,8 +559,8 @@ The following optional limits are supported:
   USD through the pricing table's `usdPerGbp` snapshot.
 - `routingPolicy`: recorded in metrics and the dry run; the only supported
   value is `deterministic-flex-v1`.
-- `lunaReasoning`: `low` (default) or `medium`, selecting the Luna
-  escalation adapter.
+- `lunaReasoning`: `high` (default), `medium`, or `low`; `medium` and `low`
+  select the pre-registered Luna de-escalation adapters.
 - `flexAttempts`, `flexInitialBackoffSeconds`, `flexMaxBackoffSeconds`,
   `flexJitterSeconds`, and `perCallTimeoutSeconds`: the Flex retry schedule
   (see "Retries, downgrades, and deferral" below).
@@ -619,11 +648,8 @@ admission only ever reserves the single-attempt `reservedAuditUsd`.
 
 A deferred review retried later re-pays its Luna finder calls: Luna output is
 not cached across separate `dakar-review` invocations, so a retry after a
-deferral repeats the finder phase's admitted spend. At the current maximum
-finder estimate (25,000 input tokens including overhead and 750 output tokens),
-one pack costs USD 0.017875 and four initial packs cost USD 0.0715; these are
-upper bounds, not typical spend. Operators should space retries after a
-deferral rather than tight-looping them.
+deferral repeats the finder phase's admitted spend. Operators should space
+retries after a deferral rather than tight-looping them.
 
 `worstCaseReviewSeconds` (2,020 s at default limits, shown in the dry run) is
 the worst-case wall clock for one review's finder and audit retry chains.

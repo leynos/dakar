@@ -6,8 +6,10 @@ import test from 'node:test'
 import {
   agentInstructionsBlock,
   auditPrompt,
+  contextToolsBlock,
   taskPrompt,
 } from '../src/workflows/dakar-review/prompts.ts'
+import { shellWord } from '../src/workflows/dakar-review/shell.ts'
 
 const CONTEXT = {
   agentInstructions: null,
@@ -107,6 +109,29 @@ test('taskPrompt omits the unscoped diff command for an empty task', () => {
 
   assert.match(prompt, /diff --stat/u)
   assert.doesNotMatch(prompt, /diff 'base-sha\.\.head-sha' --/u)
+})
+
+test('contextToolsBlock shell-quotes every MCP JSON payload', () => {
+  const repoRoot = "/tmp/repo'; echo unwanted"
+  const repoSlug = "owner/repo'; echo unwanted"
+  const context = { ...CONTEXT, repoRoot, repoSlug }
+  const prompt = contextToolsBlock(context)
+  const payload = (value) => shellWord(JSON.stringify(value))
+
+  assert.ok(prompt.includes(`codegraph_get_ai_context ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', intent: 'explain' })}`))
+  assert.ok(prompt.includes(`codegraph_get_callers ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>' })}`))
+  assert.ok(prompt.includes(`codegraph_analyze_impact ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', changeType: 'modify' })}`))
+  assert.ok(prompt.includes(`codegraph_symbol_search ${payload({ query: '...' })} and codegraph_search_docs ${payload({ query: '...' })}`))
+  assert.ok(prompt.includes(`deepwiki ask_question ${payload({ repoName: repoSlug, question: '...' })}`))
+  assert.ok(prompt.includes(`deepwiki read_wiki_structure ${payload({ repoName: repoSlug })}`))
+  assert.ok(!prompt.includes(`'{"repoName":"${repoSlug}`))
+})
+
+test('contextToolsBlock omits DeepWiki commands without a GitHub slug', () => {
+  const prompt = contextToolsBlock(CONTEXT)
+
+  assert.match(prompt, /DeepWiki: unavailable for this repository/u)
+  assert.doesNotMatch(prompt, /mcp deepwiki/u)
 })
 
 test('auditPrompt embeds compacted candidate JSON, policy path, AGENTS block, and budget note', () => {
