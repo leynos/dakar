@@ -121,8 +121,8 @@ repository (`.coderabbit.yaml` and variants), then
 `~/.config/dakar/config.yaml`, then a bundled example. Path instructions are
 sliced per finder pack by changed path; `pre_merge_checks.custom_checks`
 definitions are read from the trusted base commit, but their commands run
-host-side in the reviewed checkout before any model call. A root `AGENTS.md`
-is passed to the workflow as repository context.
+host-side in the reviewed checkout before any model call. A root `AGENTS.md` is
+passed to the workflow as repository context.
 
 ## Replaying pinned evaluations
 

@@ -15,30 +15,29 @@ Install Dakar's review command from a checkout with the canonical installer:
 
 The installer requires Node, npm, Bun, and ODW on `PATH`. It restores the exact
 pinned dependencies beside the checkout, then calls Bun with the absolute
-checkout path and exposes `dakar-review`.
-Installing through Bun directly is unsupported because Bun links a local
-package's executable back into its checkout, while Node resolves runtime
-dependencies from that checkout. The package remains private; the command is
-meant for local or git-based installation, not npm publication. `install.sh`
-accepts no install arguments; run `./install.sh --help` for its short usage
-text. On each repeated installer run, `install.sh` first executes
-`bun remove -g dakar` before reinstalling, preventing an interrupted
-installation from leaving duplicate `dakar` entries while keeping the shared
-Bun lockfile and other global packages intact. Installer runs are serialized by
-an installer-owned `.dakar-install.lock` directory under Bun's configured
-global installation root. The lock is acquired before dependency restoration
-and held through both global mutations, from `bun remove -g dakar` through
-`bun install -g "$script_dir"`. While waiting, the installer reports the stable
-operation, lock state, and elapsed time on stderr, with an immediate diagnostic
-and periodic updates while another installer holds the lock; acquisition
-failures are reported there as well. The default lock wait is 300 seconds. Set
-`DAKAR_INSTALL_LOCK_WAIT_SECONDS` to a positive base-10 integer without a
-leading zero to override that limit for automation or tests. An invalid value
-is rejected before lock acquisition. On timeout, `install.sh` exits non-zero
-and reports `operation=global-install`, a `lock=timeout` state, the elapsed
-time, and the exact lock path, together with manual-recovery guidance. Exit
-cleanup removes the lock on successful, failed, and handled HUP, INT, or TERM
-exits.
+checkout path and exposes `dakar-review`. Installing through Bun directly is
+unsupported because Bun links a local package's executable back into its
+checkout, while Node resolves runtime dependencies from that checkout. The
+package remains private; the command is meant for local or git-based
+installation, not npm publication. `install.sh` accepts no install arguments;
+run `./install.sh --help` for its short usage text. On each repeated installer
+run, `install.sh` first executes `bun remove -g dakar` before reinstalling,
+preventing an interrupted installation from leaving duplicate `dakar` entries
+while keeping the shared Bun lockfile and other global packages intact.
+Installer runs are serialized by an installer-owned `.dakar-install.lock`
+directory under Bun's configured global installation root. The lock is acquired
+before dependency restoration and held through both global mutations, from
+`bun remove -g dakar` through `bun install -g "$script_dir"`. While waiting,
+the installer reports the stable operation, lock state, and elapsed time on
+stderr, with an immediate diagnostic and periodic updates while another
+installer holds the lock; acquisition failures are reported there as well. The
+default lock wait is 300 seconds. Set `DAKAR_INSTALL_LOCK_WAIT_SECONDS` to a
+positive base-10 integer without a leading zero to override that limit for
+automation or tests. An invalid value is rejected before lock acquisition. On
+timeout, `install.sh` exits non-zero and reports `operation=global-install`, a
+`lock=timeout` state, the elapsed time, and the exact lock path, together with
+manual-recovery guidance. Exit cleanup removes the lock on successful, failed,
+and handled HUP, INT, or TERM exits.
 
 An existing lock is not automatically reclaimed. If the wait diagnostics show
 no progress, first confirm that no installer process is still running and use
@@ -147,8 +146,8 @@ knob controls.
 - `--budget-gbp <number>` sets the hard admission budget in GBP. The default is
   `0.15`, raised from ADR 002's historical `0.1` hard-budget setting because,
   at pricing table 2026-07-18, the reserve-first audit left less than one
-  finder pack's worst case inside that old benchmark (see the ADR's
-  2026-08-13 amendment).
+  finder pack's worst case inside that old benchmark (see the ADR's 2026-08-13
+  amendment).
 - `--max-luna-calls <number>` caps the Luna Flex finder calls. The default is
   `4`. It composes with `--max-tasks`: the effective finder-pack cap is the
   smaller of the two.
@@ -570,8 +569,8 @@ reviewing a large task branch may need to raise `--budget-gbp` to admit more
 finder packs and so cover the full diff. The default budget covers the default
 caps (four initial finder packs plus the audit reserve); it does not guarantee
 retry headroom when those calls reach their maximum caps. Reviews that raise
-`--max-luna-calls` or the token bounds must raise the budget
-in step, and should lift it only for the runs that warrant the extra coverage.
+`--max-luna-calls` or the token bounds must raise the budget in step, and
+should lift it only for the runs that warrant the extra coverage.
 
 `metrics` carries the cost accounting:
 

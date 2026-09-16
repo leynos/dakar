@@ -182,29 +182,28 @@ that checkout. This is required because Bun links a local package's executable
 back to its source, from which Node cannot resolve Bun's separate global
 dependency tree. Keep the clean-checkout installation test in
 `tests/cli.test.mjs` representative of this layout. The installer owns an
-`.dakar-install.lock` directory under Bun's configured global installation
-root and acquires it before `npm ci`; the lock remains held through
+`.dakar-install.lock` directory under Bun's configured global installation root
+and acquires it before `npm ci`; the lock remains held through
 `bun remove -g dakar` and `bun install -g "$script_dir"` so concurrent runs
 cannot interleave checkout or global-install mutations. While waiting for the
 lock, the installer emits stable operation, lock-state, and elapsed-time
 diagnostics on stderr, including an immediate diagnostic and periodic updates,
 and reports acquisition failures there. The default lock wait is 300 seconds.
 Automation and tests may set `DAKAR_INSTALL_LOCK_WAIT_SECONDS` to a positive
-base-10 integer without a leading zero; invalid values are rejected before
-lock acquisition. When the limit expires, the installer exits non-zero and
-emits a stable diagnostic containing `operation=global-install`,
-`lock=timeout`, the elapsed time, the exact lock path, and manual-recovery
-guidance. Shell exit traps remove the lock on successful, failed, and handled
-HUP, INT, or TERM exits.
+base-10 integer without a leading zero; invalid values are rejected before lock
+acquisition. When the limit expires, the installer exits non-zero and emits a
+stable diagnostic containing `operation=global-install`, `lock=timeout`, the
+elapsed time, the exact lock path, and manual-recovery guidance. Shell exit
+traps remove the lock on successful, failed, and handled HUP, INT, or TERM
+exits.
 
 An existing lock is not automatically reclaimed. If the diagnostics indicate
 that a wait may be stale, an operator must first confirm that no installer
 process remains active and inspect the reported lock path. A timeout alone does
 not establish that a lock is stale. Remove only the exact lock directory
-reported by the diagnostic after confirming that no installer process is
-active and the owning installation has stopped, then retry; never remove it
-while another installation may still be mutating the checkout or Bun's global
-state.
+reported by the diagnostic after confirming that no installer process is active
+and the owning installation has stopped, then retry; never remove it while
+another installation may still be mutating the checkout or Bun's global state.
 
 The CLI should run the workflow from Dakar's package root as ODW `--source` and
 pass the reviewed repository as the workflow `repoRoot` argument. This is
@@ -264,13 +263,13 @@ standard error, then fetches `odw result <run-id>` for the final output. Keep
 all progress, run ids, and log-follow warnings on standard error so standard
 output remains reserved for JSON or Markdown result data.
 
-A CLI test that exercises a review must run against its own fixture
-repository, never the checkout under test. `setUpRecordRepo` in
-`tests/cli.test.mjs` builds one: a base commit, a second commit ahead of it,
-and the base revision to pass as `--base`. Pointed at its own checkout the CLI
-resolves the review base to the current head, finds no unreviewed commits, and
-short-circuits with `skipped: true` before ODW is ever spawned, so the case
-passes or fails according to what the developer happens to have committed. Set
+A CLI test that exercises a review must run against its own fixture repository,
+never the checkout under test. `setUpRecordRepo` in `tests/cli.test.mjs` builds
+one: a base commit, a second commit ahead of it, and the base revision to pass
+as `--base`. Pointed at its own checkout the CLI resolves the review base to
+the current head, finds no unreviewed commits, and short-circuits with
+`skipped: true` before ODW is ever spawned, so the case passes or fails
+according to what the developer happens to have committed. Set
 `XDG_CONFIG_HOME` to an empty temporary directory in the same breath, or the
 run reads the developer's own `dakar/config.yaml`.
 
@@ -294,17 +293,17 @@ state root, and spawns `bin/dakar-review.mjs` as a child process. It requires
 
 The harness's own argument parser is distinct from the child CLI's parser, and
 the boundary matters. `--dakar-args` takes one string of child `dakar-review`
-arguments, so its value may itself begin with `--`: it forwards child CLI
-flags such as `--budget-gbp 0.2`, and the harness must not mistake the child
-flag for a missing harness value. Ordinary value-taking harness options keep
-the strict rule and reject a following token that begins with `--` as a
-missing value; unknown options and positional arguments fail closed. When
-extending either parser, preserve the distinction between harness options and
-child `dakar-review` arguments.
+arguments, so its value may itself begin with `--`: it forwards child CLI flags
+such as `--budget-gbp 0.2`, and the harness must not mistake the child flag for
+a missing harness value. Ordinary value-taking harness options keep the strict
+rule and reject a following token that begins with `--` as a missing value;
+unknown options and positional arguments fail closed. When extending either
+parser, preserve the distinction between harness options and child
+`dakar-review` arguments.
 
-`parseCliArgs(argv)` is exported only so `tests/live-harness.test.mjs` can
-test the parser directly; it is not part of the public `dakar-review` CLI API,
-and nothing outside the harness and its tests should import it. Parser and
+`parseCliArgs(argv)` is exported only so `tests/live-harness.test.mjs` can test
+the parser directly; it is not part of the public `dakar-review` CLI API, and
+nothing outside the harness and its tests should import it. Parser and
 forwarding regressions for the harness belong in that same test file.
 
 ## 4. Routed review conventions
@@ -460,8 +459,8 @@ Two settings promote findings to failures and they are not interchangeable.
 unknown block tag, such as a `/** @file … */` header, which TypeDoc reports
 while still exiting 0. Both are set. The broader flag currently subsumes the
 narrower one, which is kept so that removing it later still leaves validation
-findings fatal. `tests/docs-gate.test.mjs` holds a behavioural case for each
-of the three validations and for `treatWarningsAsErrors`; each fails when its
+findings fatal. `tests/docs-gate.test.mjs` holds a behavioural case for each of
+the three validations and for `treatWarningsAsErrors`; each fails when its
 setting is cleared. `treatValidationWarningsAsErrors` has no behavioural case
 and cannot have one while the broader flag is set, precisely because the
 broader flag subsumes it, so the configuration case is what holds it in place.
