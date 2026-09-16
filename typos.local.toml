@@ -12,13 +12,12 @@ accepted = []
 
 [patterns]
 ignore = [
-  # Published platform and documentation titles retain their formal spelling.
-  'Azure Architecture\s+Center',
-  'GitHub Flavored\s+Markdown',
   # CodeRabbit configuration keys are external schema contracts.
   '(?m)^  labeling_instructions:$',
   '(?m)^  labeling:$',
   '(?m)^    labeling_instructions:$',
+  # Inline code spans are masked; the shared dictionary does not mask them yet.
+  '`[^`\n]+`',
 ]
 
 [files]
