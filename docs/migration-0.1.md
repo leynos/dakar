@@ -12,10 +12,10 @@ Dakar checkout with:
 ```
 
 The installer requires Node and npm on `PATH`, in addition to Bun and the ODW
-CLI. It restores Dakar's locked dependencies in the checkout before asking
-Bun to link that checkout globally. This order is required because the global
-command links back to the checkout while Node resolves its runtime
-dependencies there.
+CLI. It restores Dakar's locked dependencies in the checkout before asking Bun
+to link that checkout globally. This order is required because the global
+command links back to the checkout while Node resolves its runtime dependencies
+there.
 
 ## Installer lock behaviour
 

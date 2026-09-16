@@ -568,11 +568,10 @@ Negative consequences:
   for the audit and admit up to four maximum finder packs (25,000 input tokens
   including overhead and 750 output tokens; USD 0.017875 each): USD 0.1855625
   against the USD 0.1905 (£0.15) default, leaving USD 0.0049375, which is
-  insufficient for another maximum-cost retry. The admission
-  controller, not the call caps, is the effective ceiling, and the second
-  large-review Terra call cannot fit the current ordinary budget. The original
-  £0.10 setting is a historical benchmark; large reviews must use the explicit
-  larger budget.
+  insufficient for another maximum-cost retry. The admission controller, not
+  the call caps, is the effective ceiling, and the second large-review Terra
+  call cannot fit the current ordinary budget. The original £0.10 setting is a
+  historical benchmark; large reviews must use the explicit larger budget.
 - The partitioning strategy for large reviews is intentionally undefined. It
   must be designed before migration steps 8 and 9 can exercise
   `maxTerraFlexCallsLargeReview`.

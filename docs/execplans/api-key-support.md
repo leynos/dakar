@@ -30,18 +30,18 @@ dispatched.
 
 Cost-goal framing (expert-panel finding, adopted): the USD 0.25 and USD 0.11
 figures are independently chosen delivery goals, not currency conversions of
-ADR 002's GBP targets. The current hard ordinary-review budget is £0.15, or
-USD 0.1905 at the pricing table's seed exchange snapshot; the admission
-controller enforces the GBP budget through that versioned snapshot. The current
-default caps (four Luna transactions plus one Terra audit, uncached input
-priced at the cache-write band) total USD 0.1855625, leaving USD 0.0049375
-inside the default budget. The USD 0.11 stretch goal is therefore a
-typical-case goal — reachable only when fewer transactions fire or cached input
-reduces spend — and the USD 0.25 acceptance goal still has headroom. The
-earlier recorded USD 0.133 isolated worst case belongs to the pre-amendment
-cost model and is historical evidence, not the current default-cap total.
-Terra dominates the ceiling, so `terraMaxInputTokens` is the lever that
-matters if cost must come down later, not the Luna caps.
+ADR 002's GBP targets. The current hard ordinary-review budget is £0.15, or USD
+0.1905 at the pricing table's seed exchange snapshot; the admission controller
+enforces the GBP budget through that versioned snapshot. The current default
+caps (four Luna transactions plus one Terra audit, uncached input priced at the
+cache-write band) total USD 0.1855625, leaving USD 0.0049375 inside the default
+budget. The USD 0.11 stretch goal is therefore a typical-case goal — reachable
+only when fewer transactions fire or cached input reduces spend — and the USD
+0.25 acceptance goal still has headroom. The earlier recorded USD 0.133
+isolated worst case belongs to the pre-amendment cost model and is historical
+evidence, not the current default-cap total. Terra dominates the ceiling, so
+`terraMaxInputTokens` is the lever that matters if cost must come down later,
+not the Luna caps.
 
 Success is observable: a live review of a selected estate pull request
 completes end to end, the result carries a per-call cost ledger with
@@ -734,16 +734,15 @@ cache than the overhead constant assumes — raise `adapterOverheadTokens` towar
 28k or restrict finder tools when tuning; (4) the pre-amendment isolated
 worst-case estimate (historical recorded USD 0.133) understates the current
 default-cap finder-plus-audit total of USD 0.1855625, while the ordinary budget
-correctly forces refusals — the ordinary budget is doing its job, and
-operators wanting full large-diff coverage need the explicit large-review
-budget that remains future work (roadmap 7.5).
+correctly forces refusals — the ordinary budget is doing its job, and operators
+wanting full large-diff coverage need the explicit large-review budget that
+remains future work (roadmap 7.5).
 
 Current budget truth (2026-08-17): `resolveWorkflowConfig` defaults to £0.15,
-which is USD 0.1905 at pricing table 2026-07-18. Four maximum Luna finder
-packs at USD 0.017875 each plus the USD 0.1140625 Terra audit reservation total
-USD 0.1855625. The £0.10/USD 0.127 setting and USD 0.133 figure retained above
-are historical recorded evidence only; they do not describe the current
-default.
+which is USD 0.1905 at pricing table 2026-07-18. Four maximum Luna finder packs
+at USD 0.017875 each plus the USD 0.1140625 Terra audit reservation total USD
+0.1855625. The £0.10/USD 0.127 setting and USD 0.133 figure retained above are
+historical recorded evidence only; they do not describe the current default.
 
 Remaining work is deliberately out of this slice: SARIF adoption, deterministic
 gate running, and the adjudicated legacy comparison (roadmap 7.5.x), plus the
@@ -1335,16 +1334,14 @@ evidence from that test fixture.
 Current default-cap arithmetic (pricing table 2026-07-18):
 
 - One Luna Flex finder pack, 25,000 input tokens including the 13,000-token
-  adapter overhead, plus 750 output tokens:
-  25,000 x 0.625 / 1,000,000 + 750 x 3.00 / 1,000,000 = 0.015625 +
-  0.00225 = USD 0.017875.
+  adapter overhead, plus 750 output tokens: 25,000 x 0.625 / 1,000,000 + 750 x
+  3.00 / 1,000,000 = 0.015625 + 0.00225 = USD 0.017875.
 - One Terra Flex audit, 61,000 input tokens including the 13,000-token
-  adapter overhead, plus 2,500 output tokens:
-  61,000 x 1.5625 / 1,000,000 + 2,500 x 7.50 / 1,000,000 = 0.0953125 +
-  0.01875 = USD 0.1140625.
+  adapter overhead, plus 2,500 output tokens: 61,000 x 1.5625 / 1,000,000 +
+  2,500 x 7.50 / 1,000,000 = 0.0953125 + 0.01875 = USD 0.1140625.
 - Default caps, four Luna finder packs plus one Terra audit:
-  4 x 0.017875 + 0.1140625 = USD 0.1855625, against the £0.15 / USD
-  0.1905 default, leaving USD 0.0049375.
+  4 x 0.017875 + 0.1140625 = USD 0.1855625, against the £0.15 / USD 0.1905
+  default, leaving USD 0.0049375.
 
 In `src/workflows/dakar-review/admission.ts`:
 
@@ -1436,21 +1433,21 @@ Revised after the three-panel expert review (structure and contracts; cost and
 failure modes; alternatives and viability). Material changes: cost-goal framing
 corrected (USD goals declared independent of ADR 002's GBP targets; historical
 recorded pre-amendment worst case USD 0.133 stated; stretch goal identified as
-typical-case); cache-write band
-added to the pricing interfaces and worked examples; admission inequalities
-made normative; M0 strengthened to require provider-side applied-tier evidence
-and a failure-shape capture; the old M3 split into M3 (audit on standard
-adapters) and M4 (Flex lanes) for fault isolation; M2 split into four stages
-with a test-harness refactor first and the `legacy-route-final` tag recorded;
-audit response given its own `AUDIT_SCHEMA`; `WorkflowArgs.prepared` contract
-and result echo pinned; skip-shape and dry-run deviations from ADR 001 recorded
-as decisions; timeout budget made explicit with `flexAttempts` reduced to 3 for
-the slice; corpus SHAs pinned with fail-closed checks; harness state-root guard
-made code-level; ledger gained `reportedUsd` and the `standard` lane;
-escalation adapter `pi-luna-flex-medium` pre-registered; living-document
-updates added to every milestone's exit criteria. Remaining work is unchanged
-in intent: prove plumbing, build the cost machinery, take over deterministic
-phases, land the audit, then Flex, then validate live.
+typical-case); cache-write band added to the pricing interfaces and worked
+examples; admission inequalities made normative; M0 strengthened to require
+provider-side applied-tier evidence and a failure-shape capture; the old M3
+split into M3 (audit on standard adapters) and M4 (Flex lanes) for fault
+isolation; M2 split into four stages with a test-harness refactor first and the
+`legacy-route-final` tag recorded; audit response given its own `AUDIT_SCHEMA`;
+`WorkflowArgs.prepared` contract and result echo pinned; skip-shape and dry-run
+deviations from ADR 001 recorded as decisions; timeout budget made explicit with
+`flexAttempts` reduced to 3 for the slice; corpus SHAs pinned with fail-closed
+checks; harness state-root guard made code-level; ledger gained `reportedUsd`
+and the `standard` lane; escalation adapter `pi-luna-flex-medium`
+pre-registered; living-document updates added to every milestone's exit
+criteria. Remaining work is unchanged in intent: prove plumbing, build the cost
+machinery, take over deterministic phases, land the audit, then Flex, then
+validate live.
 
 ## Revision note (2026-07-18, completion)
 
