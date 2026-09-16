@@ -44,7 +44,9 @@ test('pi Flex adapters pin print mode, provider, model, and thinking per lane', 
   const cases = [
     { name: 'pi-luna-flex', model: 'gpt-5.6-luna', thinking: 'low' },
     { name: 'pi-luna-flex-medium', model: 'gpt-5.6-luna', thinking: 'medium' },
+    { name: 'pi-luna-flex-high', model: 'gpt-5.6-luna', thinking: 'high' },
     { name: 'pi-terra-flex', model: 'gpt-5.6-terra', thinking: 'medium' },
+    { name: 'pi-terra-flex-high', model: 'gpt-5.6-terra', thinking: 'high' },
   ]
   for (const { name, model, thinking } of cases) {
     const adapter = commandOf(name)

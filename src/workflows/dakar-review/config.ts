@@ -40,8 +40,8 @@ export interface WorkflowConfig {
   readonly flexMaxBackoffSeconds: number
   /** Non-blank head ref to review up to, defaulting to `HEAD`. */
   readonly headRef: string
-  /** Reasoning level for the Luna Flex finder lane, either `low` (default) or `medium`. */
-  readonly lunaReasoning: 'low' | 'medium'
+  /** Reasoning level for the Luna Flex finder lane, defaulting to `high`. */
+  readonly lunaReasoning: 'low' | 'medium' | 'high'
   /** Per-agent-call timeout in seconds, bounded to 30–900. */
   readonly perCallTimeoutSeconds: number
   /** Whether the supplied review-policy hand-off validated successfully. */
@@ -60,6 +60,8 @@ export interface WorkflowConfig {
   readonly prepared: PreparedReview | undefined
   /** Non-blank repository root, defaulting to `.` when blank. */
   readonly repoRoot: string
+  /** Optional `owner/name` repository slug used for DeepWiki lookups. */
+  readonly repoSlug: string
   /** Validated, normalized review policy governing scope, tone, and custom checks. */
   readonly reviewPolicy: Readonly<NormalizedReviewPolicy>
   /** Validated review model specifications, falling back to `DEFAULT_REVIEW_MODELS` when none are configured. */
@@ -354,7 +356,9 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     flexJitterSeconds: boundedInteger(args.flexJitterSeconds, 10, 0, 60),
     flexMaxBackoffSeconds: positiveLimit(args.flexMaxBackoffSeconds, 120, 900),
     headRef: nonBlankString(args.head, 'HEAD'),
-    lunaReasoning: args.lunaReasoning === 'medium' ? 'medium' : 'low',
+    // High by default since the 2026-08-13 Flex repricing made Luna five
+    // times cheaper; 'medium' and 'low' remain as de-escalation values.
+    lunaReasoning: isReasoning(args.lunaReasoning) ? args.lunaReasoning : 'high',
     maxAuditCandidates: positiveLimit(args.maxAuditCandidates, 30, 100),
     maxCandidates: positiveLimit(args.maxCandidates, 30, 1_000),
     maxFindings: positiveLimit(args.maxFindings, 20, 200),
@@ -366,6 +370,9 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     // main.ts validates these fields fail-closed before any downstream use.
     prepared: isObject(args.prepared) ? (args.prepared as PreparedReview) : undefined,
     repoRoot: nonBlankString(args.repoRoot, '.'),
+    // `owner/name` for DeepWiki lookups; the CLI derives it from the origin
+    // remote and omits it when no GitHub remote exists.
+    repoSlug: nonBlankString(args.repoSlug, ''),
     reviewPolicy: policy.policy,
     reviewModels,
     // Recorded in metrics and used (via the CLI) to gate the OPENAI_API_KEY
@@ -381,10 +388,13 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     synthesisReasoning,
     taskKinds: Object.freeze(['docs', 'config', 'tests', 'source', 'review-summary']),
     terraMaxInputTokens: boundedInteger(args.terraMaxInputTokens, 48_000, 1, 1_000_000),
-    terraMaxOutputTokens: boundedInteger(args.terraMaxOutputTokens, 2_500, 1, 100_000),
+    // Reasoning tokens bill as output; the high-reasoning defaults need more
+    // output headroom than the low-reasoning bounds these replaced (2,500 and
+    // 750 respectively).
+    terraMaxOutputTokens: boundedInteger(args.terraMaxOutputTokens, 5_000, 1, 100_000),
     transactionMaxFiles: positiveLimit(args.transactionMaxFiles, 5, 20),
     transactionMaxInputTokens: boundedInteger(args.transactionMaxInputTokens, 12_000, 1, 200_000),
-    transactionMaxOutputTokens: boundedInteger(args.transactionMaxOutputTokens, 750, 1, 100_000),
+    transactionMaxOutputTokens: boundedInteger(args.transactionMaxOutputTokens, 2_000, 1, 100_000),
     workflowVersion: 'divide-and-conquer-v1',
   })
 }

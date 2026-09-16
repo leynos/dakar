@@ -93,6 +93,21 @@
       ],
       "stdin": "{prompt}"
     },
+    "pi-luna-flex-high": {
+      "label": "pi coding agent, Luna, Flex processing, high reasoning",
+      "command": [
+        "pi",
+        "-p",
+        "--no-session",
+        "--provider",
+        "openai-flex",
+        "--model",
+        "gpt-5.6-luna",
+        "--thinking",
+        "high"
+      ],
+      "stdin": "{prompt}"
+    },
     "pi-terra-flex": {
       "label": "pi coding agent, Terra, Flex processing, medium reasoning",
       "command": [
@@ -105,6 +120,21 @@
         "gpt-5.6-terra",
         "--thinking",
         "medium"
+      ],
+      "stdin": "{prompt}"
+    },
+    "pi-terra-flex-high": {
+      "label": "pi coding agent, Terra, Flex processing, high reasoning",
+      "command": [
+        "pi",
+        "-p",
+        "--no-session",
+        "--provider",
+        "openai-flex",
+        "--model",
+        "gpt-5.6-terra",
+        "--thinking",
+        "high"
       ],
       "stdin": "{prompt}"
     }

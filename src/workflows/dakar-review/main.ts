@@ -15,7 +15,7 @@ import {
 } from './candidates.ts'
 import { admit } from './admission.ts'
 import { resolveWorkflowConfig } from './config.ts'
-import { flexLaneRole, modelName } from './model-routing.ts'
+import { flexLaneRole, lunaFlexLaneRole, modelName } from './model-routing.ts'
 import { DEFAULT_PRICING_TABLE, estimateWorstCaseUsd } from './pricing.ts'
 import { auditPrompt, taskPrompt } from './prompts.ts'
 import { backoffSeconds, isRetryableFlexError, worstCaseReviewSeconds } from './retry.ts'
@@ -42,6 +42,13 @@ import type {
   ReviewTask,
   Verdict,
 } from './types.ts'
+
+
+/**
+ * Orchestrate Dakar's ODW phases through the injected runtime primitives.
+ *
+ * @module
+ */
 
 /** Bundles one Flex call's success flag, decoded value, and attempt count. */
 interface FlexCallOutcome<T> {
@@ -166,6 +173,7 @@ const {
   maxTasks: MAX_TASKS,
   prepared: PREPARED,
   repoRoot: REPO_ROOT,
+  repoSlug: REPO_SLUG,
   reviewPolicy: REVIEW_POLICY,
   reviewModels: REVIEW_MODELS,
   routingPolicy: ROUTING_POLICY,
@@ -190,10 +198,11 @@ const RETRY_CONFIG: FlexRetryConfig = Object.freeze({
 })
 const WORST_CASE_REVIEW_SECONDS = worstCaseReviewSeconds(RETRY_CONFIG, PER_CALL_TIMEOUT_SECONDS)
 // The host selects each Flex lane; ADR 002 forbids an agent promoting itself to
-// a costlier model or service tier. `lunaReasoning` chooses the low or the
-// pre-registered medium escalation adapter for the finder lane.
+// a costlier model or service tier. `lunaReasoning` selects one registered
+// finder lane before any agent dispatch.
 const PRICING_TABLE = DEFAULT_PRICING_TABLE
-const LUNA_LANE = flexLaneRole(LUNA_REASONING === 'medium' ? 'luna-medium' : 'luna')
+const LUNA_ROLE = lunaFlexLaneRole(LUNA_REASONING)
+const LUNA_LANE = flexLaneRole(LUNA_ROLE)
 const TERRA_LANE = flexLaneRole('terra')
 const BUDGET_USD = BUDGET_GBP * PRICING_TABLE.usdPerGbp
 const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
@@ -203,7 +212,7 @@ const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
   cachedInputTokens: 0,
   maxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
 })
-const FLEX_LANES = Object.freeze({ luna: flexLaneRole('luna'), 'luna-medium': flexLaneRole('luna-medium'), terra: TERRA_LANE })
+const FLEX_LANES = Object.freeze({ luna: flexLaneRole('luna'), 'luna-medium': flexLaneRole('luna-medium'), 'luna-low': flexLaneRole('luna-low'), terra: TERRA_LANE })
 // Configuration is resolved host-side by the CLI and supplied verbatim; the
 // workflow no longer re-resolves it through an agent call.
 const CODE_RABBIT_CONFIG = CONFIG_ARG || 'auto'
@@ -212,6 +221,7 @@ const promptContext: PromptContext = Object.freeze({
   policy: REVIEW_POLICY,
   policyPath: CODE_RABBIT_CONFIG,
   repoRoot: REPO_ROOT,
+  repoSlug: REPO_SLUG,
 })
 // Hard budget admission is wired in M4; for now the audit is told plainly that
 // it is the final model call and is not rewarded for issue volume.
@@ -382,7 +392,7 @@ try {
     maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
     maxTasks: MAX_TASKS,
     transactionMaxFiles: TRANSACTION_MAX_FILES,
-    lunaRole: LUNA_LANE.role === 'luna-medium' ? 'luna-medium' : 'luna',
+    lunaRole: LUNA_ROLE,
     maxFindings: MAX_FINDINGS,
   })
   packs = plan.packs
