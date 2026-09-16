@@ -42,18 +42,19 @@ field, so npm does not enforce this requirement for you.
 
 ### Spelling policy
 
-Run `make spelling` to enforce en-GB-oxendict spelling. The dictionary-based
-Typos scan checks tracked Markdown, while the phrase-correction check covers
-the whole tracked repository, including JavaScript, tests and workflow files.
-The generated and tracked `typos.toml` starts from the shared Oxford
-dictionary. Its builder refreshes the untracked `.typos-oxendict-base.toml`
-cache and metadata only when the shared dictionary is newer, so the last
-fetched base remains usable in a network-restricted checkout.
+Run `make spelling` to enforce en-GB-oxendict spelling. The single gate
+regenerates the tracked `typos.toml` from the live shared dictionary and the
+`typos.local.toml` overlay, scans the tracked Markdown with the pinned Typos
+release, and enforces the shared phrase corrections that Typos cannot express.
+
+The builder refreshes the untracked `.typos-oxendict-base.toml` cache and its
+metadata only when the shared dictionary is newer, so the last fetched base
+remains usable in a network-restricted checkout. Because the dictionary is live,
+`typos.toml` must never be drift checked in continuous integration.
 
 Keep repository-specific formal names and machine interfaces in
-`typos.local.toml`. Run `make spelling-config-write` to regenerate the tracked
-configuration and `make spelling-config` to verify it. Never edit generated
-entries by hand.
+`typos.local.toml`, and add only narrow repository terminology there. Never
+edit generated entries in `typos.toml` by hand.
 
 ## 2. Workflow implementation conventions
 
