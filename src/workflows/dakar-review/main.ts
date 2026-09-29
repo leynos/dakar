@@ -15,6 +15,7 @@ import {
 } from './candidates.ts'
 import { admit } from './admission.ts'
 import { resolveWorkflowConfig } from './config.ts'
+import { contextToolsBlock } from './context-tools.ts'
 import { flexLaneRole, lunaFlexLaneRole, modelName } from './model-routing.ts'
 import { DEFAULT_PRICING_TABLE, estimateWorstCaseUsd } from './pricing.ts'
 import { auditPrompt, taskPrompt } from './prompts.ts'
@@ -221,8 +222,8 @@ const promptContext: PromptContext = Object.freeze({
   policy: REVIEW_POLICY,
   policyPath: CODE_RABBIT_CONFIG,
   repoRoot: REPO_ROOT,
-  repoSlug: REPO_SLUG,
 })
+const FINDER_CONTEXT_GUIDANCE = contextToolsBlock(REPO_ROOT, REPO_SLUG)
 // Hard budget admission is wired in M4; for now the audit is told plainly that
 // it is the final model call and is not rewarded for issue volume.
 const REMAINING_BUDGET_NOTE =
@@ -416,7 +417,7 @@ const admissionState = { budgetUsd: BUDGET_USD, reservedAuditUsd: RESERVED_AUDIT
 const admissionRefusals: AdmissionRefusal[] = []
 const admittedPacks: ReviewTask[] = []
 for (const pack of packs) {
-  const promptChars = taskPrompt(pack, prepared, promptContext).length
+  const promptChars = taskPrompt(pack, prepared, promptContext, FINDER_CONTEXT_GUIDANCE).length
   const inputTokens = Math.min(Math.ceil(promptChars / 4), TRANSACTION_MAX_INPUT_TOKENS) + ADAPTER_OVERHEAD_TOKENS
   const worstCaseUsd = estimateWorstCaseUsd(PRICING_TABLE, {
     model: LUNA_LANE.model,
@@ -463,7 +464,7 @@ const reviewOutcomes = await parallel(
           RETRY_CONFIG,
           `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`,
           () =>
-            agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext), {
+            agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext, FINDER_CONTEXT_GUIDANCE), {
               label: task.taskId,
               phase: 'Review',
               adapter: task.adapter,

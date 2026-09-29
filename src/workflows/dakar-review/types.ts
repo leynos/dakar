@@ -360,8 +360,6 @@ export interface PromptContext {
   policyPath: string
   /** Repository root shared across prompts. */
   repoRoot: string
-  /** `owner/name` slug for DeepWiki lookups, or an empty string when unknown. */
-  repoSlug: string
 }
 
 /** Records one refused model call and why admission control rejected it. */

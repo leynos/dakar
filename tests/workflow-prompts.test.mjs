@@ -7,9 +7,9 @@ import fc from 'fast-check'
 import {
   agentInstructionsBlock,
   auditPrompt,
-  contextToolsBlock,
   taskPrompt,
 } from '../src/workflows/dakar-review/prompts.ts'
+import { contextToolsBlock } from '../src/workflows/dakar-review/context-tools.ts'
 import { shellWord } from '../src/workflows/dakar-review/shell.ts'
 
 const CONTEXT = {
@@ -112,11 +112,25 @@ test('taskPrompt omits the unscoped diff command for an empty task', () => {
   assert.doesNotMatch(prompt, /diff 'base-sha\.\.head-sha' --/u)
 })
 
+test('taskPrompt accepts translated context guidance without owning MCP details', () => {
+  const guidance = 'Repository context can answer dependency questions.'
+  const prompt = taskPrompt({
+    taskId: 'source-1',
+    kind: 'source',
+    files: ['src/a.ts'],
+    assignedModel: 'gpt-5.6-luna/high',
+    modelLabel: 'pi-luna-flex-high',
+    maxFindings: 6,
+  }, { reviewBase: 'base-sha', headCommit: 'head-sha' }, CONTEXT, guidance)
+
+  assert.ok(prompt.includes(guidance), 'finder prompt must include translated context capability guidance')
+  assert.doesNotMatch(prompt, /mcp (?:codegraph|deepwiki)/u, 'core task prompting must not render provider commands')
+})
+
 test('contextToolsBlock shell-quotes every MCP JSON payload', () => {
   const repoRoot = "/tmp/repo'; echo unwanted"
   const repoSlug = "owner/repo'; echo unwanted"
-  const context = { ...CONTEXT, repoRoot, repoSlug }
-  const prompt = contextToolsBlock(context)
+  const prompt = contextToolsBlock(repoRoot, repoSlug)
   const payload = (value) => shellWord(JSON.stringify(value))
 
   assert.ok(prompt.includes(`codegraph_get_ai_context ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', intent: 'explain' })}`))
@@ -137,7 +151,7 @@ test('contextToolsBlock keeps arbitrary repository values inside one JSON shell 
 
   fc.assert(
     fc.property(arbitraryRepoValue, arbitraryRepoValue, (repoRoot, repoSlug) => {
-      const prompt = contextToolsBlock({ ...CONTEXT, repoRoot, repoSlug })
+      const prompt = contextToolsBlock(repoRoot, repoSlug)
       const expected = [
         ['codegraph_get_ai_context', { uri: `file://${repoRoot}/<path>`, line: '<n>', intent: 'explain' }, ' —'],
         ['codegraph_get_callers', { uri: `file://${repoRoot}/<path>`, line: '<n>' }, ' (and codegraph_get_callees)'],
@@ -171,14 +185,14 @@ test('contextToolsBlock keeps arbitrary repository values inside one JSON shell 
 })
 
 test('contextToolsBlock omits DeepWiki commands without a GitHub slug', () => {
-  const prompt = contextToolsBlock(CONTEXT)
+  const prompt = contextToolsBlock(CONTEXT.repoRoot, '')
 
   assert.match(prompt, /DeepWiki: unavailable for this repository/u)
   assert.doesNotMatch(prompt, /mcp deepwiki/u)
 })
 
 test('contextToolsBlock warns that DeepWiki can be stale and is not head evidence', () => {
-  const prompt = contextToolsBlock({ ...CONTEXT, repoSlug: 'owner/repository' })
+  const prompt = contextToolsBlock(CONTEXT.repoRoot, 'owner/repository')
 
   assert.match(prompt, /not realtime/iu, 'DeepWiki guidance must state that its content is not current')
   assert.match(prompt, /over the past week/iu, 'DeepWiki guidance must disclose its staleness window')

@@ -16,11 +16,20 @@ import assert from 'node:assert/strict'
 
 const repoRoot = resolve(new URL('..', import.meta.url).pathname)
 const cliPath = join(repoRoot, 'bin', 'dakar-review.mjs')
+const CONTEXT_WARMUP_EVENT_PREFIX = 'dakar-review: warmup '
 // The CLI's CodeGraph warmup shells out to the operator's `mcp` CLI and can
 // index real directories; tests must never trigger that. Spawned CLIs inherit
 // this through `{ ...process.env }`.
 process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
 const installPath = join(repoRoot, 'install.sh')
+
+/** Parse bounded structured warmup events from the CLI's stderr channel. */
+function contextWarmupEvents(stderr) {
+  return stderr
+    .split('\n')
+    .filter((line) => line.startsWith(CONTEXT_WARMUP_EVENT_PREFIX))
+    .map((line) => JSON.parse(line.slice(CONTEXT_WARMUP_EVENT_PREFIX.length)))
+}
 
 /** Copies the checkout's installation inputs without its dependencies. */
 function makeCleanInstallFixture(t) {
@@ -1723,6 +1732,18 @@ process.exitCode = supported ? 0 : 1
   assert.equal(markdownCalls.filter((entry) => JSON.parse(entry[2]).path.endsWith('README.md')).length, 1, 'duplicate README candidates must be indexed once')
   assert.equal(markdownCalls.length, 2, 'only the unique existing Markdown candidates must be indexed')
   assert.match(result.stderr, /CodeGraph warmup complete \(2 markdown file\(s\) indexed\)\./u, 'completion output must count successful Markdown calls')
+
+  const events = contextWarmupEvents(result.stderr)
+  const operations = events.filter((event) => event.type === 'operation')
+  assert.equal(operations.find((event) => event.operation === 'mcp_list_probe')?.outcome, 'succeeded', 'the MCP probe outcome must be observable')
+  assert.equal(operations.find((event) => event.operation === 'codegraph_index_directory')?.outcome, 'succeeded', 'the directory index outcome must be observable')
+  assert.equal(operations.filter((event) => event.operation === 'codegraph_index_markdown').length, 2, 'each Markdown call must emit one operation event')
+  assert.ok(operations.every((event) => Number.isFinite(event.durationMs) && event.durationMs >= 0), 'operation durations must be non-negative')
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.markdownAttempts, 2, 'the summary must report Markdown attempts')
+  assert.equal(summary?.markdownSuccesses, 2, 'the summary must report Markdown successes')
+  assert.equal(summary?.deadlineExhausted, false, 'the summary must report that the shared deadline remained')
+  assert.ok(events.every((event) => !('path' in event) && !('payload' in event)), 'telemetry must not expose paths or MCP payloads')
 })
 
 test('live CLI warns and continues when the MCP availability probe fails', (t) => {
@@ -1768,6 +1789,12 @@ process.exitCode = 1
   const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   assert.deepEqual(invocations, [['--list']], 'an unsuccessful availability probe must stop MCP indexing')
   assert.match(result.stderr, /mcp CLI unavailable; skipping CodeGraph warmup\./u, 'the unavailable MCP advisory must be visible on stderr')
+  const events = contextWarmupEvents(result.stderr)
+  const probe = events.find((event) => event.type === 'operation' && event.operation === 'mcp_list_probe')
+  assert.equal(probe?.outcome, 'failed', 'an unsuccessful MCP probe must be visible in telemetry')
+  assert.equal(probe?.failureCategory, 'nonzero_exit', 'the probe failure must use a bounded category')
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.skipReason, 'mcp_unavailable', 'the warmup summary must explain why indexing was skipped')
 })
 
 test('advisory warmup bounds failed Markdown attempts and still launches the review', () => {
@@ -1827,6 +1854,14 @@ process.exitCode = process.argv[2] === '--list' ? 0 : 1
   assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_markdown').length, 20, 'failed Markdown calls must still count against the attempt cap')
   assert.match(result.stderr, /CodeGraph warmup call codegraph_index_directory failed; continuing without it\./u)
   assert.match(result.stderr, /CodeGraph warmup complete \(0 markdown file\(s\) indexed\)\./u)
+  const events = contextWarmupEvents(result.stderr)
+  const markdownEvents = events.filter((event) => event.type === 'operation' && event.operation === 'codegraph_index_markdown')
+  assert.equal(markdownEvents.length, 20, 'failed Markdown invocations must each have an operation event')
+  assert.ok(markdownEvents.every((event) => event.outcome === 'failed' && event.failureCategory === 'nonzero_exit'), 'failure events must expose only the bounded failure category')
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.markdownAttempts, 20, 'the summary must count failed attempts against the cap')
+  assert.equal(summary?.markdownSuccesses, 0, 'the summary must count only successful Markdown calls')
+  assert.equal(summary?.deadlineExhausted, false, 'the attempt cap must not be reported as deadline exhaustion')
 })
 
 test('live reviews skip CodeGraph warmup unless the reviewed head is cleanly checked out', () => {
