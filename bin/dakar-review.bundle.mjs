@@ -12,6 +12,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -510,9 +511,36 @@ function addRepoSlug(workflowArgs, repoRoot) {
   }
 }
 function isMcpCliAvailable(timeout) {
-  if (timeout === null) return false;
+  const startedAt = performance.now();
+  if (timeout === null) {
+    reportContextWarmupOperation("mcp_list_probe", "deadline_exhausted", startedAt, "deadline");
+    return { available: false, outcome: "deadline_exhausted", deadlineExhausted: true };
+  }
   const probe = spawnSync("mcp", ["--list"], { encoding: "utf8", timeout });
-  return !probe.error && probe.status === 0;
+  if (!probe.error && probe.status === 0) {
+    reportContextWarmupOperation("mcp_list_probe", "succeeded", startedAt);
+    return { available: true, outcome: "succeeded", deadlineExhausted: false };
+  }
+  const deadlineExhausted = probe.error?.code === "ETIMEDOUT";
+  const outcome = deadlineExhausted ? "timed_out" : "failed";
+  reportContextWarmupOperation("mcp_list_probe", outcome, startedAt, warmupFailureCategory(probe.error));
+  return { available: false, outcome, deadlineExhausted };
+}
+function warmupFailureCategory(error) {
+  if (!error) return "nonzero_exit";
+  return error.code === "ETIMEDOUT" ? "timeout" : "spawn_error";
+}
+function reportContextWarmupOperation(operation, outcome, startedAt, failureCategory) {
+  const event = {
+    event: "context_warmup",
+    type: "operation",
+    operation,
+    outcome,
+    durationMs: Math.max(0, Math.round(performance.now() - startedAt))
+  };
+  if (failureCategory) event.failureCategory = failureCategory;
+  process.stderr.write(`dakar-review: warmup ${JSON.stringify(event)}
+`);
 }
 function warmupTimeout(deadline, requestedTimeout) {
   const remaining = deadline - Date.now();
@@ -520,7 +548,11 @@ function warmupTimeout(deadline, requestedTimeout) {
 }
 function warmContextTool(tool, payload, timeout, deadline) {
   const boundedTimeout = warmupTimeout(deadline, timeout);
-  if (boundedTimeout === null) return false;
+  const startedAt = performance.now();
+  if (boundedTimeout === null) {
+    reportContextWarmupOperation(tool, "deadline_exhausted", startedAt, "deadline");
+    return { succeeded: false, outcome: "deadline_exhausted", deadlineExhausted: true };
+  }
   const result = spawnSync("mcp", ["codegraph", tool, JSON.stringify(payload)], {
     encoding: "utf8",
     timeout: boundedTimeout
@@ -528,40 +560,113 @@ function warmContextTool(tool, payload, timeout, deadline) {
   if (result.error || result.status !== 0) {
     process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.
 `);
-    return false;
+    const deadlineExhausted = result.error?.code === "ETIMEDOUT";
+    const outcome = deadlineExhausted ? "timed_out" : "failed";
+    reportContextWarmupOperation(tool, outcome, startedAt, warmupFailureCategory(result.error));
+    return { succeeded: false, outcome, deadlineExhausted };
   }
-  return true;
+  reportContextWarmupOperation(tool, "succeeded", startedAt);
+  return { succeeded: true, outcome: "succeeded", deadlineExhausted: false };
 }
 function warmMarkdownContext(repoRoot, changedFiles, deadline) {
   const candidates = ["AGENTS.md", "README.md"].concat((changedFiles || []).filter((path) => path.endsWith(".md")));
   const seen = /* @__PURE__ */ new Set();
   let attempts = 0;
-  let indexed = 0;
+  let successes = 0;
+  let deadlineExhausted = false;
   for (const relPath of candidates) {
-    if (attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS || warmupTimeout(deadline, 1) === null) break;
+    if (attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS) break;
+    if (warmupTimeout(deadline, 1) === null) {
+      deadlineExhausted = true;
+      break;
+    }
     const absolute = join(repoRoot, relPath);
     if (seen.has(absolute) || !existsSync(absolute)) continue;
     seen.add(absolute);
     attempts += 1;
-    if (warmContextTool("codegraph_index_markdown", { path: absolute }, 12e4, deadline)) indexed += 1;
+    const result = warmContextTool("codegraph_index_markdown", { path: absolute }, 12e4, deadline);
+    if (result.succeeded) successes += 1;
+    if (result.deadlineExhausted) {
+      deadlineExhausted = true;
+      break;
+    }
   }
-  return indexed;
+  return { attempts, successes, deadlineExhausted };
+}
+function reportContextWarmupSummary(summary) {
+  const event = {
+    event: "context_warmup",
+    type: "summary",
+    outcome: summary.outcome,
+    durationMs: Math.max(0, Math.round(performance.now() - summary.startedAt)),
+    probeOutcome: summary.probeOutcome,
+    directoryOutcome: summary.directoryOutcome,
+    markdownAttempts: summary.markdownAttempts,
+    markdownSuccesses: summary.markdownSuccesses,
+    deadlineExhausted: summary.deadlineExhausted
+  };
+  if (summary.skipReason) event.skipReason = summary.skipReason;
+  process.stderr.write(`dakar-review: warmup ${JSON.stringify(event)}
+`);
+}
+function recordSkippedContextWarmup(skipReason) {
+  reportContextWarmupSummary({
+    outcome: "skipped",
+    startedAt: performance.now(),
+    probeOutcome: "not_attempted",
+    directoryOutcome: "not_attempted",
+    markdownAttempts: 0,
+    markdownSuccesses: 0,
+    deadlineExhausted: false,
+    skipReason
+  });
 }
 function warmContextIndex(repoRoot, changedFiles) {
+  const startedAt = performance.now();
   if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
     process.stderr.write("dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n");
+    reportContextWarmupSummary({
+      outcome: "skipped",
+      startedAt,
+      probeOutcome: "not_attempted",
+      directoryOutcome: "not_attempted",
+      markdownAttempts: 0,
+      markdownSuccesses: 0,
+      deadlineExhausted: false,
+      skipReason: "environment"
+    });
     return;
   }
   const deadline = Date.now() + CONTEXT_WARMUP_TIMEOUT_MILLISECONDS;
-  if (!isMcpCliAvailable(warmupTimeout(deadline, CONTEXT_WARMUP_TIMEOUT_MILLISECONDS))) {
+  const probe = isMcpCliAvailable(warmupTimeout(deadline, CONTEXT_WARMUP_TIMEOUT_MILLISECONDS));
+  if (!probe.available) {
     process.stderr.write("dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n");
+    reportContextWarmupSummary({
+      outcome: "skipped",
+      startedAt,
+      probeOutcome: probe.outcome,
+      directoryOutcome: "not_attempted",
+      markdownAttempts: 0,
+      markdownSuccesses: 0,
+      deadlineExhausted: probe.deadlineExhausted,
+      skipReason: probe.deadlineExhausted ? "deadline_exhausted" : "mcp_unavailable"
+    });
     return;
   }
   process.stderr.write("dakar-review: warming CodeGraph index for the reviewed checkout.\n");
-  warmContextTool("codegraph_index_directory", { path: repoRoot }, 6e5, deadline);
-  const indexed = warmMarkdownContext(repoRoot, changedFiles, deadline);
-  process.stderr.write(`dakar-review: CodeGraph warmup complete (${indexed} markdown file(s) indexed).
+  const directory = warmContextTool("codegraph_index_directory", { path: repoRoot }, 6e5, deadline);
+  const markdown = warmMarkdownContext(repoRoot, changedFiles, deadline);
+  process.stderr.write(`dakar-review: CodeGraph warmup complete (${markdown.successes} markdown file(s) indexed).
 `);
+  reportContextWarmupSummary({
+    outcome: "completed",
+    startedAt,
+    probeOutcome: probe.outcome,
+    directoryOutcome: directory.outcome,
+    markdownAttempts: markdown.attempts,
+    markdownSuccesses: markdown.successes,
+    deadlineExhausted: directory.deadlineExhausted || markdown.deadlineExhausted
+  });
 }
 function isCheckedOutReviewHead(repoRoot, headCommit) {
   const head = spawnSync("git", ["-C", repoRoot, "rev-parse", "HEAD"], { encoding: "utf8" });
@@ -1007,8 +1112,10 @@ function prepareLiveReview(options, repoRoot, workflowArgs, format) {
     } else if (checkout.kind === "error") {
       process.stderr.write(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.
 `);
+      recordSkippedContextWarmup("checkout_verification_failed");
     } else {
       process.stderr.write("dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n");
+      recordSkippedContextWarmup(checkout.kind === "dirty" ? "dirty_checkout" : "different_head");
     }
   }
   const worstCase = worstCaseReviewSeconds(
