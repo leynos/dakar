@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "dakar-review": "./bin/dakar-review.mjs"
+    "dakar-review": "./bin/dakar-review.bundle.mjs"
   },
   "dependencies": {
     "js-yaml": "4.3.1"
@@ -18,6 +18,8 @@
     "test": "node --test",
     "test:state": "node --test tests/review-state.test.mjs",
     "test:cli": "node --test tests/cli.test.mjs",
+    "cli:build": "node scripts/build-cli.mjs",
+    "cli:freshness": "node scripts/build-cli.mjs --check",
     "workflow:build": "node scripts/build-workflow.mjs",
     "workflow:freshness": "node scripts/build-workflow.mjs --check",
     "odw:dry-run": "sh -eu -c 'runs_root=$(mktemp -d); trap '\\''rm -rf \"$runs_root\"'\\'' EXIT; odw run workflows/dakar-review.js --runs-root \"$runs_root\" --source . --wait --timeout 20 --args '\\''{\"dryRun\":true}'\\'''"

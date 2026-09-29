@@ -86,7 +86,7 @@ Full commit identifiers:
 
 ## 3. Recorded evaluation runs
 
-All runs were executed on 2026-08-13 through
+The initial clean-corpus runs were executed on 2026-08-13 through
 [`scripts/live-review-harness.mjs`](../scripts/live-review-harness.mjs) with
 `pi` 0.84.1, ODW 0.4.0, pricing table 2026-07-18, and the user-level
 `~/.config/dakar/config.yaml` policy. The first four fixtures ran with
@@ -167,11 +167,11 @@ Accepted findings, in brief:
 ### 3.2 Re-evaluation with context tools, high reasoning, and the repricing
 
 The finding corpus was re-run on 2026-08-13 after three workflow changes landed
-together: the 2026-08-13 pricing table (Luna Flex at a fifth of the prior
-rates, Terra Flex at four fifths), high-reasoning defaults for both lanes, and
-finder access to the CodeGraph and DeepWiki context tools through the `mcp` CLI
-with a host-side CodeGraph warmup. All four fixtures ran at pure defaults from
-fresh state roots.
+together: the later 2026-08-13 pricing table (Luna Flex at one fifth of its
+2026-07-18 rates and Terra Flex at four fifths), high-reasoning defaults for
+both lanes, and finder access to the CodeGraph and DeepWiki context tools
+through the `mcp` CLI with a host-side CodeGraph warmup. All four fixtures ran
+at pure defaults from fresh state roots.
 
 | Fixture                | v1 accepted     | v2 accepted | v2 reported USD |
 | ---------------------- | --------------- | ----------- | --------------- |
@@ -192,10 +192,10 @@ Observations:
   yields a high-severity parser validation gap plus two further parser defects
   on a pull request CodeRabbit never reviewed. `cuprum#271` overlaps
   CodeRabbit's `events.py` anchors with a medium compatibility finding.
-- Cost per finding fell sharply: the two smaller fixtures cost less at high
-  reasoning under the new rates than at low reasoning under the old rates. The
-  two larger fixtures reported around USD 0.18 each, dominated by
-  high-reasoning output tokens across four packs plus the audit.
+- `netsuke#545` reported USD 0.0363 on the high-reasoning default run, compared
+  with USD 0.0483 on its medium-reasoning rerun. The two larger fixtures
+  reported around USD 0.18 each, dominated by high-reasoning output tokens
+  across four packs plus the audit.
 - The audit discarded nothing across the four runs; at high reasoning, both
   the finders and the audit converged on the same accepted sets.
 

@@ -354,16 +354,19 @@ function readAgentInstructions(repoRoot, baseRef) {
  * a GitHub origin simply reviews without DeepWiki guidance.
  *
  * @param {string} repoRoot - absolute path to the repository root.
- * @returns {string} the slug, or an empty string when none can be derived.
+ * @returns {{ kind: 'slug', value: string } | { kind: 'unavailable' } | { kind: 'error', operation: string }}
+ *   The resolved slug, ordinary absence, or a Git lookup failure.
  */
 function deriveRepoSlug(repoRoot) {
-  const result = spawnSync('git', ['-C', repoRoot, 'remote', 'get-url', 'origin'], {
+  const result = spawnSync('git', ['-C', repoRoot, 'config', '--get', 'remote.origin.url'], {
     encoding: 'utf8',
     timeout: 10_000,
   })
-  if (result.status !== 0) return ''
+  if (result.error) return { kind: 'error', operation: 'reading the origin URL' }
+  if (result.status === 1) return { kind: 'unavailable' }
+  if (result.status !== 0) return { kind: 'error', operation: 'reading the origin URL' }
   const match = /github\.com[/:]([^/]+)\/([^/\s]+?)(?:\.git)?$/u.exec((result.stdout || '').trim())
-  return match ? `${match[1]}/${match[2]}` : ''
+  return match ? { kind: 'slug', value: `${match[1]}/${match[2]}` } : { kind: 'unavailable' }
 }
 
 /**
@@ -374,8 +377,12 @@ function deriveRepoSlug(repoRoot) {
  * @returns {void}
  */
 function addRepoSlug(workflowArgs, repoRoot) {
-  const repoSlug = deriveRepoSlug(repoRoot)
-  if (repoSlug) workflowArgs.repoSlug = repoSlug
+  const result = deriveRepoSlug(repoRoot)
+  if (result.kind === 'slug') {
+    workflowArgs.repoSlug = result.value
+  } else if (result.kind === 'error') {
+    process.stderr.write(`dakar-review: Git failed while ${result.operation}; DeepWiki context is unavailable.\n`)
+  }
 }
 
 /**
@@ -481,12 +488,16 @@ function warmContextIndex(repoRoot, changedFiles) {
  *
  * @param {string} repoRoot - Absolute path to the reviewed repository root.
  * @param {string} headCommit - Immutable commit selected for review.
- * @returns {boolean} Whether HEAD matches and the worktree has no changes.
+ * @returns {{ kind: 'clean' | 'different-head' | 'dirty' } | { kind: 'error', operation: string }}
+ *   Whether the checkout matches, is dirty, or could not be inspected.
  */
 function isCheckedOutReviewHead(repoRoot, headCommit) {
   const head = spawnSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+  if (head.error || head.status !== 0) return { kind: 'error', operation: 'reading HEAD' }
+  if (head.stdout.trim() !== headCommit) return { kind: 'different-head' }
   const status = spawnSync('git', ['-C', repoRoot, 'status', '--porcelain', '--untracked-files=all'], { encoding: 'utf8' })
-  return !head.error && head.status === 0 && head.stdout.trim() === headCommit && !status.error && status.status === 0 && status.stdout === ''
+  if (status.error || status.status !== 0) return { kind: 'error', operation: 'checking worktree status' }
+  return status.stdout === '' ? { kind: 'clean' } : { kind: 'dirty' }
 }
 function buildWorkflowArgs(options, repoRoot) {
   const resolvedConfig = resolveReviewConfig({ repoRoot, config: options.config, packageRoot })
@@ -1119,10 +1130,17 @@ function prepareLiveReview(options, repoRoot, workflowArgs, format) {
   // Only a clean checkout at the immutable review head can safely populate a
   // CodeGraph index. The user may select a different --head or have unrelated
   // local edits; indexing either would corrupt finder context for this review.
-  if (process.env.DAKAR_SKIP_CONTEXT_WARMUP || isCheckedOutReviewHead(repoRoot, workflowArgs.prepared.headCommit)) {
+  if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
     warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || [])
   } else {
-    process.stderr.write('dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n')
+    const checkout = isCheckedOutReviewHead(repoRoot, workflowArgs.prepared.headCommit)
+    if (checkout.kind === 'clean') {
+      warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || [])
+    } else if (checkout.kind === 'error') {
+      process.stderr.write(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.\n`)
+    } else {
+      process.stderr.write('dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n')
+    }
   }
   // Advisory guard: an outer wait shorter than the retry schedule's worst
   // case can kill a healthy run before the workflow's own deferral logic

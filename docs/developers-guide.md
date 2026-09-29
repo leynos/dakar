@@ -147,12 +147,12 @@ the Luna role before dispatch, `buildFlexFinderPlan()` applies it to every
 finder pack, and the Terra audit uses the host-selected `terra` role. The
 current registry is:
 
-| Role | Model | Adapter | Reasoning | Use |
-| ---- | ----- | ------- | --------- | --- |
-| `luna` | `gpt-5.6-luna` | `pi-luna-flex-high` | high | Default finder lane |
-| `luna-medium` | `gpt-5.6-luna` | `pi-luna-flex-medium` | medium | Finder de-escalation |
-| `luna-low` | `gpt-5.6-luna` | `pi-luna-flex` | low | Finder de-escalation |
-| `terra` | `gpt-5.6-terra` | `pi-terra-flex-high` | high | Issue-set audit |
+| Role          | Model           | Adapter               | Reasoning | Use                  |
+| ------------- | --------------- | --------------------- | --------- | -------------------- |
+| `luna`        | `gpt-5.6-luna`  | `pi-luna-flex-high`   | high      | Default finder lane  |
+| `luna-medium` | `gpt-5.6-luna`  | `pi-luna-flex-medium` | medium    | Finder de-escalation |
+| `luna-low`    | `gpt-5.6-luna`  | `pi-luna-flex`        | low       | Finder de-escalation |
+| `terra`       | `gpt-5.6-terra` | `pi-terra-flex-high`  | high      | Issue-set audit      |
 
 The host owns this selection; prompts cannot promote an agent to another model
 or service tier. `modelForRole()` and `adapterForReasoning()` remain available
@@ -238,10 +238,10 @@ The packaged `odw.config.json` is an immutable installation input, not the
 configuration passed directly to a CLI-started run. Before spawning ODW, the
 CLI calls `deriveOdwConfig()` from `scripts/odw-config.mjs`, clamps
 `--per-call-timeout` to the workflow's supported bounds, stamps that timeout
-onto every pi Flex adapter, and writes a temporary per-run config. The
-workflow receives the same clamped value in its arguments so adapter-level
-termination and retry budgeting cannot disagree. Direct ODW users remain
-responsible for supplying equivalent adapter timeouts in their own config.
+onto every pi Flex adapter, and writes a temporary per-run config. The workflow
+receives the same clamped value in its arguments so adapter-level termination
+and retry budgeting cannot disagree. Direct ODW users remain responsible for
+supplying equivalent adapter timeouts in their own config.
 
 When the reviewed repository has a root `AGENTS.md`, the CLI should pass its
 content as `agentInstructions`. Keep this as context for review agents, not as
@@ -249,18 +249,18 @@ an override for Dakar's schema, output, or safety rules.
 
 ### MCP context and repository identity
 
-For a live review, `prepareLiveReview()` calls the CLI's
-`warmContextIndex()` after trusted range preparation and deterministic gates,
-but before `launchOdw()` can dispatch a finder. The warmup probes the `mcp`
-CLI, indexes the reviewed checkout with CodeGraph, and then indexes at most 20
-existing Markdown context files: the root `AGENTS.md`, `README.md`, and
-changed Markdown files. It runs only when the immutable reviewed head is
-currently checked out cleanly; otherwise it skips with a warning on stderr.
-All warmup calls share a 30-second deadline. It is advisory:
-`DAKAR_SKIP_CONTEXT_WARMUP` skips it, an unavailable CLI or failed indexing
-call writes a warning to stderr, and the review continues with the prompt's
-git/direct-inspection fallback. The ODW workflow does not own this warmup, so
-direct ODW invocations do not receive this host-side preflight automatically.
+For a live review, `prepareLiveReview()` calls the CLI's `warmContextIndex()`
+after trusted range preparation and deterministic gates, but before
+`launchOdw()` can dispatch a finder. The warmup probes the `mcp` CLI, indexes
+the reviewed checkout with CodeGraph, and then indexes at most 20 existing
+Markdown context files: the root `AGENTS.md`, `README.md`, and changed Markdown
+files. It runs only when the immutable reviewed head is currently checked out
+cleanly; otherwise it skips with a warning on stderr. All warmup calls share a
+30-second deadline. It is advisory: `DAKAR_SKIP_CONTEXT_WARMUP` skips it, an
+unavailable CLI or failed indexing call writes a warning to stderr, and the
+review continues with the prompt's git/direct-inspection fallback. The ODW
+workflow does not own this warmup, so direct ODW invocations do not receive
+this host-side preflight automatically.
 
 `buildWorkflowArgs()` also calls `deriveRepoSlug()` against the reviewed
 checkout's `origin` remote. Only a GitHub `owner/name` URL is accepted; when no
@@ -364,12 +364,11 @@ files, and caps the total at `maxLunaFlexCalls` packs. Every admitted pack is
 dispatched to the same host-selected Luna Flex lane (`gpt-5.6-luna`, high
 reasoning by default; `luna-medium` and `luna-low` are pre-registered
 de-escalation roles); there is no per-kind model assignment on this route.
-Files beyond the pack cap are
-recorded as `truncatedFiles` rather than silently dropped. Deterministic host
-code (`candidates.ts::compactForAudit()`) then deduplicates, severity-orders,
-and caps the resulting candidates at `maxAuditCandidates` before the single
-Terra Flex audit call (`gpt-5.6-terra`, high reasoning) returns one verdict
-per candidate.
+Files beyond the pack cap are recorded as `truncatedFiles` rather than silently
+dropped. Deterministic host code (`candidates.ts::compactForAudit()`) then
+deduplicates, severity-orders, and caps the resulting candidates at
+`maxAuditCandidates` before the single Terra Flex audit call (`gpt-5.6-terra`,
+high reasoning) returns one verdict per candidate.
 
 After reconciliation, `assembleSarif()` copies immutable Luna evidence and
 attaches Terra decisions by stable candidate identifier. It also records gate
@@ -400,11 +399,11 @@ to a costlier model or service tier, so lane choice never appears in a prompt.
   `pi -p --no-session --provider openai-flex` with the lane's `--model` and
   `--thinking` pinned and `{prompt}` on stdin. The packaged `pi-terra-flex`
   adapter remains for legacy/reference compatibility; the live route selects
-  `pi-terra-flex-high`.
-  The committed configuration deliberately omits a `-e` flag for the extension:
-  a relative `-e` path resolves against the invoking process's working
-  directory rather than the package root, so it would break under any other
-  cwd; auto-load from `PI_CODING_AGENT_DIR` is the portable path.
+  `pi-terra-flex-high`. The committed configuration deliberately omits a `-e`
+  flag for the extension: a relative `-e` path resolves against the invoking
+  process's working directory rather than the package root, so it would break
+  under any other cwd; auto-load from `PI_CODING_AGENT_DIR` is the portable
+  path.
 - The CLI sets `PI_CODING_AGENT_DIR` to `adapters/pi/` (and
   `PI_SKIP_VERSION_CHECK=1`) so pi resolves its provider catalogue and
   extensions from Dakar's own config directory rather than any ambient pi

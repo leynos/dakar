@@ -4,7 +4,7 @@
 MD_FILES := $(shell git ls-files '*.md')
 # Explicit bin/ and scripts/ entries, then every tracked test module via a glob
 # so a newly added test cannot silently escape the node --check pre-flight.
-NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/live-review-harness.mjs scripts/odw-config.mjs scripts/review-config.mjs scripts/review-state.mjs $(shell git ls-files 'tests/*.test.mjs' 'tests/helpers/*.mjs')
+NODE_MODULES := bin/dakar-review.mjs bin/dakar-review.bundle.mjs scripts/build-cli.mjs scripts/build-workflow.mjs scripts/live-review-harness.mjs scripts/odw-config.mjs scripts/review-config.mjs scripts/review-state.mjs $(shell git ls-files 'tests/*.test.mjs' 'tests/helpers/*.mjs')
 UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
 UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
 TYPOS_CONFIG_BUILDER_VERSION ?= v0.1.1
@@ -60,8 +60,10 @@ test:
 
 workflow-build:
 	@npm run workflow:build
+	@npm run cli:build
 
 workflow-freshness:
 	@npm run workflow:freshness
 
 workflow-check: workflow-freshness
+	@npm run cli:freshness
