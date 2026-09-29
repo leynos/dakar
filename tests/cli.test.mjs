@@ -416,11 +416,52 @@ test('CLI forwards a GitHub origin slug and omits a missing origin slug', () => 
   ]
 
   const withoutOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
-  assert.equal(Object.hasOwn(withoutOrigin.receivedArgs, 'repoSlug'), false)
+  assert.equal(Object.hasOwn(withoutOrigin.receivedArgs, 'repoSlug'), false, 'repoSlug must be omitted when origin is absent')
 
   execFileSync('git', ['-C', targetRepo, 'remote', 'add', 'origin', 'git@github.com:owner/repository.git'])
   const withOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
-  assert.equal(withOrigin.receivedArgs.repoSlug, 'owner/repository')
+  assert.equal(withOrigin.receivedArgs.repoSlug, 'owner/repository', 'a GitHub origin must forward its owner/name slug')
+})
+
+test('CLI warns when Git cannot resolve an existing origin URL', () => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+  const wrapperDir = mkdtempSync(join(tmpdir(), 'dakar-git-wrapper-'))
+  const fakeGit = join(wrapperDir, 'git')
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+  execFileSync('git', ['-C', targetRepo, 'remote', 'add', 'origin', 'git@github.com:owner/repository.git'])
+  writeFileSync(
+    fakeGit,
+    `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
+const args = process.argv.slice(2)
+  if (args[0] === '-C' && args[1] === ${JSON.stringify(targetRepo)} && args[2] === 'config' && args[3] === '--get' && args[4] === 'remote.origin.url') {
+  process.stderr.write('simulated origin URL lookup failure\\n')
+  process.exitCode = 128
+} else {
+  const result = spawnSync(${JSON.stringify(realGit)}, args, { encoding: 'utf8' })
+  process.stdout.write(result.stdout || '')
+  process.stderr.write(result.stderr || '')
+  process.exitCode = result.status ?? 1
+}
+`,
+  )
+  chmodSync(fakeGit, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig, PATH: `${wrapperDir}:${process.env.PATH}` },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  const output = JSON.parse(result.stdout)
+  assert.equal(Object.hasOwn(output.receivedArgs, 'repoSlug'), false, 'a failed origin lookup must not invent a DeepWiki slug')
+  assert.match(result.stderr, /Git failed while reading the origin URL; DeepWiki context is unavailable/u)
 })
 
 test('CLI passes normalized policy rather than YAML-only prompt context', () => {
@@ -1676,12 +1717,57 @@ process.exitCode = supported ? 0 : 1
 
   assert.equal(result.status, 0, result.stderr)
   const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
-  assert.deepEqual(invocations[0], ['--list'])
-  assert.equal(invocations.some((entry) => entry[1] === 'codegraph_index_directory'), true)
+  assert.deepEqual(invocations[0], ['--list'], 'the MCP availability probe must run before indexing')
+  assert.equal(invocations.some((entry) => entry[1] === 'codegraph_index_directory'), true, 'the reviewed directory must be indexed')
   const markdownCalls = invocations.filter((entry) => entry[1] === 'codegraph_index_markdown')
-  assert.equal(markdownCalls.filter((entry) => JSON.parse(entry[2]).path.endsWith('README.md')).length, 1)
-  assert.equal(markdownCalls.length, 2)
-  assert.match(result.stderr, /CodeGraph warmup complete \(2 markdown file\(s\) indexed\)\./u)
+  assert.equal(markdownCalls.filter((entry) => JSON.parse(entry[2]).path.endsWith('README.md')).length, 1, 'duplicate README candidates must be indexed once')
+  assert.equal(markdownCalls.length, 2, 'only the unique existing Markdown candidates must be indexed')
+  assert.match(result.stderr, /CodeGraph warmup complete \(2 markdown file\(s\) indexed\)\./u, 'completion output must count successful Markdown calls')
+})
+
+test('live CLI warns and continues when the MCP availability probe fails', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const mcpLog = join(tempRoot, 'mcp.jsonl')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  mkdirSync(mcpDir, { recursive: true })
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.DAKAR_MCP_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+process.exitCode = 1
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'), '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        DAKAR_SKIP_CONTEXT_WARMUP: '',
+        DAKAR_MCP_LOG: mcpLog,
+        PATH: `${mcpDir}:${process.env.PATH}`,
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true, 'an unavailable MCP CLI must not block ODW review launch')
+  const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(invocations, [['--list']], 'an unsuccessful availability probe must stop MCP indexing')
+  assert.match(result.stderr, /mcp CLI unavailable; skipping CodeGraph warmup\./u, 'the unavailable MCP advisory must be visible on stderr')
 })
 
 test('advisory warmup bounds failed Markdown attempts and still launches the review', () => {
@@ -1736,9 +1822,9 @@ process.exitCode = process.argv[2] === '--list' ? 0 : 1
   assert.equal(result.status, 0, result.stderr)
   assert.equal(JSON.parse(result.stdout).ok, true)
   const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
-  assert.deepEqual(invocations[0], ['--list'])
-  assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_directory').length, 1)
-  assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_markdown').length, 20)
+  assert.deepEqual(invocations[0], ['--list'], 'the MCP availability probe must run before warmup calls')
+  assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_directory').length, 1, 'the directory index must be attempted once')
+  assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_markdown').length, 20, 'failed Markdown calls must still count against the attempt cap')
   assert.match(result.stderr, /CodeGraph warmup call codegraph_index_directory failed; continuing without it\./u)
   assert.match(result.stderr, /CodeGraph warmup complete \(0 markdown file\(s\) indexed\)\./u)
 })
@@ -1748,6 +1834,7 @@ test('live reviews skip CodeGraph warmup unless the reviewed head is cleanly che
   const targetRepo = join(tempRoot, 'repo')
   const mcpDir = join(tempRoot, 'mcp-bin')
   const fakeOdw = join(tempRoot, 'odw.mjs')
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
   mkdirSync(targetRepo, { recursive: true })
   mkdirSync(mcpDir, { recursive: true })
   execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
@@ -1778,7 +1865,7 @@ appendFileSync(process.env.DAKAR_MCP_LOG, 'called\\n')
   )
   chmodSync(fakeOdw, 0o755)
 
-  const run = (suffix) => {
+  const run = (suffix, checkoutDescription, expectedDiagnostic = /reviewed head is not checked out cleanly; skipping CodeGraph warmup\./u) => {
     const mcpLog = join(tempRoot, `${suffix}.mcp.log`)
     const result = spawnSync(
       process.execPath,
@@ -1792,14 +1879,37 @@ appendFileSync(process.env.DAKAR_MCP_LOG, 'called\\n')
     )
     assert.equal(result.status, 0, result.stderr)
     assert.equal(JSON.parse(result.stdout).ok, true)
-    assert.equal(existsSync(mcpLog), false, 'the MCP CLI must not run for a different checked-out head')
-    assert.match(result.stderr, /reviewed head is not checked out cleanly; skipping CodeGraph warmup\./u)
+    assert.equal(existsSync(mcpLog), false, `the MCP CLI must not run for ${checkoutDescription}`)
+    assert.match(result.stderr, expectedDiagnostic, `warmup skip output must explain ${checkoutDescription}`)
   }
 
-  run('different-head')
+  run('different-head', 'a different checked-out head')
   execFileSync('git', ['-C', targetRepo, 'checkout', '--detach', reviewedHead])
   writeFileSync(join(targetRepo, 'dirty.txt'), 'dirty\n')
-  run('dirty-checkout')
+  run('dirty-checkout', 'a dirty worktree at the reviewed head')
+  rmSync(join(targetRepo, 'dirty.txt'))
+  writeFileSync(
+    join(mcpDir, 'git'),
+    `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
+const args = process.argv.slice(2)
+if (args[0] === '-C' && args[1] === ${JSON.stringify(targetRepo)} && args[2] === 'status' && args[3] === '--porcelain' && args[4] === '--untracked-files=all') {
+  process.stderr.write('simulated worktree status failure\\n')
+  process.exitCode = 128
+} else {
+  const result = spawnSync(${JSON.stringify(realGit)}, args, { encoding: 'utf8' })
+  process.stdout.write(result.stdout || '')
+  process.stderr.write(result.stderr || '')
+  process.exitCode = result.status ?? 1
+}
+`,
+  )
+  chmodSync(join(mcpDir, 'git'), 0o755)
+  run(
+    'git-status-failure',
+    'a Git worktree-status failure',
+    /could not verify the reviewed checkout while checking worktree status; skipping CodeGraph warmup\./u,
+  )
 })
 
 test('a hung log follow still fetches and records the completed result', () => {
