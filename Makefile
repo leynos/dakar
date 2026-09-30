@@ -7,7 +7,7 @@ MD_FILES := $(shell git ls-files '*.md')
 NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/live-review-harness.mjs scripts/odw-config.mjs scripts/review-config.mjs scripts/review-state.mjs $(shell git ls-files 'tests/*.test.mjs' 'tests/helpers/*.mjs')
 UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
 UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
-TYPOS_CONFIG_BUILDER_VERSION ?= v0.1.1
+TYPOS_CONFIG_BUILDER_VERSION ?= v0.1.3
 TYPOS_CONFIG_BUILDER = $(UV_ENV) $(UV) tool run --python 3.14 --from \
 	"git+https://github.com/leynos/typos-config-builder.git@$(TYPOS_CONFIG_BUILDER_VERSION)" \
 	typos-config-builder
