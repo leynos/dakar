@@ -676,6 +676,26 @@ function isCheckedOutReviewHead(repoRoot, headCommit) {
   if (status.error || status.status !== 0) return { kind: "error", operation: "checking worktree status" };
   return status.stdout === "" ? { kind: "clean" } : { kind: "dirty" };
 }
+function warmReviewedContextIndex(repoRoot, prepared) {
+  const changedFiles = prepared.changedFiles || [];
+  if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
+    warmContextIndex(repoRoot, changedFiles);
+    return;
+  }
+  const checkout = isCheckedOutReviewHead(repoRoot, prepared.headCommit);
+  if (checkout.kind === "clean") {
+    warmContextIndex(repoRoot, changedFiles);
+    return;
+  }
+  if (checkout.kind === "error") {
+    process.stderr.write(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.
+`);
+    recordSkippedContextWarmup("checkout_verification_failed");
+    return;
+  }
+  process.stderr.write("dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n");
+  recordSkippedContextWarmup(checkout.kind === "dirty" ? "dirty_checkout" : "different_head");
+}
 function buildWorkflowArgs(options, repoRoot) {
   const resolvedConfig = resolveReviewConfig({ repoRoot, config: options.config, packageRoot });
   if (resolvedConfig.ok === false) {
@@ -1103,21 +1123,7 @@ function prepareLiveReview(options, repoRoot, workflowArgs, format) {
   if (!process.env.OPENAI_API_KEY) {
     process.stderr.write("dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n");
   }
-  if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
-    warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || []);
-  } else {
-    const checkout = isCheckedOutReviewHead(repoRoot, workflowArgs.prepared.headCommit);
-    if (checkout.kind === "clean") {
-      warmContextIndex(repoRoot, workflowArgs.prepared.changedFiles || []);
-    } else if (checkout.kind === "error") {
-      process.stderr.write(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.
-`);
-      recordSkippedContextWarmup("checkout_verification_failed");
-    } else {
-      process.stderr.write("dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n");
-      recordSkippedContextWarmup(checkout.kind === "dirty" ? "dirty_checkout" : "different_head");
-    }
-  }
+  warmReviewedContextIndex(repoRoot, workflowArgs.prepared);
   const worstCase = worstCaseReviewSeconds(
     {
       flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),

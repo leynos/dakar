@@ -1900,7 +1900,7 @@ appendFileSync(process.env.DAKAR_MCP_LOG, 'called\\n')
   )
   chmodSync(fakeOdw, 0o755)
 
-  const run = (suffix, checkoutDescription, expectedDiagnostic = /reviewed head is not checked out cleanly; skipping CodeGraph warmup\./u) => {
+  const run = (suffix, checkoutDescription, expectedSkipReason, expectedDiagnostic = /reviewed head is not checked out cleanly; skipping CodeGraph warmup\./u) => {
     const mcpLog = join(tempRoot, `${suffix}.mcp.log`)
     const result = spawnSync(
       process.execPath,
@@ -1916,12 +1916,25 @@ appendFileSync(process.env.DAKAR_MCP_LOG, 'called\\n')
     assert.equal(JSON.parse(result.stdout).ok, true)
     assert.equal(existsSync(mcpLog), false, `the MCP CLI must not run for ${checkoutDescription}`)
     assert.match(result.stderr, expectedDiagnostic, `warmup skip output must explain ${checkoutDescription}`)
+    const events = contextWarmupEvents(result.stderr)
+    const summary = events.find((event) => event.type === 'summary')
+    assert.equal(summary?.outcome, 'skipped', `the warmup summary must mark ${checkoutDescription} as skipped`)
+    assert.equal(summary?.skipReason, expectedSkipReason, `the warmup summary must identify ${checkoutDescription}`)
+    assert.equal(summary?.probeOutcome, 'not_attempted', `the MCP probe must not run for ${checkoutDescription}`)
+    assert.equal(summary?.directoryOutcome, 'not_attempted', `the directory index must not run for ${checkoutDescription}`)
+    assert.equal(summary?.markdownAttempts, 0, `no Markdown indexing must be attempted for ${checkoutDescription}`)
+    assert.equal(summary?.markdownSuccesses, 0, `no Markdown indexing must succeed for ${checkoutDescription}`)
+    assert.deepEqual(
+      events.filter((event) => event.type === 'operation'),
+      [],
+      `no MCP operations must be reported for ${checkoutDescription}`,
+    )
   }
 
-  run('different-head', 'a different checked-out head')
+  run('different-head', 'a different checked-out head', 'different_head')
   execFileSync('git', ['-C', targetRepo, 'checkout', '--detach', reviewedHead])
   writeFileSync(join(targetRepo, 'dirty.txt'), 'dirty\n')
-  run('dirty-checkout', 'a dirty worktree at the reviewed head')
+  run('dirty-checkout', 'a dirty worktree at the reviewed head', 'dirty_checkout')
   rmSync(join(targetRepo, 'dirty.txt'))
   writeFileSync(
     join(mcpDir, 'git'),
@@ -1943,6 +1956,7 @@ if (args[0] === '-C' && args[1] === ${JSON.stringify(targetRepo)} && args[2] ===
   run(
     'git-status-failure',
     'a Git worktree-status failure',
+    'checkout_verification_failed',
     /could not verify the reviewed checkout while checking worktree status; skipping CodeGraph warmup\./u,
   )
 })
