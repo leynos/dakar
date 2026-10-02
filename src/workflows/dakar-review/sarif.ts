@@ -262,6 +262,28 @@ function dakarProperties(result: Record<string, unknown>): Record<string, unknow
 }
 
 /**
+ * Converts accepted Dakar result properties to the legacy finding shape.
+ *
+ * @param dakar - Dakar-owned semantic result properties.
+ * @returns One compatibility finding with its original fallback values.
+ */
+function compatibilityFinding(dakar: Record<string, unknown>): Record<string, unknown> {
+  const disposition = dakar.disposition as Record<string, unknown>
+  const candidate = dakar.candidate as Record<string, unknown>
+  const audit = dakar.audit as Record<string, unknown> | null
+  return {
+    severity: disposition.acceptedSeverity || candidate.severity,
+    path: candidate.path,
+    line: Number(candidate.line) > 0 ? candidate.line : undefined,
+    title: candidate.title,
+    detail: candidate.detail || '',
+    evidence: candidate.evidence || '',
+    clusterId: audit?.clusterId || undefined,
+    sourceTasks: [candidate.taskId],
+  }
+}
+
+/**
  * Projects accepted compatibility findings from the canonical SARIF document.
  *
  * @param sarif - Dakar SARIF document.
@@ -275,18 +297,7 @@ export function projectFindingsFromSarif(sarif: DakarSarif): Array<Record<string
     if (dakar.kind !== 'semantic') return []
     const disposition = dakar.disposition as Record<string, unknown>
     if (!['accepted', 'severity_downgraded'].includes(String(disposition?.status))) return []
-    const candidate = dakar.candidate as Record<string, unknown>
-    const audit = dakar.audit as Record<string, unknown> | null
-    return [{
-      severity: disposition.acceptedSeverity || candidate.severity,
-      path: candidate.path,
-      line: Number(candidate.line) > 0 ? candidate.line : undefined,
-      title: candidate.title,
-      detail: candidate.detail || '',
-      evidence: candidate.evidence || '',
-      clusterId: audit?.clusterId || undefined,
-      sourceTasks: [candidate.taskId],
-    }]
+    return [compatibilityFinding(dakar)]
   })
 }
 

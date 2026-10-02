@@ -860,6 +860,21 @@ function dakarProperties(result) {
   const dakar = properties.dakar;
   return dakar && typeof dakar === "object" ? dakar : {};
 }
+function compatibilityFinding(dakar) {
+  const disposition = dakar.disposition;
+  const candidate = dakar.candidate;
+  const audit = dakar.audit;
+  return {
+    severity: disposition.acceptedSeverity || candidate.severity,
+    path: candidate.path,
+    line: Number(candidate.line) > 0 ? candidate.line : void 0,
+    title: candidate.title,
+    detail: candidate.detail || "",
+    evidence: candidate.evidence || "",
+    clusterId: audit?.clusterId || void 0,
+    sourceTasks: [candidate.taskId]
+  };
+}
 function projectFindingsFromSarif(sarif) {
   const [run] = sarif.runs;
   if (!run) return [];
@@ -868,18 +883,7 @@ function projectFindingsFromSarif(sarif) {
     if (dakar.kind !== "semantic") return [];
     const disposition = dakar.disposition;
     if (!["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
-    const candidate = dakar.candidate;
-    const audit = dakar.audit;
-    return [{
-      severity: disposition.acceptedSeverity || candidate.severity,
-      path: candidate.path,
-      line: Number(candidate.line) > 0 ? candidate.line : void 0,
-      title: candidate.title,
-      detail: candidate.detail || "",
-      evidence: candidate.evidence || "",
-      clusterId: audit?.clusterId || void 0,
-      sourceTasks: [candidate.taskId]
-    }];
+    return [compatibilityFinding(dakar)];
   });
 }
 function projectDiscardedFromSarif(sarif) {

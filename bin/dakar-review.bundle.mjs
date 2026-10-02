@@ -242,6 +242,21 @@ function dakarProperties(result) {
   const dakar = properties.dakar;
   return dakar && typeof dakar === "object" ? dakar : {};
 }
+function compatibilityFinding(dakar) {
+  const disposition = dakar.disposition;
+  const candidate = dakar.candidate;
+  const audit = dakar.audit;
+  return {
+    severity: disposition.acceptedSeverity || candidate.severity,
+    path: candidate.path,
+    line: Number(candidate.line) > 0 ? candidate.line : void 0,
+    title: candidate.title,
+    detail: candidate.detail || "",
+    evidence: candidate.evidence || "",
+    clusterId: audit?.clusterId || void 0,
+    sourceTasks: [candidate.taskId]
+  };
+}
 function projectFindingsFromSarif(sarif) {
   const [run2] = sarif.runs;
   if (!run2) return [];
@@ -250,18 +265,7 @@ function projectFindingsFromSarif(sarif) {
     if (dakar.kind !== "semantic") return [];
     const disposition = dakar.disposition;
     if (!["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
-    const candidate = dakar.candidate;
-    const audit = dakar.audit;
-    return [{
-      severity: disposition.acceptedSeverity || candidate.severity,
-      path: candidate.path,
-      line: Number(candidate.line) > 0 ? candidate.line : void 0,
-      title: candidate.title,
-      detail: candidate.detail || "",
-      evidence: candidate.evidence || "",
-      clusterId: audit?.clusterId || void 0,
-      sourceTasks: [candidate.taskId]
-    }];
+    return [compatibilityFinding(dakar)];
   });
 }
 function projectDiscardedFromSarif(sarif) {
@@ -456,34 +460,34 @@ function extractRunId(text) {
   }
   return match[0];
 }
-function readAgentInstructions(repoRoot, baseRef) {
-  const revision = spawnSync("git", ["-C", repoRoot, "rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  if (revision.error) throw revision.error;
-  if (revision.status !== 0) {
-    throw new Error(`cannot resolve trusted review base ${baseRef}: ${revision.stderr.trim() || "git rev-parse failed"}`);
-  }
-  const resolvedCommit = revision.stdout.trim();
-  const exists = spawnSync("git", ["-C", repoRoot, "ls-tree", "-z", resolvedCommit, "--", "AGENTS.md"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  if (exists.error) throw exists.error;
-  if (exists.status !== 0) {
-    throw new Error(`cannot inspect ${resolvedCommit}:AGENTS.md: ${exists.stderr.trim() || "git ls-tree failed"}`);
-  }
-  if (exists.stdout === "") return null;
-  const result = spawnSync("git", ["-C", repoRoot, "show", `${resolvedCommit}:AGENTS.md`], {
+function runTrustedInstructionGit(repoRoot, args, failureContext) {
+  const result = spawnSync("git", ["-C", repoRoot, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`cannot read ${resolvedCommit}:AGENTS.md: ${result.stderr.trim() || "git show failed"}`);
+    throw new Error(`${failureContext.prefix}: ${result.stderr.trim() || failureContext.fallback}`);
   }
-  const content = result.stdout;
+  return result.stdout;
+}
+function readAgentInstructions(repoRoot, baseRef) {
+  const resolvedCommit = runTrustedInstructionGit(
+    repoRoot,
+    ["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`],
+    { prefix: `cannot resolve trusted review base ${baseRef}`, fallback: "git rev-parse failed" }
+  ).trim();
+  const entries = runTrustedInstructionGit(
+    repoRoot,
+    ["ls-tree", "-z", resolvedCommit, "--", "AGENTS.md"],
+    { prefix: `cannot inspect ${resolvedCommit}:AGENTS.md`, fallback: "git ls-tree failed" }
+  );
+  if (entries === "") return null;
+  const content = runTrustedInstructionGit(
+    repoRoot,
+    ["show", `${resolvedCommit}:AGENTS.md`],
+    { prefix: `cannot read ${resolvedCommit}:AGENTS.md`, fallback: "git show failed" }
+  );
   return {
     source: `${resolvedCommit}:AGENTS.md`,
     content: content.slice(0, 24e3),
@@ -782,7 +786,9 @@ function printWorkflowOutput(output, format) {
   }
 }
 function changedFilesEqual(left, right) {
-  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  if (!Array.isArray(left)) return false;
+  if (!Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
   return left.every((value, index) => value === right[index]);
 }
 function snapshotMismatch(recordInput, prepared) {
