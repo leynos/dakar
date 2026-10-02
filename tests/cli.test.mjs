@@ -349,6 +349,30 @@ process.stdout.write(JSON.stringify(result))
   chmodSync(path, 0o755)
 }
 
+/** Creates a committed AGENTS.md fixture and an ODW that captures workflow args. */
+function setUpAgentInstructionRepo(t, content) {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-agent-instructions-'))
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const targetRepo = join(tempRoot, 'repo')
+  mkdirSync(targetRepo, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  if (content !== undefined) {
+    writeFileSync(join(targetRepo, 'AGENTS.md'), content)
+    execFileSync('git', ['-C', targetRepo, 'add', 'AGENTS.md'])
+  }
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'trusted base'])
+  const fakeOdw = join(tempRoot, 'capture-odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const values = process.argv.slice(2)
+const input = JSON.parse(values[values.indexOf('--args') + 1])
+process.stdout.write(JSON.stringify({ ok: true, receivedArgs: input }))
+`)
+  chmodSync(fakeOdw, 0o755)
+  return { tempRoot, targetRepo, fakeOdw, runsRoot: join(tempRoot, 'runs') }
+}
+
 test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout', () => {
   const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpConfigCaptureRepo()
   const packagedConfig = join(repoRoot, 'odw.config.json')
@@ -712,6 +736,84 @@ process.stdout.write(JSON.stringify({ ok: true, agentInstructions: input.agentIn
   assert.doesNotMatch(result.agentInstructions.content, /Mutable marker/u)
 })
 
+test('CLI omits agentInstructions when the trusted commit has no AGENTS.md', (t) => {
+  const { targetRepo, fakeOdw, runsRoot } = setUpAgentInstructionRepo(t)
+  const result = JSON.parse(runCli([
+    '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+    '--timeout', '20', '--odw-bin', fakeOdw,
+  ]))
+
+  assert.equal(result.ok, true)
+  assert.equal('agentInstructions' in result.receivedArgs, false, 'absent trusted instructions are omitted from workflow args')
+})
+
+test('CLI applies the trusted AGENTS.md truncation limit exactly', (t) => {
+  for (const [label, length, truncated] of [
+    ['at the limit', 24_000, false],
+    ['above the limit', 24_001, true],
+  ]) {
+    const { targetRepo, fakeOdw, runsRoot } = setUpAgentInstructionRepo(t, 'x'.repeat(length))
+    const result = JSON.parse(runCli([
+      '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+      '--timeout', '20', '--odw-bin', fakeOdw,
+    ]))
+
+    assert.equal(result.ok, true, `the CLI completes with AGENTS.md content ${label}`)
+    assert.equal(result.receivedArgs.agentInstructions.content.length, 24_000, `content ${label} has the trusted limit`)
+    assert.equal(result.receivedArgs.agentInstructions.truncated, truncated, `the truncation flag is correct for content ${label}`)
+  }
+})
+
+test('CLI preserves trusted-instruction Git failure diagnostics', async (t) => {
+  for (const operation of ['ls-tree', 'show']) {
+    for (const emptyStderr of [false, true]) {
+      await t.test(`${operation} failure${emptyStderr ? ' with empty stderr' : ''}`, (subtest) => {
+        const { targetRepo, fakeOdw, runsRoot, tempRoot } = setUpAgentInstructionRepo(subtest, 'trusted instructions\n')
+        const toolDir = join(tempRoot, 'git-bin')
+        mkdirSync(toolDir)
+        writeFileSync(join(toolDir, 'git'), `#!/bin/sh
+operation=
+for arg in "$@"; do
+  case "$arg" in ls-tree|show) operation="$arg" ;; esac
+done
+if [ "$operation" = "$DAKAR_TEST_FAIL_GIT_OPERATION" ]; then
+  if [ "$DAKAR_TEST_EMPTY_GIT_STDERR" != 1 ]; then
+    printf 'injected %s failure\\n' "$operation" >&2
+  fi
+  exit 17
+fi
+exec "$DAKAR_TEST_REAL_GIT" "$@"
+`)
+        chmodSync(join(toolDir, 'git'), 0o755)
+        const result = spawnSync(process.execPath, [
+          cliPath, '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+          '--timeout', '20', '--odw-bin', fakeOdw,
+        ], {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            DAKAR_SKIP_CONTEXT_WARMUP: '1',
+            DAKAR_TEST_FAIL_GIT_OPERATION: operation,
+            DAKAR_TEST_EMPTY_GIT_STDERR: emptyStderr ? '1' : '0',
+            DAKAR_TEST_REAL_GIT: '/usr/bin/git',
+            PATH: `${toolDir}:${process.env.PATH}`,
+          },
+        })
+        const error = JSON.parse(result.stderr).error
+        const command = operation === 'ls-tree' ? 'inspect' : 'read'
+        const fallback = operation === 'ls-tree' ? 'git ls-tree failed' : 'git show failed'
+
+        assert.equal(result.status, 1, 'a trusted instruction Git failure exits non-zero')
+        assert.equal(result.stdout, '', 'a trusted instruction Git failure keeps stdout empty')
+        assert.match(error, new RegExp(`^cannot ${command} [0-9a-f]{40}:AGENTS\\.md:`, 'u'), 'the existing operation diagnostic prefix is retained')
+        assert.ok(error.endsWith(emptyStderr ? fallback : `injected ${operation} failure`), 'stderr or the command fallback is preserved')
+      })
+    }
+  }
+})
+
 test('CLI sets PI_CODING_AGENT_DIR and PI_SKIP_VERSION_CHECK on the ODW spawn', () => {
   const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-pi-env-repo-'))
   const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
@@ -920,6 +1022,60 @@ test('CLI refuses to record when recordInput contradicts the prepared snapshot',
   assert.ok(output.recordInput, 'recordInput is preserved for manual retry')
   assert.equal(output.recordInput.headCommit, 'c'.repeat(40))
   assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
+})
+
+test('CLI refuses malformed, incomplete, and reordered changed-file snapshots', async (t) => {
+  const cases = [
+    { name: 'null changedFiles', override: '{ changedFiles: null }', expected: () => null },
+    { name: 'string changedFiles', override: "{ changedFiles: 'b.txt' }", expected: () => 'b.txt' },
+    { name: 'shorter changedFiles', override: '{ changedFiles: [] }', expected: () => [] },
+    { name: 'different path at the same length', override: "{ changedFiles: ['other.txt'] }", expected: () => ['other.txt'] },
+    {
+      name: 'reversed changed-file order',
+      override: '{ changedFiles: [...prepared.changedFiles].reverse() }',
+      expected: (output) => [...output.changedFiles].reverse(),
+      addSecondFile: true,
+    },
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, (subtest) => {
+      const { tempRoot, targetRepo, base } = setUpRecordRepo()
+      subtest.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+      const stateRoot = join(tempRoot, 'trusted-state')
+      const fakeOdw = join(tempRoot, 'odw.mjs')
+      if (scenario.addSecondFile) {
+        writeFileSync(join(targetRepo, 'c.txt'), 'c\n')
+        execFileSync('git', ['-C', targetRepo, 'add', 'c.txt'])
+        execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'second changed file'])
+      }
+      writePreparedEchoOdw(fakeOdw, { recordInputOverride: scenario.override })
+
+      const result = spawnSync(
+        process.execPath,
+        [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+          '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+        {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '1' },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+      const output = JSON.parse(result.stdout)
+
+      assert.equal(result.status, 1, 'a changedFiles mismatch exits non-zero')
+      assert.equal(output.ok, false, 'a changedFiles mismatch marks the result unsuccessful')
+      assert.equal(output.stage, 'record', 'a changedFiles mismatch is reported at the record stage')
+      assert.match(output.error, /recordInput\.changedFiles does not match the prepared review snapshot/u, 'the mismatch diagnostic identifies changedFiles')
+      assert.ok(output.recordInput, 'the mismatched recordInput is preserved for manual retry')
+      assert.deepEqual(output.recordInput.changedFiles, scenario.expected(output), 'the original changedFiles value is preserved')
+      if (scenario.addSecondFile) {
+        assert.equal(output.changedFiles.length, 2, 'the order fixture contains two changed files')
+      }
+      assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false, 'a mismatch never appends review history')
+    })
+  }
 })
 
 test('CLI attaches reported usage before recording so reviews.toml carries the tokens', () => {

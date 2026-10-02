@@ -297,6 +297,26 @@ function extractRunId(text) {
 }
 
 /**
+ * Run a Git command against a trusted instruction commit and contextualise failures.
+ *
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @param {string[]} args - Git arguments following `-C <repoRoot>`.
+ * @param {{ prefix: string, fallback: string }} failureContext - operation-specific diagnostic details.
+ * @returns {string} unmodified stdout from the successful Git command.
+ */
+function runTrustedInstructionGit(repoRoot, args, failureContext) {
+  const result = spawnSync('git', ['-C', repoRoot, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    throw new Error(`${failureContext.prefix}: ${result.stderr.trim() || failureContext.fallback}`)
+  }
+  return result.stdout
+}
+
+/**
  * Read `AGENTS.md` from the trusted review base, returning null when absent.
  *
  * Content is truncated to 24,000 characters so large files do not overflow
@@ -307,33 +327,22 @@ function extractRunId(text) {
  * @returns {{ source: string, content: string, truncated: boolean } | null} parsed instructions, or null.
  */
 function readAgentInstructions(repoRoot, baseRef) {
-  const revision = spawnSync('git', ['-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (revision.error) throw revision.error
-  if (revision.status !== 0) {
-    throw new Error(`cannot resolve trusted review base ${baseRef}: ${revision.stderr.trim() || 'git rev-parse failed'}`)
-  }
-  const resolvedCommit = revision.stdout.trim()
-  const exists = spawnSync('git', ['-C', repoRoot, 'ls-tree', '-z', resolvedCommit, '--', 'AGENTS.md'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (exists.error) throw exists.error
-  if (exists.status !== 0) {
-    throw new Error(`cannot inspect ${resolvedCommit}:AGENTS.md: ${exists.stderr.trim() || 'git ls-tree failed'}`)
-  }
-  if (exists.stdout === '') return null
-  const result = spawnSync('git', ['-C', repoRoot, 'show', `${resolvedCommit}:AGENTS.md`], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`cannot read ${resolvedCommit}:AGENTS.md: ${result.stderr.trim() || 'git show failed'}`)
-  }
-  const content = result.stdout
+  const resolvedCommit = runTrustedInstructionGit(
+    repoRoot,
+    ['rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`],
+    { prefix: `cannot resolve trusted review base ${baseRef}`, fallback: 'git rev-parse failed' },
+  ).trim()
+  const entries = runTrustedInstructionGit(
+    repoRoot,
+    ['ls-tree', '-z', resolvedCommit, '--', 'AGENTS.md'],
+    { prefix: `cannot inspect ${resolvedCommit}:AGENTS.md`, fallback: 'git ls-tree failed' },
+  )
+  if (entries === '') return null
+  const content = runTrustedInstructionGit(
+    repoRoot,
+    ['show', `${resolvedCommit}:AGENTS.md`],
+    { prefix: `cannot read ${resolvedCommit}:AGENTS.md`, fallback: 'git show failed' },
+  )
   return {
     source: `${resolvedCommit}:AGENTS.md`,
     content: content.slice(0, 24_000),
@@ -789,7 +798,9 @@ function printWorkflowOutput(output, format) {
  * @returns {boolean} whether both are arrays of identical length and order.
  */
 function changedFilesEqual(left, right) {
-  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+  if (!Array.isArray(left)) return false
+  if (!Array.isArray(right)) return false
+  if (left.length !== right.length) return false
   return left.every((value, index) => value === right[index])
 }
 
