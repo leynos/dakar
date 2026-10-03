@@ -886,6 +886,15 @@ function projectFindingsFromSarif(sarif) {
     return [compatibilityFinding(dakar)];
   });
 }
+function compatibilityDiscard(dakar) {
+  const disposition = dakar.disposition;
+  return {
+    candidate: dakar.candidate,
+    status: String(disposition?.status || ""),
+    reason: String(disposition?.reason || ""),
+    evidenceChecked: String(disposition?.evidenceChecked || "")
+  };
+}
 function projectDiscardedFromSarif(sarif) {
   const [run] = sarif.runs;
   if (!run) return [];
@@ -894,12 +903,7 @@ function projectDiscardedFromSarif(sarif) {
     if (dakar.kind !== "semantic") return [];
     const disposition = dakar.disposition;
     if (["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
-    return [{
-      candidate: dakar.candidate,
-      status: String(disposition?.status || ""),
-      reason: String(disposition?.reason || ""),
-      evidenceChecked: String(disposition?.evidenceChecked || "")
-    }];
+    return [compatibilityDiscard(dakar)];
   });
 }
 function renderSarifMarkdown(sarif) {
