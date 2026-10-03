@@ -191,6 +191,26 @@ function runCli(args, options = {}) {
   })
 }
 
+/** Spawns the CLI with context warm-up disabled and both output streams captured. */
+function spawnCli(args, env = {}) {
+  return spawnSync(process.execPath, [cliPath, ...args], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '1', ...env },
+  })
+}
+
+/** Loads the private CLI parser without exporting it from the executable module. */
+function loadCliArgumentParser() {
+  const source = readFileSync(cliPath, 'utf8')
+  const start = source.indexOf('const OPTION_SPECS = new Map([')
+  const end = source.indexOf('\n/**\n * Extract and parse the first JSON object found in a string of text.', start)
+  assert.notEqual(start, -1, 'the CLI option table should exist')
+  assert.notEqual(end, -1, 'the private parser section should have a stable boundary')
+  return new Function(`${source.slice(start, end)}\nreturn parseArgs\n`)()
+}
+
 test('CLI help documents review invocation', () => {
   const output = runCli(['--help'])
 
@@ -569,6 +589,65 @@ test('CLI rejects a non-numeric value for a numeric review-tuning flag', () => {
   assert.equal(result.status, 1)
   assert.equal(error.stage, 'cli')
   assert.match(error.error, /--budget-gbp must be a number/u)
+})
+
+test('CLI parser preserves empty, inline, repeated, and negative option values', (t) => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+  t.after(() => {
+    rmSync(targetRepo, { recursive: true, force: true })
+    rmSync(runsRoot, { recursive: true, force: true })
+    rmSync(xdgConfig, { recursive: true, force: true })
+  })
+  const baseArgs = ['--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw]
+  const parsed = JSON.parse(runCli([
+    '--dry-run', ...baseArgs,
+    '--budget-gbp', '-1.25',
+    '--routing-policy', 'first-value',
+    '--routing-policy=retained=after=the-first-equals',
+    '--luna-reasoning=',
+    '--max-tasks', '7',
+  ], { env: { XDG_CONFIG_HOME: xdgConfig } })).receivedArgs
+
+  assert.deepEqual(loadCliArgumentParser()([]), {}, 'empty parser input yields a plain empty object')
+  assert.equal(parsed.dryRun, true, 'an inline empty string does not consume the following option token')
+  assert.equal(parsed.budgetGbp, -1.25, 'negative finite numeric values remain valid')
+  assert.equal(parsed.routingPolicy, 'retained=after=the-first-equals', 'inline values preserve text after the first equals')
+  assert.equal(parsed.lunaReasoning, '', 'an empty inline string remains a present value')
+  assert.equal(parsed.maxTasks, 7, 'separate option values are consumed and converted')
+
+  const emptyNumber = JSON.parse(runCli([
+    '--dry-run', ...baseArgs, '--budget-gbp=', '--max-tasks=3',
+  ], { env: { XDG_CONFIG_HOME: xdgConfig } })).receivedArgs
+  assert.equal(emptyNumber.budgetGbp, 0, 'Number("") behaviour is preserved for an empty numeric value')
+  assert.equal(emptyNumber.maxTasks, 3, 'inline values leave subsequent option tokens unconsumed')
+})
+
+test('CLI parser reports structured errors with existing precedence', async (t) => {
+  const cases = [
+    { name: 'empty option-like argument is positional', args: ['unexpected'], error: 'unexpected positional argument: unexpected' },
+    { name: 'unknown option', args: ['--not-real'], error: 'unknown option: --not-real' },
+    { name: 'unknown option is rejected before its value', args: ['--not-real=--value'], error: 'unknown option: --not-real' },
+    { name: 'missing trailing value', args: ['--luna-reasoning'], error: '--luna-reasoning requires a value' },
+    { name: 'next option is not consumed as a value', args: ['--budget-gbp', '--help'], error: '--budget-gbp requires a value' },
+    { name: 'next unknown option is not parsed before missing-value rejection', args: ['--budget-gbp', '--not-real'], error: '--budget-gbp requires a value' },
+    { name: 'inline option-like value', args: ['--luna-reasoning=--help'], error: '--luna-reasoning requires a value' },
+    { name: 'boolean inline value', args: ['--dry-run=true'], error: '--dry-run does not take a value' },
+    { name: 'empty boolean inline value', args: ['--dry-run='], error: '--dry-run does not take a value' },
+    { name: 'non-finite number', args: ['--budget-gbp', 'Infinity'], error: '--budget-gbp must be a number' },
+    { name: 'arguments after help are still validated', args: ['--help', '--not-real'], error: 'unknown option: --not-real' },
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      const result = spawnCli(scenario.args)
+      const error = JSON.parse(result.stderr)
+
+      assert.equal(result.status, 1, 'invalid parser input exits with status 1')
+      assert.equal(result.stdout, '', 'parser errors reserve stdout for no result')
+      assert.equal(error.stage, 'cli', 'parser failures use the structured CLI error envelope')
+      assert.equal(error.error, scenario.error, 'the exact parser diagnostic and error order are preserved')
+    })
+  }
 })
 
 test('CLI help documents the review-tuning flags', () => {

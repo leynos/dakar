@@ -259,6 +259,114 @@ test('finding projection preserves result order and does not mutate SARIF input'
   assert.deepEqual(sarif, original, 'projection leaves the input SARIF document unchanged')
 })
 
+test('discard projection returns no records without first-run results', () => {
+  assert.deepEqual(projectDiscardedFromSarif({ runs: [] }), [])
+  assert.deepEqual(projectDiscardedFromSarif(projectedDocument([])), [])
+  assert.deepEqual(
+    projectDiscardedFromSarif(projectedDocument([], [projectedResult({ kind: 'semantic' })])),
+    [],
+    'later runs are ignored when the first run has no results',
+  )
+})
+
+test('discard projection ignores non-semantic and accepted results', () => {
+  const candidate = { candidateId: 'candidate-stub' }
+  const sarif = projectedDocument([
+    projectedResult({ kind: 'deterministic-gate', candidate, disposition: { status: 'blocking' } }),
+    projectedResult({ kind: 'semantic', candidate, disposition: { status: 'accepted' } }),
+    projectedResult({ kind: 'semantic', candidate, disposition: { status: 'severity_downgraded' } }),
+  ])
+
+  assert.deepEqual(projectDiscardedFromSarif(sarif), [])
+})
+
+test('discard projection retains categories, unknown statuses, order, and candidate identity', () => {
+  const candidates = [
+    { candidateId: 'minimal-one' },
+    { candidateId: 'minimal-two' },
+    { candidateId: 'minimal-three' },
+  ]
+  const sarif = projectedDocument([
+    projectedResult({
+      kind: 'semantic',
+      candidate: candidates[0],
+      disposition: { status: 'tool_false_positive', reason: 'known category', evidenceChecked: 'check one' },
+    }),
+    projectedResult({
+      kind: 'semantic',
+      candidate: candidates[1],
+      disposition: { status: 'rejected', reason: 'ordinary discard', evidenceChecked: 'check two' },
+    }),
+    projectedResult({
+      kind: 'semantic',
+      candidate: candidates[2],
+      disposition: { status: 'future_status', reason: 'unknown category', evidenceChecked: 'check three' },
+    }),
+  ])
+  const original = structuredClone(sarif)
+  const discards = projectDiscardedFromSarif(sarif)
+
+  assert.deepEqual(discards, [
+    { candidate: candidates[0], status: 'tool_false_positive', reason: 'known category', evidenceChecked: 'check one' },
+    { candidate: candidates[1], status: 'rejected', reason: 'ordinary discard', evidenceChecked: 'check two' },
+    { candidate: candidates[2], status: 'future_status', reason: 'unknown category', evidenceChecked: 'check three' },
+  ])
+  assert.deepEqual(discards.map((discard) => discard.status), ['tool_false_positive', 'rejected', 'future_status'])
+  assert.deepEqual(discards.map((discard) => discard.candidate.candidateId), ['minimal-one', 'minimal-two', 'minimal-three'])
+  discards.forEach((discard, index) => {
+    assert.strictEqual(discard.candidate, candidates[index], 'each discard preserves the original candidate reference')
+  })
+  assert.deepEqual(sarif, original, 'projection leaves the input SARIF document unchanged')
+})
+
+test('discard projection stringifies missing and falsy disposition fields as empty strings', () => {
+  const candidates = [
+    { candidateId: 'missing-disposition' },
+    { candidateId: 'null-disposition' },
+    { candidateId: 'falsy-fields' },
+  ]
+  const sarif = projectedDocument([
+    projectedResult({ kind: 'semantic', candidate: candidates[0] }),
+    projectedResult({ kind: 'semantic', candidate: candidates[1], disposition: null }),
+    projectedResult({
+      kind: 'semantic',
+      candidate: candidates[2],
+      disposition: { status: 0, reason: false, evidenceChecked: null },
+    }),
+  ])
+
+  const discards = projectDiscardedFromSarif(sarif)
+
+  assert.deepEqual(discards, candidates.map((candidate) => ({
+    candidate,
+    status: '',
+    reason: '',
+    evidenceChecked: '',
+  })))
+  discards.forEach((discard, index) => {
+    assert.strictEqual(discard.candidate, candidates[index], 'minimal candidate stubs retain object identity')
+  })
+})
+
+test('discard projection applies String conversion to truthy non-string fields', () => {
+  const candidate = { candidateId: 'minimal-truthy-fields' }
+  const discards = projectDiscardedFromSarif(projectedDocument([
+    projectedResult({
+      kind: 'semantic',
+      candidate,
+      disposition: { status: 42, reason: { source: 'audit' }, evidenceChecked: ['first', 'second'] },
+    }),
+  ]))
+
+  assert.deepEqual(discards, [{
+    candidate,
+    status: '42',
+    reason: '[object Object]',
+    evidenceChecked: 'first,second',
+  }])
+  assert.strictEqual(discards[0].candidate, candidate)
+})
+
 test('SARIF projections preserve audited severity and distinguish advisory gates', () => {
   const input = fixture()
   input.accepted[0].severity = 'medium'

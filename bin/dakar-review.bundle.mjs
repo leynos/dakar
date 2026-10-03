@@ -268,6 +268,15 @@ function projectFindingsFromSarif(sarif) {
     return [compatibilityFinding(dakar)];
   });
 }
+function compatibilityDiscard(dakar) {
+  const disposition = dakar.disposition;
+  return {
+    candidate: dakar.candidate,
+    status: String(disposition?.status || ""),
+    reason: String(disposition?.reason || ""),
+    evidenceChecked: String(disposition?.evidenceChecked || "")
+  };
+}
 function projectDiscardedFromSarif(sarif) {
   const [run2] = sarif.runs;
   if (!run2) return [];
@@ -276,12 +285,7 @@ function projectDiscardedFromSarif(sarif) {
     if (dakar.kind !== "semantic") return [];
     const disposition = dakar.disposition;
     if (["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
-    return [{
-      candidate: dakar.candidate,
-      status: String(disposition?.status || ""),
-      reason: String(disposition?.reason || ""),
-      evidenceChecked: String(disposition?.evidenceChecked || "")
-    }];
+    return [compatibilityDiscard(dakar)];
   });
 }
 function renderSarifMarkdown(sarif) {
@@ -412,30 +416,45 @@ var OPTION_SPECS = /* @__PURE__ */ new Map([
   ["help", { key: "help", value: false }],
   ["version", { key: "version", value: false }]
 ]);
+function readOptionToken(token) {
+  if (!token.startsWith("--")) {
+    throw new Error(`unexpected positional argument: ${token}`);
+  }
+  const [name, inlineValue] = token.slice(2).split(/=(.*)/su, 2);
+  const spec = OPTION_SPECS.get(name);
+  if (!spec) {
+    throw new Error(`unknown option: --${name}`);
+  }
+  return { name, inlineValue, spec };
+}
+function requireOptionValue(name, value) {
+  if (value === void 0 || value.startsWith("--")) {
+    throw new Error(`--${name} requires a value`);
+  }
+  return value;
+}
+function consumeOptionValue(argv, index, option) {
+  const { name, inlineValue, spec } = option;
+  if (!spec.value) {
+    if (inlineValue !== void 0) {
+      throw new Error(`--${name} does not take a value`);
+    }
+    return { value: true, nextIndex: index + 1 };
+  }
+  const value = requireOptionValue(name, inlineValue === void 0 ? argv[index + 1] : inlineValue);
+  return {
+    value: spec.number ? numberValue(name, value) : value,
+    nextIndex: inlineValue === void 0 ? index + 2 : index + 1
+  };
+}
 function parseArgs(argv) {
   const parsed = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-    if (!token.startsWith("--")) {
-      throw new Error(`unexpected positional argument: ${token}`);
-    }
-    const [name, inlineValue] = token.slice(2).split(/=(.*)/su, 2);
-    const spec = OPTION_SPECS.get(name);
-    if (!spec) {
-      throw new Error(`unknown option: --${name}`);
-    }
-    if (!spec.value) {
-      if (inlineValue !== void 0) {
-        throw new Error(`--${name} does not take a value`);
-      }
-      parsed[spec.key] = true;
-      continue;
-    }
-    const value = inlineValue ?? argv[++index];
-    if (value === void 0 || value.startsWith("--")) {
-      throw new Error(`--${name} requires a value`);
-    }
-    parsed[spec.key] = spec.number ? numberValue(name, value) : value;
+  let index = 0;
+  while (index < argv.length) {
+    const option = readOptionToken(argv[index]);
+    const consumed = consumeOptionValue(argv, index, option);
+    parsed[option.spec.key] = consumed.value;
+    index = consumed.nextIndex;
   }
   return parsed;
 }

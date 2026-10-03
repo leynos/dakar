@@ -220,6 +220,61 @@ const OPTION_SPECS = new Map([
 ])
 
 /**
+ * Resolve one CLI token to its option name, inline value, and specification.
+ *
+ * @param {string} token - argument token to parse.
+ * @returns {{ name: string, inlineValue: string | undefined, spec: { key: string, value: boolean, number?: boolean } }} parsed option details.
+ */
+function readOptionToken(token) {
+  if (!token.startsWith('--')) {
+    throw new Error(`unexpected positional argument: ${token}`)
+  }
+  const [name, inlineValue] = token.slice(2).split(/=(.*)/su, 2)
+  const spec = OPTION_SPECS.get(name)
+  if (!spec) {
+    throw new Error(`unknown option: --${name}`)
+  }
+  return { name, inlineValue, spec }
+}
+
+/**
+ * Validate that a value option has a value which is not another option token.
+ *
+ * @param {string} name - option name used in the existing diagnostic.
+ * @param {string | undefined} value - inline or following argument value.
+ * @returns {string} validated option value.
+ */
+function requireOptionValue(name, value) {
+  if (value === undefined || value.startsWith('--')) {
+    throw new Error(`--${name} requires a value`)
+  }
+  return value
+}
+
+/**
+ * Consume the value associated with a resolved CLI option.
+ *
+ * @param {string[]} argv - argument tokens, excluding the node/script prefix.
+ * @param {number} index - index of the option token in `argv`.
+ * @param {{ name: string, inlineValue: string | undefined, spec: { key: string, value: boolean, number?: boolean } }} option - resolved option token.
+ * @returns {{ value: string | number | boolean, nextIndex: number }} converted value and next unconsumed token index.
+ */
+function consumeOptionValue(argv, index, option) {
+  const { name, inlineValue, spec } = option
+  if (!spec.value) {
+    if (inlineValue !== undefined) {
+      throw new Error(`--${name} does not take a value`)
+    }
+    return { value: true, nextIndex: index + 1 }
+  }
+  const value = requireOptionValue(name, inlineValue === undefined ? argv[index + 1] : inlineValue)
+  return {
+    value: spec.number ? numberValue(name, value) : value,
+    nextIndex: inlineValue === undefined ? index + 2 : index + 1,
+  }
+}
+
+/**
  * Parse the CLI argument vector into a plain options object.
  *
  * @param {string[]} argv - argument tokens, excluding the node/script prefix.
@@ -227,28 +282,12 @@ const OPTION_SPECS = new Map([
  */
 function parseArgs(argv) {
   const parsed = {}
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index]
-    if (!token.startsWith('--')) {
-      throw new Error(`unexpected positional argument: ${token}`)
-    }
-    const [name, inlineValue] = token.slice(2).split(/=(.*)/su, 2)
-    const spec = OPTION_SPECS.get(name)
-    if (!spec) {
-      throw new Error(`unknown option: --${name}`)
-    }
-    if (!spec.value) {
-      if (inlineValue !== undefined) {
-        throw new Error(`--${name} does not take a value`)
-      }
-      parsed[spec.key] = true
-      continue
-    }
-    const value = inlineValue ?? argv[++index]
-    if (value === undefined || value.startsWith('--')) {
-      throw new Error(`--${name} requires a value`)
-    }
-    parsed[spec.key] = spec.number ? numberValue(name, value) : value
+  let index = 0
+  while (index < argv.length) {
+    const option = readOptionToken(argv[index])
+    const consumed = consumeOptionValue(argv, index, option)
+    parsed[option.spec.key] = consumed.value
+    index = consumed.nextIndex
   }
   return parsed
 }

@@ -302,6 +302,22 @@ export function projectFindingsFromSarif(sarif: DakarSarif): Array<Record<string
 }
 
 /**
+ * Converts one non-accepted Dakar result to the compatibility discard shape.
+ *
+ * @param dakar - Dakar-owned result properties from a SARIF result.
+ * @returns The legacy discard record, retaining its candidate reference.
+ */
+function compatibilityDiscard(dakar: Record<string, unknown>): Discarded {
+  const disposition = dakar.disposition as Record<string, unknown>
+  return {
+    candidate: dakar.candidate as unknown as Candidate,
+    status: String(disposition?.status || ''),
+    reason: String(disposition?.reason || ''),
+    evidenceChecked: String(disposition?.evidenceChecked || ''),
+  }
+}
+
+/**
  * Projects discarded compatibility records from the canonical SARIF document.
  *
  * @param sarif - Dakar SARIF document.
@@ -315,12 +331,7 @@ export function projectDiscardedFromSarif(sarif: DakarSarif): Discarded[] {
     if (dakar.kind !== 'semantic') return []
     const disposition = dakar.disposition as Record<string, unknown>
     if (['accepted', 'severity_downgraded'].includes(String(disposition?.status))) return []
-    return [{
-      candidate: dakar.candidate as unknown as Candidate,
-      status: String(disposition?.status || ''),
-      reason: String(disposition?.reason || ''),
-      evidenceChecked: String(disposition?.evidenceChecked || ''),
-    }]
+    return [compatibilityDiscard(dakar)]
   })
 }
 
