@@ -12,6 +12,7 @@
   },
   "scripts": {
     "docs:check": "typedoc --options typedoc.json",
+    "lint:complexity": "biome lint",
     "markdownlint": "markdownlint-cli2 $(git ls-files '*.md')",
     "nixie": "nixie $(git ls-files '*.md')",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -25,6 +26,7 @@
     "odw:dry-run": "sh -eu -c 'runs_root=$(mktemp -d); trap '\\''rm -rf \"$runs_root\"'\\'' EXIT; odw run workflows/dakar-review.js --runs-root \"$runs_root\" --source . --wait --timeout 20 --args '\\''{\"dryRun\":true}'\\'''"
   },
   "devDependencies": {
+    "@biomejs/biome": "1.9.4",
     "esbuild": "0.28.1",
     "fast-check": "4.9.0",
     "markdownlint-cli2": "0.23.2",

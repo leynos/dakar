@@ -32,6 +32,11 @@ node --test tests/workflow-dry-run.test.mjs
 npm run odw:dry-run
 ```
 
+The `make lint` gate runs `npm run lint:complexity`, which uses pinned Biome
+1.9.4 to enforce a maximum cognitive complexity of 9 on the authored CLI
+(`bin/dakar-review.mjs`) and SARIF (`src/workflows/dakar-review/sarif.ts`)
+sources. Generated bundles are excluded.
+
 Do not use `node --check workflows/dakar-review.js` as a workflow syntax gate.
 ODW files permit top-level `return`, which ordinary Node syntax checking
 rejects. Use `odw run ... --args '{"dryRun":true}'` instead.

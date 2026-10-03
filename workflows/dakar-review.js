@@ -731,68 +731,61 @@ function ledgerFor(candidate, ledger) {
   if (!("taskId" in candidate)) return void 0;
   return ledger.find((entry) => entry.callId === candidate.taskId);
 }
-function assembleSarif(input) {
-  const candidates = [...input.candidates || []];
-  const acceptedById = new Map(
-    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
-  );
-  const verdicts = [...input.verdicts || []];
-  const ledger = [...input.ledger || []];
-  const discardById = new Map(
-    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
-  );
-  const semanticResults = candidates.map((candidate) => {
-    const accepted = acceptedById.get(candidate.candidateId);
-    const discard = discardById.get(candidate.candidateId);
-    const verdict = verdictFor(candidate.candidateId, verdicts);
-    const sourceLedger = ledgerFor(candidate, ledger);
-    const disposition = accepted ? {
-      status: verdict?.status || "accepted",
-      reason: verdict?.reason || "",
-      evidenceChecked: verdict?.evidenceChecked || "",
-      acceptedSeverity: accepted.severity
-    } : {
-      status: discard?.status || verdict?.status || "not_selected",
-      reason: discard?.reason || verdict?.reason || "",
-      evidenceChecked: discard?.evidenceChecked || verdict?.evidenceChecked || ""
-    };
-    return {
-      ruleId: `dakar/semantic/${candidate.candidateId}`,
-      level: sarifLevel(accepted?.severity || candidate.severity),
-      message: { text: candidate.title },
-      locations: locationsFor(candidate),
-      fingerprints: {
-        "dakar/candidateId": candidate.candidateId,
-        "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
-      },
-      ...accepted ? {} : { suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }] },
-      properties: {
-        dakar: {
-          kind: "semantic",
-          candidate: candidateEvidence(candidate),
-          provenance: {
-            taskId: candidate.taskId,
-            taskKind: candidate.taskKind,
-            model: candidate.sourceModel,
-            lane: sourceLedger?.lane || "luna-flex",
-            serviceTier: sourceLedger?.serviceTier || "flex",
-            reasoningEffort: sourceLedger?.reasoningEffort
-          },
-          audit: verdict ? { ...verdict } : null,
-          disposition,
-          clusterId: verdict?.clusterId,
-          cost: sourceLedger ? { ...sourceLedger } : null,
-          pricingTableVersion: input.pricingTableVersion
-        }
+function verdictDisposition(verdict, fallbackStatus) {
+  return {
+    status: verdict?.status || fallbackStatus,
+    reason: verdict?.reason || "",
+    evidenceChecked: verdict?.evidenceChecked || ""
+  };
+}
+function semanticDisposition(accepted, discard, verdict) {
+  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
+  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
+  return {
+    status: discard?.status || disposition.status,
+    reason: discard?.reason || disposition.reason,
+    evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked
+  };
+}
+function semanticProvenance(candidate, sourceLedger) {
+  return {
+    taskId: candidate.taskId,
+    taskKind: candidate.taskKind,
+    model: candidate.sourceModel,
+    lane: sourceLedger?.lane || "luna-flex",
+    serviceTier: sourceLedger?.serviceTier || "flex",
+    reasoningEffort: sourceLedger?.reasoningEffort
+  };
+}
+function semanticSarifResult(candidate, accepted, discard, verdict, sourceLedger, pricingTableVersion) {
+  const disposition = semanticDisposition(accepted, discard, verdict);
+  return {
+    ruleId: `dakar/semantic/${candidate.candidateId}`,
+    level: sarifLevel(accepted?.severity || candidate.severity),
+    message: { text: candidate.title },
+    locations: locationsFor(candidate),
+    fingerprints: {
+      "dakar/candidateId": candidate.candidateId,
+      "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
+    },
+    ...accepted ? {} : { suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }] },
+    properties: {
+      dakar: {
+        kind: "semantic",
+        candidate: candidateEvidence(candidate),
+        provenance: semanticProvenance(candidate, sourceLedger),
+        audit: verdict ? { ...verdict } : null,
+        disposition,
+        clusterId: verdict?.clusterId,
+        cost: sourceLedger ? { ...sourceLedger } : null,
+        pricingTableVersion
       }
-    };
-  }).sort((left, right) => {
-    const leftId = left.fingerprints["dakar/candidateId"];
-    const rightId = right.fingerprints["dakar/candidateId"];
-    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
-  });
+    }
+  };
+}
+function extraDiscardResults(input, candidates, verdicts) {
   const knownCandidateIds = new Set(candidates.map((candidate) => candidate.candidateId));
-  const extraDiscards = (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => ({
+  return (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => ({
     ruleId: `dakar/semantic/${item.candidate.candidateId || "unknown"}`,
     level: "note",
     message: { text: item.reason },
@@ -811,7 +804,9 @@ function assembleSarif(input) {
       }
     }
   }));
-  const gateResults = (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
+}
+function gateSarifResults(input) {
+  return (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
     ruleId: `dakar/gate/${gate.gateId}`,
     level: gate.blocking ? "error" : "warning",
     message: { text: `${gate.name} ${gate.status}: ${gate.command}` },
@@ -825,6 +820,33 @@ function assembleSarif(input) {
       }
     }
   }));
+}
+function gatesAllowExecution(gates) {
+  return gates.every((gate) => gate.status === "passed" || !gate.blocking);
+}
+function assembleSarif(input) {
+  const candidates = [...input.candidates || []];
+  const acceptedById = new Map(
+    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
+  );
+  const verdicts = [...input.verdicts || []];
+  const ledger = [...input.ledger || []];
+  const discardById = new Map(
+    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
+  );
+  const semanticResults = candidates.map((candidate) => {
+    const accepted = acceptedById.get(candidate.candidateId);
+    const discard = discardById.get(candidate.candidateId);
+    const verdict = verdictFor(candidate.candidateId, verdicts);
+    const sourceLedger = ledgerFor(candidate, ledger);
+    return semanticSarifResult(candidate, accepted, discard, verdict, sourceLedger, input.pricingTableVersion);
+  }).sort((left, right) => {
+    const leftId = left.fingerprints["dakar/candidateId"];
+    const rightId = right.fingerprints["dakar/candidateId"];
+    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
+  });
+  const extraDiscards = extraDiscardResults(input, candidates, verdicts);
+  const gateResults = gateSarifResults(input);
   const results = [...gateResults, ...semanticResults, ...extraDiscards];
   const ruleIds = [...new Set(results.map((result) => result.ruleId))].sort();
   const gates = (input.gates || []).map((gate) => ({ ...gate }));
@@ -840,7 +862,7 @@ function assembleSarif(input) {
         }
       },
       invocations: [{
-        executionSuccessful: gates.every((gate) => gate.status === "passed" || !gate.blocking),
+        executionSuccessful: gatesAllowExecution(gates),
         properties: { dakar: { gates } }
       }],
       results,

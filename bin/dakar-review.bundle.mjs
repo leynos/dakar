@@ -113,68 +113,61 @@ function ledgerFor(candidate, ledger) {
   if (!("taskId" in candidate)) return void 0;
   return ledger.find((entry) => entry.callId === candidate.taskId);
 }
-function assembleSarif(input) {
-  const candidates = [...input.candidates || []];
-  const acceptedById = new Map(
-    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
-  );
-  const verdicts = [...input.verdicts || []];
-  const ledger = [...input.ledger || []];
-  const discardById = new Map(
-    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
-  );
-  const semanticResults = candidates.map((candidate) => {
-    const accepted = acceptedById.get(candidate.candidateId);
-    const discard = discardById.get(candidate.candidateId);
-    const verdict = verdictFor(candidate.candidateId, verdicts);
-    const sourceLedger = ledgerFor(candidate, ledger);
-    const disposition = accepted ? {
-      status: verdict?.status || "accepted",
-      reason: verdict?.reason || "",
-      evidenceChecked: verdict?.evidenceChecked || "",
-      acceptedSeverity: accepted.severity
-    } : {
-      status: discard?.status || verdict?.status || "not_selected",
-      reason: discard?.reason || verdict?.reason || "",
-      evidenceChecked: discard?.evidenceChecked || verdict?.evidenceChecked || ""
-    };
-    return {
-      ruleId: `dakar/semantic/${candidate.candidateId}`,
-      level: sarifLevel(accepted?.severity || candidate.severity),
-      message: { text: candidate.title },
-      locations: locationsFor(candidate),
-      fingerprints: {
-        "dakar/candidateId": candidate.candidateId,
-        "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
-      },
-      ...accepted ? {} : { suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }] },
-      properties: {
-        dakar: {
-          kind: "semantic",
-          candidate: candidateEvidence(candidate),
-          provenance: {
-            taskId: candidate.taskId,
-            taskKind: candidate.taskKind,
-            model: candidate.sourceModel,
-            lane: sourceLedger?.lane || "luna-flex",
-            serviceTier: sourceLedger?.serviceTier || "flex",
-            reasoningEffort: sourceLedger?.reasoningEffort
-          },
-          audit: verdict ? { ...verdict } : null,
-          disposition,
-          clusterId: verdict?.clusterId,
-          cost: sourceLedger ? { ...sourceLedger } : null,
-          pricingTableVersion: input.pricingTableVersion
-        }
+function verdictDisposition(verdict, fallbackStatus) {
+  return {
+    status: verdict?.status || fallbackStatus,
+    reason: verdict?.reason || "",
+    evidenceChecked: verdict?.evidenceChecked || ""
+  };
+}
+function semanticDisposition(accepted, discard, verdict) {
+  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
+  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
+  return {
+    status: discard?.status || disposition.status,
+    reason: discard?.reason || disposition.reason,
+    evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked
+  };
+}
+function semanticProvenance(candidate, sourceLedger) {
+  return {
+    taskId: candidate.taskId,
+    taskKind: candidate.taskKind,
+    model: candidate.sourceModel,
+    lane: sourceLedger?.lane || "luna-flex",
+    serviceTier: sourceLedger?.serviceTier || "flex",
+    reasoningEffort: sourceLedger?.reasoningEffort
+  };
+}
+function semanticSarifResult(candidate, accepted, discard, verdict, sourceLedger, pricingTableVersion) {
+  const disposition = semanticDisposition(accepted, discard, verdict);
+  return {
+    ruleId: `dakar/semantic/${candidate.candidateId}`,
+    level: sarifLevel(accepted?.severity || candidate.severity),
+    message: { text: candidate.title },
+    locations: locationsFor(candidate),
+    fingerprints: {
+      "dakar/candidateId": candidate.candidateId,
+      "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
+    },
+    ...accepted ? {} : { suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }] },
+    properties: {
+      dakar: {
+        kind: "semantic",
+        candidate: candidateEvidence(candidate),
+        provenance: semanticProvenance(candidate, sourceLedger),
+        audit: verdict ? { ...verdict } : null,
+        disposition,
+        clusterId: verdict?.clusterId,
+        cost: sourceLedger ? { ...sourceLedger } : null,
+        pricingTableVersion
       }
-    };
-  }).sort((left, right) => {
-    const leftId = left.fingerprints["dakar/candidateId"];
-    const rightId = right.fingerprints["dakar/candidateId"];
-    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
-  });
+    }
+  };
+}
+function extraDiscardResults(input, candidates, verdicts) {
   const knownCandidateIds = new Set(candidates.map((candidate) => candidate.candidateId));
-  const extraDiscards = (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => ({
+  return (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => ({
     ruleId: `dakar/semantic/${item.candidate.candidateId || "unknown"}`,
     level: "note",
     message: { text: item.reason },
@@ -193,7 +186,9 @@ function assembleSarif(input) {
       }
     }
   }));
-  const gateResults = (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
+}
+function gateSarifResults(input) {
+  return (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
     ruleId: `dakar/gate/${gate.gateId}`,
     level: gate.blocking ? "error" : "warning",
     message: { text: `${gate.name} ${gate.status}: ${gate.command}` },
@@ -207,6 +202,33 @@ function assembleSarif(input) {
       }
     }
   }));
+}
+function gatesAllowExecution(gates) {
+  return gates.every((gate) => gate.status === "passed" || !gate.blocking);
+}
+function assembleSarif(input) {
+  const candidates = [...input.candidates || []];
+  const acceptedById = new Map(
+    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
+  );
+  const verdicts = [...input.verdicts || []];
+  const ledger = [...input.ledger || []];
+  const discardById = new Map(
+    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
+  );
+  const semanticResults = candidates.map((candidate) => {
+    const accepted = acceptedById.get(candidate.candidateId);
+    const discard = discardById.get(candidate.candidateId);
+    const verdict = verdictFor(candidate.candidateId, verdicts);
+    const sourceLedger = ledgerFor(candidate, ledger);
+    return semanticSarifResult(candidate, accepted, discard, verdict, sourceLedger, input.pricingTableVersion);
+  }).sort((left, right) => {
+    const leftId = left.fingerprints["dakar/candidateId"];
+    const rightId = right.fingerprints["dakar/candidateId"];
+    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
+  });
+  const extraDiscards = extraDiscardResults(input, candidates, verdicts);
+  const gateResults = gateSarifResults(input);
   const results = [...gateResults, ...semanticResults, ...extraDiscards];
   const ruleIds = [...new Set(results.map((result) => result.ruleId))].sort();
   const gates = (input.gates || []).map((gate) => ({ ...gate }));
@@ -222,7 +244,7 @@ function assembleSarif(input) {
         }
       },
       invocations: [{
-        executionSuccessful: gates.every((gate) => gate.status === "passed" || !gate.blocking),
+        executionSuccessful: gatesAllowExecution(gates),
         properties: { dakar: { gates } }
       }],
       results,
@@ -350,31 +372,35 @@ function odwEnv(usageLogPath = usageLogFile) {
   return env;
 }
 var usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`);
-function attachReportedUsage(output) {
+function readReportedUsage(logPath) {
   let raw;
   try {
-    raw = readFileSync(usageLogFile, "utf8");
+    raw = readFileSync(logPath, "utf8");
   } catch {
-    return output;
+    return [];
   }
   try {
-    rmSync(usageLogFile, { force: true });
+    rmSync(logPath, { force: true });
   } catch {
   }
-  const lines = raw.split("\n").filter((line) => line.trim() !== "").flatMap((line) => {
+  return raw.split("\n").filter((line) => line.trim() !== "").flatMap((line) => {
     try {
       return [JSON.parse(line)];
     } catch {
       return [];
     }
   });
-  if (lines.length === 0 || typeof output !== "object" || output === null) return output;
+}
+function sumReportedTokens(lines) {
   const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   for (const line of lines) {
     for (const key of Object.keys(totals)) {
       totals[key] += Number(line.usage?.[key]) || 0;
     }
   }
+  return totals;
+}
+function annotateReportedUsage(output, lines, totals) {
   output.metrics = output.metrics || {};
   output.metrics.reportedUsage = lines;
   output.metrics.reportedTokens = totals;
@@ -383,6 +409,14 @@ function attachReportedUsage(output) {
     sarifDakar.reportedUsage = lines;
     sarifDakar.reportedTokens = totals;
   }
+}
+function attachReportedUsage(output) {
+  const lines = readReportedUsage(usageLogFile);
+  if (lines.length === 0) return output;
+  if (typeof output !== "object") return output;
+  if (output === null) return output;
+  const totals = sumReportedTokens(lines);
+  annotateReportedUsage(output, lines, totals);
   return output;
 }
 var OPTION_SPECS = /* @__PURE__ */ new Map([
@@ -596,30 +630,37 @@ function warmContextTool(tool, payload, timeout, deadline) {
   reportContextWarmupOperation(tool, "succeeded", startedAt);
   return { succeeded: true, outcome: "succeeded", deadlineExhausted: false };
 }
+function indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline) {
+  if (warmupTimeout(deadline, 1) === null) {
+    return { attempted: false, succeeded: false, deadlineExhausted: true };
+  }
+  const absolute = join(repoRoot, relPath);
+  if (seen.has(absolute) || !existsSync(absolute)) {
+    return { attempted: false, succeeded: false, deadlineExhausted: false };
+  }
+  seen.add(absolute);
+  const result = warmContextTool("codegraph_index_markdown", { path: absolute }, 12e4, deadline);
+  return { attempted: true, succeeded: result.succeeded, deadlineExhausted: result.deadlineExhausted };
+}
+function markdownWarmupLimitReached(attempts) {
+  return attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS;
+}
+function recordMarkdownWarmupOutcome(summary, result) {
+  if (result.attempted) summary.attempts += 1;
+  if (result.succeeded) summary.successes += 1;
+  if (result.deadlineExhausted) summary.deadlineExhausted = true;
+  return result.deadlineExhausted;
+}
 function warmMarkdownContext(repoRoot, changedFiles, deadline) {
   const candidates = ["AGENTS.md", "README.md"].concat((changedFiles || []).filter((path) => path.endsWith(".md")));
   const seen = /* @__PURE__ */ new Set();
-  let attempts = 0;
-  let successes = 0;
-  let deadlineExhausted = false;
+  const summary = { attempts: 0, successes: 0, deadlineExhausted: false };
   for (const relPath of candidates) {
-    if (attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS) break;
-    if (warmupTimeout(deadline, 1) === null) {
-      deadlineExhausted = true;
-      break;
-    }
-    const absolute = join(repoRoot, relPath);
-    if (seen.has(absolute) || !existsSync(absolute)) continue;
-    seen.add(absolute);
-    attempts += 1;
-    const result = warmContextTool("codegraph_index_markdown", { path: absolute }, 12e4, deadline);
-    if (result.succeeded) successes += 1;
-    if (result.deadlineExhausted) {
-      deadlineExhausted = true;
-      break;
-    }
+    if (markdownWarmupLimitReached(summary.attempts)) break;
+    const result = indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline);
+    if (recordMarkdownWarmupOutcome(summary, result)) break;
   }
-  return { attempts, successes, deadlineExhausted };
+  return summary;
 }
 function contextWarmupOutcome(directory, markdown) {
   if (directory.deadlineExhausted || markdown.deadlineExhausted) return "timed_out";
@@ -880,14 +921,18 @@ function recordReview(output, trustedLocation, prepared) {
   }
   return output;
 }
+function copyReportedMetricsToRecordInput(output) {
+  if (!output) return;
+  if (typeof output !== "object") return;
+  if (!output.recordInput) return;
+  const metrics = output.recordInput.metrics = output.recordInput.metrics || {};
+  if (output.metrics?.reportedUsage !== void 0) metrics.reportedUsage = output.metrics.reportedUsage;
+  if (output.metrics?.reportedTokens !== void 0) metrics.reportedTokens = output.metrics.reportedTokens;
+}
 function finalizeWorkflowResult(output, workflowArgs) {
   attachReportedUsage(output);
   if (workflowArgs.dryRun) return output;
-  if (output && typeof output === "object" && output.recordInput) {
-    const metrics = output.recordInput.metrics = output.recordInput.metrics || {};
-    if (output.metrics?.reportedUsage !== void 0) metrics.reportedUsage = output.metrics.reportedUsage;
-    if (output.metrics?.reportedTokens !== void 0) metrics.reportedTokens = output.metrics.reportedTokens;
-  }
+  copyReportedMetricsToRecordInput(output);
   return recordReview(
     output,
     { "repo-root": workflowArgs.repoRoot, "state-root": workflowArgs.stateRoot },
@@ -956,6 +1001,41 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
   }
   throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`);
 }
+async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
+  process.stderr.write(
+    `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch
+`
+  );
+  try {
+    return { output: await waitForOdwResult(options, workflowArgs, runId, 5e3) };
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify(
+        {
+          ok: false,
+          stage: "odw-logs",
+          runId,
+          error: error.message || `timed out following ODW run after ${options.timeout || 3600}s and no result was available`
+        },
+        null,
+        2
+      )}
+`
+    );
+    return { status: 1 };
+  }
+}
+function reportOdwLaunchFailure(result) {
+  const error = {
+    ok: false,
+    stage: "odw",
+    status: result.status,
+    error: result.stderr.trim() || result.stdout.trim() || "ODW failed"
+  };
+  process.stderr.write(`${JSON.stringify(error, null, 2)}
+`);
+  return { status: result.status || 1 };
+}
 async function runOdwWithTelemetry(options, workflowArgs) {
   const odwBin = options.odwBin || "odw";
   const result = spawnSync(odwBin, buildOdwRunArgs(options, workflowArgs, false), {
@@ -964,15 +1044,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
     env: odwEnv()
   });
   if (result.status !== 0) {
-    const error = {
-      ok: false,
-      stage: "odw",
-      status: result.status,
-      error: result.stderr.trim() || result.stdout.trim() || "ODW failed"
-    };
-    process.stderr.write(`${JSON.stringify(error, null, 2)}
-`);
-    return { status: result.status || 1 };
+    return reportOdwLaunchFailure(result);
   }
   if (result.stderr.trim()) {
     process.stderr.write(`${result.stderr.trim()}
@@ -985,28 +1057,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
 `);
   const logStatus = await followOdwLogs(odwBin, buildRunScopedArgs("logs", options, runId, ["--follow"]), timeoutMs);
   if (logStatus === 124) {
-    process.stderr.write(
-      `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch
-`
-    );
-    try {
-      return { output: await waitForOdwResult(options, workflowArgs, runId, 5e3) };
-    } catch (error) {
-      process.stderr.write(
-        `${JSON.stringify(
-          {
-            ok: false,
-            stage: "odw-logs",
-            runId,
-            error: error.message || `timed out following ODW run after ${options.timeout || 3600}s and no result was available`
-          },
-          null,
-          2
-        )}
-`
-      );
-      return { status: 1 };
-    }
+    return recoverOdwResultAfterLogTimeout(options, workflowArgs, runId);
   }
   if (logStatus !== 0) {
     process.stderr.write(`dakar-review: ODW log stream exited with status ${logStatus}; fetching result anyway
@@ -1121,9 +1172,15 @@ function blockingGateResult(gates, config, prepared) {
     }
   };
 }
+function isRepositoryRelativePath(relativePath) {
+  if (isAbsolute(relativePath)) return false;
+  if (relativePath === "..") return false;
+  if (relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) return false;
+  return true;
+}
 function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
   const relativePath = relative(repoRoot, configPath);
-  if (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
+  if (isRepositoryRelativePath(relativePath)) {
     const revisionPath = relativePath.replaceAll("\\", "/");
     const revision = `${reviewBase}:${revisionPath}`;
     const result = spawnSync("git", ["-C", repoRoot, "show", revision], {
