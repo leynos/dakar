@@ -10,8 +10,9 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { performance } from 'node:perf_hooks'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -31,6 +32,18 @@ import { appendReview, prepare } from '../scripts/review-state.mjs'
 /** ODW's documented default per-model-call timeout in seconds. */
 const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
 
+/** Cap all advisory CodeGraph warmup work, including the CLI probe. */
+const CONTEXT_WARMUP_TIMEOUT_MILLISECONDS = 30_000
+
+/** Bound Markdown indexing attempts even when every MCP call fails. */
+const MAX_MARKDOWN_WARMUP_ATTEMPTS = 20
+
+/** Human-readable completion text for each aggregate context warmup outcome. */
+const CONTEXT_WARMUP_COMPLETION = Object.freeze({
+  succeeded: 'complete',
+  degraded: 'completed with failures',
+  timed_out: 'timed out',
+})
 /**
  * Clamp a per-call timeout to the same default and bounds the workflow applies.
  *
@@ -86,7 +99,7 @@ const piAgentDir = join(packageRoot, 'adapters', 'pi')
  * adapters, returning the temp file path for the CLI's own ODW spawns.
  *
  * The packaged config leaves each adapter call unbounded, so a run-local copy
- * carries the `--per-call-timeout` value (or the documented default) on the three
+ * carries the `--per-call-timeout` value (or the documented default) on every
  * pi Flex adapters only. The file lives under the OS temp directory and is
  * removed after the run, exactly like the usage-log file.
  *
@@ -124,6 +137,70 @@ function odwEnv(usageLogPath = usageLogFile) {
 const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`)
 
 /**
+ * Read and consume the pi extension's JSON-lines usage log.
+ *
+ * @param {string} logPath - path supplied to the pi extension.
+ * @returns {unknown[]} parsed records in order, omitting invalid JSON lines.
+ */
+function readReportedUsage(logPath) {
+  let raw
+  try {
+    raw = readFileSync(logPath, 'utf8')
+  } catch {
+    return []
+  }
+  try {
+    rmSync(logPath, { force: true })
+  } catch {
+    // A leftover temp file is harmless.
+  }
+  return raw
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)]
+      } catch {
+        return []
+      }
+    })
+}
+
+/**
+ * Sum the four reported token fields without changing their numeric coercion.
+ *
+ * @param {unknown[]} lines - parsed usage-log records.
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number }} reported totals.
+ */
+function sumReportedTokens(lines) {
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  for (const line of lines) {
+    for (const key of Object.keys(totals)) {
+      totals[key] += Number(line.usage?.[key]) || 0
+    }
+  }
+  return totals
+}
+
+/**
+ * Stamp reported usage and totals onto workflow metrics and its first SARIF run.
+ *
+ * @param {object} output - parsed workflow result to annotate in place.
+ * @param {unknown[]} lines - parsed usage records retained on the result.
+ * @param {{ input: number, output: number, cacheRead: number, cacheWrite: number }} totals - summed token counts.
+ */
+function annotateReportedUsage(output, lines, totals) {
+  output.metrics = output.metrics || {}
+  output.metrics.reportedUsage = lines
+  output.metrics.reportedTokens = totals
+  const sarifDakar = output.sarif?.runs?.[0]?.properties?.dakar
+  if (sarifDakar && typeof sarifDakar === 'object') {
+    sarifDakar.reportedUsage = lines
+    sarifDakar.reportedTokens = totals
+  }
+}
+
+/**
  * Attach the pi extension's reported usage lines to the workflow output.
  *
  * The extension appends one JSON line per model call to `DAKAR_USAGE_LOG`
@@ -137,42 +214,12 @@ const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.js
  * @returns {object} the same output, annotated when usage lines exist.
  */
 function attachReportedUsage(output) {
-  let raw
-  try {
-    raw = readFileSync(usageLogFile, 'utf8')
-  } catch {
-    return output
-  }
-  try {
-    rmSync(usageLogFile, { force: true })
-  } catch {
-    // A leftover temp file is harmless.
-  }
-  const lines = raw
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)]
-      } catch {
-        return []
-      }
-    })
-  if (lines.length === 0 || typeof output !== 'object' || output === null) return output
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-  for (const line of lines) {
-    for (const key of Object.keys(totals)) {
-      totals[key] += Number(line.usage?.[key]) || 0
-    }
-  }
-  output.metrics = output.metrics || {}
-  output.metrics.reportedUsage = lines
-  output.metrics.reportedTokens = totals
-  const sarifDakar = output.sarif?.runs?.[0]?.properties?.dakar
-  if (sarifDakar && typeof sarifDakar === 'object') {
-    sarifDakar.reportedUsage = lines
-    sarifDakar.reportedTokens = totals
-  }
+  const lines = readReportedUsage(usageLogFile)
+  if (lines.length === 0) return output
+  if (typeof output !== 'object') return output
+  if (output === null) return output
+  const totals = sumReportedTokens(lines)
+  annotateReportedUsage(output, lines, totals)
   return output
 }
 
@@ -214,6 +261,61 @@ const OPTION_SPECS = new Map([
 ])
 
 /**
+ * Resolve one CLI token to its option name, inline value, and specification.
+ *
+ * @param {string} token - argument token to parse.
+ * @returns {{ name: string, inlineValue: string | undefined, spec: { key: string, value: boolean, number?: boolean } }} parsed option details.
+ */
+function readOptionToken(token) {
+  if (!token.startsWith('--')) {
+    throw new Error(`unexpected positional argument: ${token}`)
+  }
+  const [name, inlineValue] = token.slice(2).split(/=(.*)/su, 2)
+  const spec = OPTION_SPECS.get(name)
+  if (!spec) {
+    throw new Error(`unknown option: --${name}`)
+  }
+  return { name, inlineValue, spec }
+}
+
+/**
+ * Validate that a value option has a value which is not another option token.
+ *
+ * @param {string} name - option name used in the existing diagnostic.
+ * @param {string | undefined} value - inline or following argument value.
+ * @returns {string} validated option value.
+ */
+function requireOptionValue(name, value) {
+  if (value === undefined || value.startsWith('--')) {
+    throw new Error(`--${name} requires a value`)
+  }
+  return value
+}
+
+/**
+ * Consume the value associated with a resolved CLI option.
+ *
+ * @param {string[]} argv - argument tokens, excluding the node/script prefix.
+ * @param {number} index - index of the option token in `argv`.
+ * @param {{ name: string, inlineValue: string | undefined, spec: { key: string, value: boolean, number?: boolean } }} option - resolved option token.
+ * @returns {{ value: string | number | boolean, nextIndex: number }} converted value and next unconsumed token index.
+ */
+function consumeOptionValue(argv, index, option) {
+  const { name, inlineValue, spec } = option
+  if (!spec.value) {
+    if (inlineValue !== undefined) {
+      throw new Error(`--${name} does not take a value`)
+    }
+    return { value: true, nextIndex: index + 1 }
+  }
+  const value = requireOptionValue(name, inlineValue === undefined ? argv[index + 1] : inlineValue)
+  return {
+    value: spec.number ? numberValue(name, value) : value,
+    nextIndex: inlineValue === undefined ? index + 2 : index + 1,
+  }
+}
+
+/**
  * Parse the CLI argument vector into a plain options object.
  *
  * @param {string[]} argv - argument tokens, excluding the node/script prefix.
@@ -221,28 +323,12 @@ const OPTION_SPECS = new Map([
  */
 function parseArgs(argv) {
   const parsed = {}
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index]
-    if (!token.startsWith('--')) {
-      throw new Error(`unexpected positional argument: ${token}`)
-    }
-    const [name, inlineValue] = token.slice(2).split(/=(.*)/su, 2)
-    const spec = OPTION_SPECS.get(name)
-    if (!spec) {
-      throw new Error(`unknown option: --${name}`)
-    }
-    if (!spec.value) {
-      if (inlineValue !== undefined) {
-        throw new Error(`--${name} does not take a value`)
-      }
-      parsed[spec.key] = true
-      continue
-    }
-    const value = inlineValue ?? argv[++index]
-    if (value === undefined || value.startsWith('--')) {
-      throw new Error(`--${name} requires a value`)
-    }
-    parsed[spec.key] = spec.number ? numberValue(name, value) : value
+  let index = 0
+  while (index < argv.length) {
+    const option = readOptionToken(argv[index])
+    const consumed = consumeOptionValue(argv, index, option)
+    parsed[option.spec.key] = consumed.value
+    index = consumed.nextIndex
   }
   return parsed
 }
@@ -291,6 +377,26 @@ function extractRunId(text) {
 }
 
 /**
+ * Run a Git command against a trusted instruction commit and contextualise failures.
+ *
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @param {string[]} args - Git arguments following `-C <repoRoot>`.
+ * @param {{ prefix: string, fallback: string }} failureContext - operation-specific diagnostic details.
+ * @returns {string} unmodified stdout from the successful Git command.
+ */
+function runTrustedInstructionGit(repoRoot, args, failureContext) {
+  const result = spawnSync('git', ['-C', repoRoot, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    throw new Error(`${failureContext.prefix}: ${result.stderr.trim() || failureContext.fallback}`)
+  }
+  return result.stdout
+}
+
+/**
  * Read `AGENTS.md` from the trusted review base, returning null when absent.
  *
  * Content is truncated to 24,000 characters so large files do not overflow
@@ -301,38 +407,402 @@ function extractRunId(text) {
  * @returns {{ source: string, content: string, truncated: boolean } | null} parsed instructions, or null.
  */
 function readAgentInstructions(repoRoot, baseRef) {
-  const revision = spawnSync('git', ['-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (revision.error) throw revision.error
-  if (revision.status !== 0) {
-    throw new Error(`cannot resolve trusted review base ${baseRef}: ${revision.stderr.trim() || 'git rev-parse failed'}`)
-  }
-  const resolvedCommit = revision.stdout.trim()
-  const exists = spawnSync('git', ['-C', repoRoot, 'ls-tree', '-z', resolvedCommit, '--', 'AGENTS.md'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (exists.error) throw exists.error
-  if (exists.status !== 0) {
-    throw new Error(`cannot inspect ${resolvedCommit}:AGENTS.md: ${exists.stderr.trim() || 'git ls-tree failed'}`)
-  }
-  if (exists.stdout === '') return null
-  const result = spawnSync('git', ['-C', repoRoot, 'show', `${resolvedCommit}:AGENTS.md`], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`cannot read ${resolvedCommit}:AGENTS.md: ${result.stderr.trim() || 'git show failed'}`)
-  }
-  const content = result.stdout
+  const resolvedCommit = runTrustedInstructionGit(
+    repoRoot,
+    ['rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`],
+    { prefix: `cannot resolve trusted review base ${baseRef}`, fallback: 'git rev-parse failed' },
+  ).trim()
+  const entries = runTrustedInstructionGit(
+    repoRoot,
+    ['ls-tree', '-z', resolvedCommit, '--', 'AGENTS.md'],
+    { prefix: `cannot inspect ${resolvedCommit}:AGENTS.md`, fallback: 'git ls-tree failed' },
+  )
+  if (entries === '') return null
+  const content = runTrustedInstructionGit(
+    repoRoot,
+    ['show', `${resolvedCommit}:AGENTS.md`],
+    { prefix: `cannot read ${resolvedCommit}:AGENTS.md`, fallback: 'git show failed' },
+  )
   return {
     source: `${resolvedCommit}:AGENTS.md`,
     content: content.slice(0, 24_000),
     truncated: content.length > 24_000,
   }
+}
+
+/**
+ * Derive the `owner/name` GitHub slug from the origin remote, if any.
+ *
+ * The slug parameterizes finder-prompt DeepWiki lookups; a repository without
+ * a GitHub origin simply reviews without DeepWiki guidance.
+ *
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @returns {{ kind: 'slug', value: string } | { kind: 'unavailable' } | { kind: 'error', operation: string }}
+ *   The resolved slug, ordinary absence, or a Git lookup failure.
+ */
+function deriveRepoSlug(repoRoot) {
+  const result = spawnSync('git', ['-C', repoRoot, 'config', '--get', 'remote.origin.url'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  if (result.error) return { kind: 'error', operation: 'reading the origin URL' }
+  if (result.status === 1) return { kind: 'unavailable' }
+  if (result.status !== 0) return { kind: 'error', operation: 'reading the origin URL' }
+  const match = /github\.com[/:]([^/]+)\/([^/\s]+?)(?:\.git)?$/u.exec((result.stdout || '').trim())
+  return match ? { kind: 'slug', value: `${match[1]}/${match[2]}` } : { kind: 'unavailable' }
+}
+
+/**
+ * Add the origin-derived GitHub slug to workflow arguments when available.
+ *
+ * @param {object} workflowArgs - Mutable workflow arguments assembled by the CLI.
+ * @param {string} repoRoot - Absolute path to the repository root.
+ * @returns {void}
+ */
+function addRepoSlug(workflowArgs, repoRoot) {
+  const result = deriveRepoSlug(repoRoot)
+  if (result.kind === 'slug') {
+    workflowArgs.repoSlug = result.value
+  } else if (result.kind === 'error') {
+    process.stderr.write(`dakar-review: Git failed while ${result.operation}; DeepWiki context is unavailable.\n`)
+  }
+}
+
+/**
+ * Determine whether the operator's MCP CLI is available for CodeGraph warmup.
+ *
+ * @param {number | null} timeout - Probe timeout, bounded by the shared deadline.
+ * @returns {{ available: boolean, outcome: string, deadlineExhausted: boolean }}
+ *   The probe result without exposing process output or repository data.
+ */
+function isMcpCliAvailable(timeout) {
+  const startedAt = performance.now()
+  if (timeout === null) {
+    reportContextWarmupOperation('mcp_list_probe', 'deadline_exhausted', startedAt, 'deadline')
+    return { available: false, outcome: 'deadline_exhausted', deadlineExhausted: true }
+  }
+  const probe = spawnSync('mcp', ['--list'], { encoding: 'utf8', timeout })
+  if (!probe.error && probe.status === 0) {
+    reportContextWarmupOperation('mcp_list_probe', 'succeeded', startedAt)
+    return { available: true, outcome: 'succeeded', deadlineExhausted: false }
+  }
+  const deadlineExhausted = probe.error?.code === 'ETIMEDOUT'
+  const outcome = deadlineExhausted ? 'timed_out' : 'failed'
+  reportContextWarmupOperation('mcp_list_probe', outcome, startedAt, warmupFailureCategory(probe.error))
+  return { available: false, outcome, deadlineExhausted }
+}
+
+/**
+ * Convert a subprocess failure into a bounded category without exposing stderr.
+ *
+ * @param {NodeJS.ErrnoException | undefined} error - Spawn or timeout error.
+ * @returns {'timeout' | 'spawn_error' | 'nonzero_exit'} Stable failure category.
+ */
+function warmupFailureCategory(error) {
+  if (!error) return 'nonzero_exit'
+  return error.code === 'ETIMEDOUT' ? 'timeout' : 'spawn_error'
+}
+
+/**
+ * Record one bounded warmup operation on stderr without paths or payloads.
+ *
+ * @param {string} operation - Stable probe or CodeGraph operation name.
+ * @param {string} outcome - Bounded operation outcome.
+ * @param {number} startedAt - Monotonic start time in milliseconds.
+ * @param {string} [failureCategory] - Bounded category, never raw process output.
+ * @returns {void}
+ */
+function reportContextWarmupOperation(operation, outcome, startedAt, failureCategory) {
+  const event = {
+    event: 'context_warmup',
+    type: 'operation',
+    operation,
+    outcome,
+    durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+  }
+  if (failureCategory) event.failureCategory = failureCategory
+  process.stderr.write(`dakar-review: warmup ${JSON.stringify(event)}\n`)
+}
+
+/**
+ * Bound one warmup call to the remaining shared deadline.
+ *
+ * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
+ * @param {number} requestedTimeout - Maximum timeout for this operation.
+ * @returns {number | null} A positive bounded timeout, or null once time expires.
+ */
+function warmupTimeout(deadline, requestedTimeout) {
+  const remaining = deadline - Date.now()
+  return remaining > 0 ? Math.min(requestedTimeout, remaining) : null
+}
+/**
+ * Invoke one advisory CodeGraph indexing tool and report failures on stderr.
+ *
+ * @param {string} tool - CodeGraph MCP tool name.
+ * @param {object} payload - JSON-serializable tool payload.
+ * @param {number} timeout - Maximum invocation time in milliseconds.
+ * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
+ * @returns {{ succeeded: boolean, outcome: string, deadlineExhausted: boolean }}
+ *   Whether the advisory invocation succeeded and consumed the deadline.
+ */
+function warmContextTool(tool, payload, timeout, deadline) {
+  const boundedTimeout = warmupTimeout(deadline, timeout)
+  const startedAt = performance.now()
+  if (boundedTimeout === null) {
+    reportContextWarmupOperation(tool, 'deadline_exhausted', startedAt, 'deadline')
+    return { succeeded: false, outcome: 'deadline_exhausted', deadlineExhausted: true }
+  }
+  const result = spawnSync('mcp', ['codegraph', tool, JSON.stringify(payload)], {
+    encoding: 'utf8',
+    timeout: boundedTimeout,
+  })
+  if (result.error || result.status !== 0) {
+    process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.\n`)
+    const deadlineExhausted = result.error?.code === 'ETIMEDOUT'
+    const outcome = deadlineExhausted ? 'timed_out' : 'failed'
+    reportContextWarmupOperation(tool, outcome, startedAt, warmupFailureCategory(result.error))
+    return { succeeded: false, outcome, deadlineExhausted }
+  }
+  reportContextWarmupOperation(tool, 'succeeded', startedAt)
+  return { succeeded: true, outcome: 'succeeded', deadlineExhausted: false }
+}
+
+/**
+ * Attempt to index one Markdown context path within the shared warmup budget.
+ *
+ * The deadline check intentionally precedes de-duplication and filesystem
+ * checks so every candidate observes the same expiry boundary.
+ *
+ * @param {string} repoRoot - Absolute path to the repository root.
+ * @param {string} relPath - Repository-relative candidate Markdown path.
+ * @param {Set<string>} seen - Absolute paths already indexed or attempted.
+ * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
+ * @returns {{ attempted: boolean, succeeded: boolean, deadlineExhausted: boolean }}
+ *   Whether this candidate was attempted and its advisory indexing outcome.
+ */
+function indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline) {
+  if (warmupTimeout(deadline, 1) === null) {
+    return { attempted: false, succeeded: false, deadlineExhausted: true }
+  }
+  const absolute = join(repoRoot, relPath)
+  if (seen.has(absolute) || !existsSync(absolute)) {
+    return { attempted: false, succeeded: false, deadlineExhausted: false }
+  }
+  seen.add(absolute)
+  const result = warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000, deadline)
+  return { attempted: true, succeeded: result.succeeded, deadlineExhausted: result.deadlineExhausted }
+}
+
+/**
+ * Report whether the Markdown warmup has reached its fixed attempt budget.
+ *
+ * @param {number} attempts - Number of MCP Markdown calls already attempted.
+ * @returns {boolean} Whether another candidate must be skipped.
+ */
+function markdownWarmupLimitReached(attempts) {
+  return attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS
+}
+
+/**
+ * Add one candidate's outcome to the aggregate Markdown warmup counts.
+ *
+ * @param {{ attempts: number, successes: number, deadlineExhausted: boolean }} summary - Mutable aggregate counts.
+ * @param {{ attempted: boolean, succeeded: boolean, deadlineExhausted: boolean }} result - Candidate indexing outcome.
+ * @returns {boolean} Whether the deadline requires the candidate loop to stop.
+ */
+function recordMarkdownWarmupOutcome(summary, result) {
+  if (result.attempted) summary.attempts += 1
+  if (result.succeeded) summary.successes += 1
+  if (result.deadlineExhausted) summary.deadlineExhausted = true
+  return result.deadlineExhausted
+}
+
+/**
+ * Index bounded, existing, unique Markdown context files and count successes.
+ *
+ * @param {string} repoRoot - Absolute path to the repository root.
+ * @param {string[]} changedFiles - Repository-relative changed paths for this review.
+ * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
+ * @returns {{ attempts: number, successes: number, deadlineExhausted: boolean }}
+ *   Attempt and success counts plus whether the shared deadline stopped indexing.
+ */
+function warmMarkdownContext(repoRoot, changedFiles, deadline) {
+  const candidates = ['AGENTS.md', 'README.md'].concat((changedFiles || []).filter((path) => path.endsWith('.md')))
+  const seen = new Set()
+  const summary = { attempts: 0, successes: 0, deadlineExhausted: false }
+  for (const relPath of candidates) {
+    if (markdownWarmupLimitReached(summary.attempts)) break
+    const result = indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline)
+    if (recordMarkdownWarmupOutcome(summary, result)) break
+  }
+  return summary
+}
+
+/**
+ * Classify the whole warmup from its directory and Markdown outcomes.
+ *
+ * @param {{ outcome: string, deadlineExhausted: boolean }} directory - Directory index result.
+ * @param {{ attempts: number, successes: number, deadlineExhausted: boolean }} markdown - Markdown index counts and deadline state.
+ * @returns {'succeeded' | 'degraded' | 'timed_out'} Aggregate warmup outcome.
+ */
+function contextWarmupOutcome(directory, markdown) {
+  if (directory.deadlineExhausted || markdown.deadlineExhausted) return 'timed_out'
+  if (directory.outcome !== 'succeeded' || markdown.successes < markdown.attempts) return 'degraded'
+  return 'succeeded'
+}
+
+/**
+ * Emit a bounded summary of the advisory MCP warmup on stderr.
+ *
+ * @param {object} summary - Bounded warmup statuses, counts, and skip reason.
+ * @returns {void}
+ */
+function reportContextWarmupSummary(summary) {
+  const event = {
+    event: 'context_warmup',
+    type: 'summary',
+    outcome: summary.outcome,
+    durationMs: Math.max(0, Math.round(performance.now() - summary.startedAt)),
+    probeOutcome: summary.probeOutcome,
+    directoryOutcome: summary.directoryOutcome,
+    markdownAttempts: summary.markdownAttempts,
+    markdownSuccesses: summary.markdownSuccesses,
+    deadlineExhausted: summary.deadlineExhausted,
+  }
+  if (summary.skipReason) event.skipReason = summary.skipReason
+  process.stderr.write(`dakar-review: warmup ${JSON.stringify(event)}\n`)
+}
+
+/**
+ * Report that checkout validation prevented warmup without including checkout data.
+ *
+ * @param {'different_head' | 'dirty_checkout' | 'checkout_verification_failed'} skipReason - Bounded reason.
+ * @returns {void}
+ */
+function recordSkippedContextWarmup(skipReason) {
+  reportContextWarmupSummary({
+    outcome: 'skipped',
+    startedAt: performance.now(),
+    probeOutcome: 'not_attempted',
+    directoryOutcome: 'not_attempted',
+    markdownAttempts: 0,
+    markdownSuccesses: 0,
+    deadlineExhausted: false,
+    skipReason,
+  })
+}
+
+/**
+ * Warm the CodeGraph MCP index for the reviewed checkout before finders run.
+ *
+ * Indexes the repository directory, then the markdown context finders are
+ * most likely to consult: the root `AGENTS.md` and `README.md`, plus any
+ * markdown files in the review's changed set (bounded). Warmup is advisory:
+ * a missing `mcp` command or a failed call warns on stderr and never blocks
+ * the review, matching the prompt's instruction to fall back to git when the
+ * tools are unavailable.
+ *
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @param {string[]} changedFiles - repo-relative changed paths for this review.
+ * @returns {void}
+ */
+function warmContextIndex(repoRoot, changedFiles) {
+  const startedAt = performance.now()
+  if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
+    process.stderr.write('dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n')
+    reportContextWarmupSummary({
+      outcome: 'skipped',
+      startedAt,
+      probeOutcome: 'not_attempted',
+      directoryOutcome: 'not_attempted',
+      markdownAttempts: 0,
+      markdownSuccesses: 0,
+      deadlineExhausted: false,
+      skipReason: 'environment',
+    })
+    return
+  }
+  const deadline = Date.now() + CONTEXT_WARMUP_TIMEOUT_MILLISECONDS
+  const probe = isMcpCliAvailable(warmupTimeout(deadline, CONTEXT_WARMUP_TIMEOUT_MILLISECONDS))
+  if (!probe.available) {
+    process.stderr.write('dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n')
+    reportContextWarmupSummary({
+      outcome: 'skipped',
+      startedAt,
+      probeOutcome: probe.outcome,
+      directoryOutcome: 'not_attempted',
+      markdownAttempts: 0,
+      markdownSuccesses: 0,
+      deadlineExhausted: probe.deadlineExhausted,
+      skipReason: probe.deadlineExhausted ? 'deadline_exhausted' : 'mcp_unavailable',
+    })
+    return
+  }
+  process.stderr.write('dakar-review: warming CodeGraph index for the reviewed checkout.\n')
+  const directory = warmContextTool('codegraph_index_directory', { path: repoRoot }, 600_000, deadline)
+  const markdown = warmMarkdownContext(repoRoot, changedFiles, deadline)
+  const outcome = contextWarmupOutcome(directory, markdown)
+  process.stderr.write(
+    `dakar-review: CodeGraph warmup ${CONTEXT_WARMUP_COMPLETION[outcome]} (${markdown.successes} markdown file(s) indexed).\n`,
+  )
+  reportContextWarmupSummary({
+    outcome,
+    startedAt,
+    probeOutcome: probe.outcome,
+    directoryOutcome: directory.outcome,
+    markdownAttempts: markdown.attempts,
+    markdownSuccesses: markdown.successes,
+    deadlineExhausted: outcome === 'timed_out',
+  })
+}
+
+/**
+ * Determine whether the mutable checkout exactly represents the reviewed head.
+ *
+ * @param {string} repoRoot - Absolute path to the reviewed repository root.
+ * @param {string} headCommit - Immutable commit selected for review.
+ * @returns {{ kind: 'clean' | 'different-head' | 'dirty' } | { kind: 'error', operation: string }}
+ *   Whether the checkout matches, is dirty, or could not be inspected.
+ */
+function isCheckedOutReviewHead(repoRoot, headCommit) {
+  const head = spawnSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+  if (head.error || head.status !== 0) return { kind: 'error', operation: 'reading HEAD' }
+  if (head.stdout.trim() !== headCommit) return { kind: 'different-head' }
+  const status = spawnSync('git', ['-C', repoRoot, 'status', '--porcelain', '--untracked-files=all'], { encoding: 'utf8' })
+  if (status.error || status.status !== 0) return { kind: 'error', operation: 'checking worktree status' }
+  return status.stdout === '' ? { kind: 'clean' } : { kind: 'dirty' }
+}
+
+/**
+ * Warm context tools only when the reviewed head is checked out cleanly.
+ *
+ * The environment override takes precedence over checkout inspection so a
+ * deliberate warmup skip retains `warmContextIndex()`'s normal diagnostics.
+ *
+ * @param {string} repoRoot - Absolute path to the reviewed repository root.
+ * @param {object} prepared - Prepared review details, including head and changed files.
+ * @returns {void}
+ */
+function warmReviewedContextIndex(repoRoot, prepared) {
+  const changedFiles = prepared.changedFiles || []
+  if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
+    warmContextIndex(repoRoot, changedFiles)
+    return
+  }
+
+  const checkout = isCheckedOutReviewHead(repoRoot, prepared.headCommit)
+  if (checkout.kind === 'clean') {
+    warmContextIndex(repoRoot, changedFiles)
+    return
+  }
+  if (checkout.kind === 'error') {
+    process.stderr.write(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.\n`)
+    recordSkippedContextWarmup('checkout_verification_failed')
+    return
+  }
+
+  process.stderr.write('dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n')
+  recordSkippedContextWarmup(checkout.kind === 'dirty' ? 'dirty_checkout' : 'different_head')
 }
 
 /**
@@ -353,6 +823,7 @@ function buildWorkflowArgs(options, repoRoot) {
     policy: resolvedConfig.policy,
     repoRoot,
   }
+  addRepoSlug(workflowArgs, repoRoot)
   if (agentInstructions) {
     workflowArgs.agentInstructions = agentInstructions
   }
@@ -459,7 +930,9 @@ function printWorkflowOutput(output, format) {
  * @returns {boolean} whether both are arrays of identical length and order.
  */
 function changedFilesEqual(left, right) {
-  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+  if (!Array.isArray(left)) return false
+  if (!Array.isArray(right)) return false
+  if (left.length !== right.length) return false
   return left.every((value, index) => value === right[index])
 }
 
@@ -561,6 +1034,20 @@ function recordReview(output, trustedLocation, prepared) {
 }
 
 /**
+ * Copy provider-reported metrics into the recordable result when present.
+ *
+ * @param {object} output - the parsed ODW workflow result.
+ */
+function copyReportedMetricsToRecordInput(output) {
+  if (!output) return
+  if (typeof output !== 'object') return
+  if (!output.recordInput) return
+  const metrics = (output.recordInput.metrics = output.recordInput.metrics || {})
+  if (output.metrics?.reportedUsage !== undefined) metrics.reportedUsage = output.metrics.reportedUsage
+  if (output.metrics?.reportedTokens !== undefined) metrics.reportedTokens = output.metrics.reportedTokens
+}
+
+/**
  * Attach reported usage, fold it into recordInput, then record the review.
  *
  * The reported-usage lines are attached (and their token totals folded into
@@ -577,11 +1064,7 @@ function finalizeWorkflowResult(output, workflowArgs) {
   // A dry run never records: there is no prepared snapshot to validate against
   // and no completed head to append.
   if (workflowArgs.dryRun) return output
-  if (output && typeof output === 'object' && output.recordInput) {
-    const metrics = (output.recordInput.metrics = output.recordInput.metrics || {})
-    if (output.metrics?.reportedUsage !== undefined) metrics.reportedUsage = output.metrics.reportedUsage
-    if (output.metrics?.reportedTokens !== undefined) metrics.reportedTokens = output.metrics.reportedTokens
-  }
+  copyReportedMetricsToRecordInput(output)
   return recordReview(
     output,
     { 'repo-root': workflowArgs.repoRoot, 'state-root': workflowArgs.stateRoot },
@@ -658,6 +1141,7 @@ function followOdwLogs(odwBin, args, timeoutMs) {
  * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
  * @returns {Promise<object>} the parsed and (on success) recorded workflow result.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The supplied recovery contract requires this retry loop to remain unchanged.
 async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1000) {
   const odwBin = options.odwBin || 'odw'
   const deadline = Date.now() + timeoutMs
@@ -683,6 +1167,59 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
 }
 
 /**
+ * Give a timed-out log follow a separate five-second result-recovery window.
+ *
+ * @param {object} options - parsed CLI options.
+ * @param {object} workflowArgs - workflow arguments to pass via `--args`.
+ * @param {string} runId - ODW run identifier to recover.
+ * @returns {Promise<{ output?: object, status?: number }>} recovered result or failure status.
+ */
+async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
+  // A hung or outlasted log stream must not abandon a possibly-completed
+  // (and already billed) review: give the result one short grace fetch so
+  // a run that finished while the follow was stuck is still recorded.
+  process.stderr.write(
+    `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch\n`,
+  )
+  try {
+    return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify(
+        {
+          ok: false,
+          stage: 'odw-logs',
+          runId,
+          error:
+            error.message ||
+            `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    return { status: 1 }
+  }
+}
+
+/**
+ * Report an unsuccessful ODW launch using the CLI's established error envelope.
+ *
+ * @param {object} result - synchronous ODW launch result.
+ * @returns {{ status: number }} non-zero command status for the caller.
+ */
+function reportOdwLaunchFailure(result) {
+  const error = {
+    ok: false,
+    stage: 'odw',
+    status: result.status,
+    error: result.stderr.trim() || result.stdout.trim() || 'ODW failed',
+  }
+  process.stderr.write(`${JSON.stringify(error, null, 2)}\n`)
+  return { status: result.status || 1 }
+}
+
+/**
  * Run ODW asynchronously, streaming live log output to stderr while preserving a clean stdout result.
  *
  * Launches a non-waiting `odw run`, follows logs via {@link followOdwLogs}, then
@@ -701,14 +1238,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   })
 
   if (result.status !== 0) {
-    const error = {
-      ok: false,
-      stage: 'odw',
-      status: result.status,
-      error: result.stderr.trim() || result.stdout.trim() || 'ODW failed',
-    }
-    process.stderr.write(`${JSON.stringify(error, null, 2)}\n`)
-    return { status: result.status || 1 }
+    return reportOdwLaunchFailure(result)
   }
 
   if (result.stderr.trim()) {
@@ -720,31 +1250,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   process.stderr.write(`dakar-review: following ODW run ${runId}\n`)
   const logStatus = await followOdwLogs(odwBin, buildRunScopedArgs('logs', options, runId, ['--follow']), timeoutMs)
   if (logStatus === 124) {
-    // A hung or outlasted log stream must not abandon a possibly-completed
-    // (and already billed) review: give the result one short grace fetch so
-    // a run that finished while the follow was stuck is still recorded.
-    process.stderr.write(
-      `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch\n`,
-    )
-    try {
-      return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
-    } catch (error) {
-      process.stderr.write(
-        `${JSON.stringify(
-          {
-            ok: false,
-            stage: 'odw-logs',
-            runId,
-            error:
-              error.message ||
-              `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
-          },
-          null,
-          2,
-        )}\n`,
-      )
-      return { status: 1 }
-    }
+    return recoverOdwResultAfterLogTimeout(options, workflowArgs, runId)
   }
   if (logStatus !== 0) {
     process.stderr.write(`dakar-review: ODW log stream exited with status ${logStatus}; fetching result anyway\n`)
@@ -794,12 +1300,12 @@ Review tuning (bounds enforced by the workflow; the CLI only forwards):
   --max-luna-calls <n>               Maximum Luna Flex finder calls (default: 4)
   --transaction-max-files <n>        Maximum files per finder pack (default: 5)
   --transaction-max-input-tokens <n> Finder input-token estimate (default: 12000)
-  --transaction-max-output-tokens <n> Finder output-token estimate (default: 750)
+  --transaction-max-output-tokens <n> Finder output-token estimate (default: 2000)
   --terra-max-input-tokens <n>       Audit input-token estimate (default: 48000)
-  --terra-max-output-tokens <n>      Audit output-token estimate (default: 2500)
+  --terra-max-output-tokens <n>      Audit output-token estimate (default: 5000)
   --adapter-overhead-tokens <n>      Per-call adapter overhead tokens (default: 13000)
   --max-audit-candidates <n>         Maximum candidates sent to the audit (default: 30)
-  --luna-reasoning <low|medium>      Luna finder reasoning effort (default: low)
+  --luna-reasoning <low|medium|high> Luna finder reasoning effort (default: high)
   --routing-policy <policy>          Routing policy (default: deterministic-flex-v1)
   --flex-attempts <n>                Flex retry attempts per call (default: 3)
   --per-call-timeout <seconds>       Per-model-call timeout (default: 300)
@@ -894,7 +1400,20 @@ function blockingGateResult(gates, config, prepared) {
 }
 
 /**
- * Reads executable gate policy from the trusted review base when repository-local.
+ * Classify a lexical path as repository-local without resolving symlinks.
+ *
+ * @param {string} relativePath - path relative to the reviewed root.
+ * @returns {boolean} whether the path stays lexically inside the root.
+ */
+function isRepositoryRelativePath(relativePath) {
+  if (isAbsolute(relativePath)) return false
+  if (relativePath === '..') return false
+  if (relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) return false
+  return true
+}
+
+/**
+ * Read executable gate policy from the trusted review base when repository-local.
  *
  * A pull request may edit its own working-tree configuration, so executing that
  * text would grant the reviewed head command execution. Repository-local gate
@@ -910,7 +1429,7 @@ function blockingGateResult(gates, config, prepared) {
  */
 function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
   const relativePath = relative(repoRoot, configPath)
-  if (!isAbsolute(relativePath) && relativePath !== '..' && !relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
+  if (isRepositoryRelativePath(relativePath)) {
     const revisionPath = relativePath.replaceAll('\\', '/')
     const revision = `${reviewBase}:${revisionPath}`
     const result = spawnSync('git', ['-C', repoRoot, 'show', revision], {
@@ -928,13 +1447,75 @@ function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
 }
 
 /**
- * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
+ * Complete the host-side preflight required before a live ODW review.
  *
- * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
- * @returns {Promise<number>} process exit code; 0 on success, 1 on failure.
+ * This preserves the CLI boundary: preparation and deterministic failures emit
+ * their terminal result before ODW starts, while advisory authentication,
+ * context-index, and timeout warnings remain on stderr.
+ *
+ * @param {object} options - Parsed CLI options.
+ * @param {string} repoRoot - Absolute path to the reviewed repository root.
+ * @param {object} workflowArgs - Mutable workflow arguments for the ODW run.
+ * @param {string} format - Requested final output format.
+ * @returns {number | null} terminal exit code, or null after successful preflight.
  */
-async function run(argv) {
-  const options = parseArgs(argv)
+function prepareLiveReview(options, repoRoot, workflowArgs, format) {
+  const preparation = prepareReview(options, repoRoot, workflowArgs.config)
+  if (preparation.status !== undefined) return preparation.status
+  if (preparation.skip) {
+    // Route the skip result through the shared printer so it honours --format;
+    // a skip has no reportMarkdown, so markdown falls back to the JSON dump.
+    printWorkflowOutput(preparation.skip, format)
+    return 0
+  }
+  workflowArgs.prepared = preparation.prepared
+  const gateConfig = readTrustedGateConfig(workflowArgs.config, repoRoot, workflowArgs.prepared.reviewBase)
+  const trustedPolicy = parseReviewPolicy(gateConfig, {
+    configPath: `${workflowArgs.config} (trusted review base ${workflowArgs.prepared.reviewBase})`,
+  })
+  workflowArgs.policy = trustedPolicy
+  const deterministicGates = runDeterministicGates(trustedPolicy, repoRoot)
+  workflowArgs.prepared.deterministicGates = deterministicGates
+  if (deterministicGates.some((gate) => gate.blocking && gate.status !== 'passed')) {
+    printWorkflowOutput(blockingGateResult(deterministicGates, workflowArgs.config, workflowArgs.prepared), format)
+    return 1
+  }
+  // Every routing policy clamps to the live deterministic-flex-v1 lane
+  // (config.ts), which dispatches through the pi Flex adapters that resolve the
+  // API key from OPENAI_API_KEY. An unknown policy must not suppress this
+  // warning, so the gate keys off the key alone. Warn rather than fail so a
+  // mocked ODW binary still runs.
+  if (!process.env.OPENAI_API_KEY) {
+    process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
+  }
+  warmReviewedContextIndex(repoRoot, workflowArgs.prepared)
+  // Advisory guard: an outer wait shorter than the retry schedule's worst
+  // case can kill a healthy run before the workflow's own deferral logic
+  // fires. The knob bounds mirror resolveWorkflowConfig's defaults.
+  const worstCase = worstCaseReviewSeconds(
+    {
+      flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),
+      flexInitialBackoffSeconds: clampLikeConfig(options.flexInitialBackoffSeconds, 30, 1, 300),
+      flexMaxBackoffSeconds: clampLikeConfig(options.flexMaxBackoffSeconds, 120, 1, 900),
+      flexJitterSeconds: clampLikeConfig(options.flexJitterSeconds, 10, 0, 60),
+    },
+    clampPerCallTimeout(options.perCallTimeoutSeconds),
+  )
+  if ((options.timeout || 3600) < worstCase) {
+    process.stderr.write(
+      `dakar-review: --timeout ${options.timeout || 3600}s is below the retry schedule's worst case (${worstCase}s); the run may be killed before the workflow can defer.\n`,
+    )
+  }
+  return null
+}
+
+/**
+ * Print a terminal meta-option response when the CLI should not start a review.
+ *
+ * @param {object} options - Parsed CLI options.
+ * @returns {number | null} terminal exit code, or null when review work continues.
+ */
+function metaOptionExitCode(options) {
   if (options.help) {
     process.stdout.write(usage())
     return 0
@@ -943,63 +1524,31 @@ async function run(argv) {
     process.stdout.write('0.1.0\n')
     return 0
   }
+  return null
+}
 
-  const repoRoot = resolve(options.repoRoot || process.cwd())
+/**
+ * Resolve and validate the requested final output format.
+ *
+ * @param {object} options - Parsed CLI options.
+ * @returns {string} the supported JSON or Markdown output format.
+ * @throws {Error} When the requested format is unsupported.
+ */
+function outputFormat(options) {
   const format = options.format || 'json'
-  if (!['json', 'markdown'].includes(format)) {
-    throw new Error('--format must be json or markdown')
-  }
+  if (!['json', 'markdown'].includes(format)) throw new Error('--format must be json or markdown')
+  return format
+}
 
-  const workflowArgs = buildWorkflowArgs(options, repoRoot)
-  if (!options.dryRun) {
-    const preparation = prepareReview(options, repoRoot, workflowArgs.config)
-    if (preparation.status !== undefined) {
-      return preparation.status
-    }
-    if (preparation.skip) {
-      // Route the skip result through the shared printer so it honours --format;
-      // a skip has no reportMarkdown, so markdown falls back to the JSON dump.
-      printWorkflowOutput(preparation.skip, format)
-      return 0
-    }
-    workflowArgs.prepared = preparation.prepared
-    const gateConfig = readTrustedGateConfig(workflowArgs.config, repoRoot, workflowArgs.prepared.reviewBase)
-    const trustedPolicy = parseReviewPolicy(gateConfig, {
-      configPath: `${workflowArgs.config} (trusted review base ${workflowArgs.prepared.reviewBase})`,
-    })
-    workflowArgs.policy = trustedPolicy
-    const deterministicGates = runDeterministicGates(trustedPolicy, repoRoot)
-    workflowArgs.prepared.deterministicGates = deterministicGates
-    if (deterministicGates.some((gate) => gate.blocking && gate.status !== 'passed')) {
-      printWorkflowOutput(blockingGateResult(deterministicGates, workflowArgs.config, workflowArgs.prepared), format)
-      return 1
-    }
-    // Every routing policy clamps to the live deterministic-flex-v1 lane
-    // (config.ts), which dispatches through the pi Flex adapters that resolve the
-    // API key from OPENAI_API_KEY. An unknown policy must not suppress this
-    // warning, so the gate keys off the key alone. Warn rather than fail so a
-    // mocked ODW binary still runs.
-    if (!process.env.OPENAI_API_KEY) {
-      process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
-    }
-    // Advisory guard: an outer wait shorter than the retry schedule's worst
-    // case can kill a healthy run before the workflow's own deferral logic
-    // fires. The knob bounds mirror resolveWorkflowConfig's defaults.
-    const worstCase = worstCaseReviewSeconds(
-      {
-        flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),
-        flexInitialBackoffSeconds: clampLikeConfig(options.flexInitialBackoffSeconds, 30, 1, 300),
-        flexMaxBackoffSeconds: clampLikeConfig(options.flexMaxBackoffSeconds, 120, 1, 900),
-        flexJitterSeconds: clampLikeConfig(options.flexJitterSeconds, 10, 0, 60),
-      },
-      clampPerCallTimeout(options.perCallTimeoutSeconds),
-    )
-    if ((options.timeout || 3600) < worstCase) {
-      process.stderr.write(
-        `dakar-review: --timeout ${options.timeout || 3600}s is below the retry schedule's worst case (${worstCase}s); the run may be killed before the workflow can defer.\n`,
-      )
-    }
-  }
+/**
+ * Launch ODW after preflight and emit its final workflow result.
+ *
+ * @param {object} options - Parsed CLI options, mutated only with the run-local config path.
+ * @param {object} workflowArgs - Prepared workflow arguments for the ODW run.
+ * @param {string} format - Requested final output format.
+ * @returns {Promise<number>} process exit code for the completed ODW result.
+ */
+async function launchOdw(options, workflowArgs, format) {
   // Derive a run-local ODW config that bounds the pi Flex calls with the per-call
   // timeout, then remove it after the run like the usage-log file.
   options.odwConfigPath = writeDerivedOdwConfig(clampPerCallTimeout(options.perCallTimeoutSeconds))
@@ -1015,14 +1564,33 @@ async function run(argv) {
       // A leftover temp file is harmless.
     }
   }
-  if (outcome.status !== undefined) {
-    return outcome.status
-  }
+  if (outcome.status !== undefined) return outcome.status
   // Reported usage is attached and folded into recordInput before recording by
   // finalizeWorkflowResult; nothing further to enrich here.
   const output = outcome.output
   printWorkflowOutput(output, format)
   return output.ok === false ? 1 : 0
+}
+/**
+ * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
+ *
+ * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
+ * @returns {Promise<number>} process exit code; 0 on success, 1 on failure.
+ */
+async function run(argv) {
+  const options = parseArgs(argv)
+  const metaExitCode = metaOptionExitCode(options)
+  if (metaExitCode !== null) return metaExitCode
+
+  const repoRoot = resolve(options.repoRoot || process.cwd())
+  const format = outputFormat(options)
+
+  const workflowArgs = buildWorkflowArgs(options, repoRoot)
+  if (!options.dryRun) {
+    const preflightStatus = prepareLiveReview(options, repoRoot, workflowArgs, format)
+    if (preflightStatus !== null) return preflightStatus
+  }
+  return launchOdw(options, workflowArgs, format)
 }
 
 try {

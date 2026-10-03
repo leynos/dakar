@@ -30,9 +30,15 @@ export function agentInstructionsBlock(context: PromptContext): string {
  * @param task - Trusted task specification with assigned files and finding cap.
  * @param prepared - Trusted reviewed commits and changed-file metadata.
  * @param context - Repository, policy, and trusted instruction context.
+ * @param contextGuidance - Optional translated guidance from a context adapter.
  * @returns A finder prompt with shell-quoted commands limited to assigned files.
  */
-export function taskPrompt(task: ReviewTask, prepared: PreparedReview, context: PromptContext): string {
+export function taskPrompt(
+  task: ReviewTask,
+  prepared: PreparedReview,
+  context: PromptContext,
+  contextGuidance = '',
+): string {
   const files = task.files.join(', ') || '(no changed files)'
   const fileArgs = task.files.map(shellWord).join(' ')
   const scopedDiff = task.files.length > 0
@@ -58,6 +64,8 @@ export function taskPrompt(task: ReviewTask, prepared: PreparedReview, context: 
     'Suggested commands:',
     `git -C ${shellWord(context.repoRoot)} diff --stat ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)}`,
     ...scopedDiff,
+    '',
+    contextGuidance,
   ].join('\n')
 }
 

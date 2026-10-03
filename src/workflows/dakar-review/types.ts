@@ -98,7 +98,10 @@ export interface WorkflowArgs {
   flexMaxBackoffSeconds?: unknown
   /** Raw head ref argument, before falling back to `HEAD` when blank. */
   head?: string
-  /** Raw Luna finder reasoning level; only `medium` overrides the `low` default. */
+  /**
+   * Raw Luna finder reasoning level; accepts `low`, `medium`, and `high`.
+   * Missing or invalid values fall back to `high`.
+   */
   lunaReasoning?: unknown
   /** Raw audit-candidate cap; validated and clamped by `positiveLimit` before use. */
   maxAuditCandidates?: unknown
@@ -138,6 +141,8 @@ export interface WorkflowArgs {
   transactionMaxInputTokens?: unknown
   /** Raw output-token cap for the Luna finder lane; validated and bounded before use. */
   transactionMaxOutputTokens?: unknown
+  /** Optional GitHub `owner/name` slug used to scope DeepWiki repository lookups. */
+  repoSlug?: string
 }
 
 /** Captures the deterministic review range returned by the state helper. */

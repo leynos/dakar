@@ -15,7 +15,8 @@ import {
 } from './candidates.ts'
 import { admit } from './admission.ts'
 import { resolveWorkflowConfig } from './config.ts'
-import { flexLaneRole, modelName } from './model-routing.ts'
+import { contextToolsBlock } from './context-tools.ts'
+import { flexLaneRole, lunaFlexLaneRole, modelName } from './model-routing.ts'
 import { DEFAULT_PRICING_TABLE, estimateWorstCaseUsd } from './pricing.ts'
 import { auditPrompt, taskPrompt } from './prompts.ts'
 import { backoffSeconds, isRetryableFlexError, worstCaseReviewSeconds } from './retry.ts'
@@ -166,6 +167,7 @@ const {
   maxTasks: MAX_TASKS,
   prepared: PREPARED,
   repoRoot: REPO_ROOT,
+  repoSlug: REPO_SLUG,
   reviewPolicy: REVIEW_POLICY,
   reviewModels: REVIEW_MODELS,
   routingPolicy: ROUTING_POLICY,
@@ -190,10 +192,11 @@ const RETRY_CONFIG: FlexRetryConfig = Object.freeze({
 })
 const WORST_CASE_REVIEW_SECONDS = worstCaseReviewSeconds(RETRY_CONFIG, PER_CALL_TIMEOUT_SECONDS)
 // The host selects each Flex lane; ADR 002 forbids an agent promoting itself to
-// a costlier model or service tier. `lunaReasoning` chooses the low or the
-// pre-registered medium escalation adapter for the finder lane.
+// a costlier model or service tier. `lunaReasoning` selects one registered
+// finder lane before any agent dispatch.
 const PRICING_TABLE = DEFAULT_PRICING_TABLE
-const LUNA_LANE = flexLaneRole(LUNA_REASONING === 'medium' ? 'luna-medium' : 'luna')
+const LUNA_ROLE = lunaFlexLaneRole(LUNA_REASONING)
+const LUNA_LANE = flexLaneRole(LUNA_ROLE)
 const TERRA_LANE = flexLaneRole('terra')
 const BUDGET_USD = BUDGET_GBP * PRICING_TABLE.usdPerGbp
 const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
@@ -203,7 +206,7 @@ const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
   cachedInputTokens: 0,
   maxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
 })
-const FLEX_LANES = Object.freeze({ luna: flexLaneRole('luna'), 'luna-medium': flexLaneRole('luna-medium'), terra: TERRA_LANE })
+const FLEX_LANES = Object.freeze({ luna: flexLaneRole('luna'), 'luna-medium': flexLaneRole('luna-medium'), 'luna-low': flexLaneRole('luna-low'), terra: TERRA_LANE })
 // Configuration is resolved host-side by the CLI and supplied verbatim; the
 // workflow no longer re-resolves it through an agent call.
 const CODE_RABBIT_CONFIG = CONFIG_ARG || 'auto'
@@ -213,6 +216,7 @@ const promptContext: PromptContext = Object.freeze({
   policyPath: CODE_RABBIT_CONFIG,
   repoRoot: REPO_ROOT,
 })
+const FINDER_CONTEXT_GUIDANCE = contextToolsBlock(REPO_ROOT, REPO_SLUG)
 // Hard budget admission is wired in M4; for now the audit is told plainly that
 // it is the final model call and is not rewarded for issue volume.
 const REMAINING_BUDGET_NOTE =
@@ -382,7 +386,7 @@ try {
     maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
     maxTasks: MAX_TASKS,
     transactionMaxFiles: TRANSACTION_MAX_FILES,
-    lunaRole: LUNA_LANE.role === 'luna-medium' ? 'luna-medium' : 'luna',
+    lunaRole: LUNA_ROLE,
     maxFindings: MAX_FINDINGS,
   })
   packs = plan.packs
@@ -406,7 +410,7 @@ const admissionState = { budgetUsd: BUDGET_USD, reservedAuditUsd: RESERVED_AUDIT
 const admissionRefusals: AdmissionRefusal[] = []
 const admittedPacks: ReviewTask[] = []
 for (const pack of packs) {
-  const promptChars = taskPrompt(pack, prepared, promptContext).length
+  const promptChars = taskPrompt(pack, prepared, promptContext, FINDER_CONTEXT_GUIDANCE).length
   const inputTokens = Math.min(Math.ceil(promptChars / 4), TRANSACTION_MAX_INPUT_TOKENS) + ADAPTER_OVERHEAD_TOKENS
   const worstCaseUsd = estimateWorstCaseUsd(PRICING_TABLE, {
     model: LUNA_LANE.model,
@@ -453,7 +457,7 @@ const reviewOutcomes = await parallel(
           RETRY_CONFIG,
           `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`,
           () =>
-            agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext), {
+            agent<CandidateResult | null>(taskPrompt(task, prepared, promptContext, FINDER_CONTEXT_GUIDANCE), {
               label: task.taskId,
               phase: 'Review',
               adapter: task.adapter,

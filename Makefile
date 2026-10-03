@@ -1,10 +1,10 @@
-.PHONY: check fmt check-fmt docs-check lint typecheck markdownlint nixie test spelling \
+.PHONY: check fmt check-fmt docs-check lint biome-lint typecheck markdownlint nixie test spelling \
 	workflow-build workflow-freshness workflow-check
 
 MD_FILES := $(shell git ls-files '*.md')
 # Explicit bin/ and scripts/ entries, then every tracked test module via a glob
 # so a newly added test cannot silently escape the node --check pre-flight.
-NODE_MODULES := bin/dakar-review.mjs scripts/build-workflow.mjs scripts/live-review-harness.mjs scripts/odw-config.mjs scripts/review-config.mjs scripts/review-state.mjs $(shell git ls-files 'tests/*.test.mjs' 'tests/helpers/*.mjs')
+NODE_MODULES := bin/dakar-review.mjs bin/dakar-review.bundle.mjs scripts/build-cli.mjs scripts/build-workflow.mjs scripts/live-review-harness.mjs scripts/odw-config.mjs scripts/review-config.mjs scripts/review-state.mjs $(shell git ls-files 'tests/*.test.mjs' 'tests/helpers/*.mjs')
 UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
 UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
 TYPOS_CONFIG_BUILDER_VERSION ?= v0.1.1
@@ -36,7 +36,11 @@ check-fmt:
 		xargs -0 -r sh -c 'for file do test "$$(tail -c 1 "$$file")" = "" || { printf "%s: missing final newline\n" "$$file"; exit 1; }; done' sh
 	$(MDTABLEFIX) --check $(MDTABLEFIX_SELECT) $(MDTABLEFIX_RULES)
 
-lint: markdownlint nixie docs-check
+lint: biome-lint markdownlint nixie docs-check
+
+# Enforce sub-10 cognitive complexity on the authored CLI and SARIF sources.
+biome-lint:
+	@npm run lint:complexity
 
 docs-check:
 	@npm run docs:check
@@ -60,8 +64,10 @@ test:
 
 workflow-build:
 	@npm run workflow:build
+	@npm run cli:build
 
 workflow-freshness:
 	@npm run workflow:freshness
 
 workflow-check: workflow-freshness
+	@npm run cli:freshness

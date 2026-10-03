@@ -1,0 +1,26 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "files": {
+    "include": [
+      "bin/dakar-review.mjs",
+      "src/workflows/dakar-review/sarif.ts"
+    ]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": {
+            "maxAllowedComplexity": 9
+          }
+        }
+      }
+    }
+  },
+  "formatter": {
+    "enabled": false
+  }
+}

@@ -16,7 +16,20 @@ import assert from 'node:assert/strict'
 
 const repoRoot = resolve(new URL('..', import.meta.url).pathname)
 const cliPath = join(repoRoot, 'bin', 'dakar-review.mjs')
+const CONTEXT_WARMUP_EVENT_PREFIX = 'dakar-review: warmup '
+// The CLI's CodeGraph warmup shells out to the operator's `mcp` CLI and can
+// index real directories; tests must never trigger that. Spawned CLIs inherit
+// this through `{ ...process.env }`.
+process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
 const installPath = join(repoRoot, 'install.sh')
+
+/** Parse bounded structured warmup events from the CLI's stderr channel. */
+function contextWarmupEvents(stderr) {
+  return stderr
+    .split('\n')
+    .filter((line) => line.startsWith(CONTEXT_WARMUP_EVENT_PREFIX))
+    .map((line) => JSON.parse(line.slice(CONTEXT_WARMUP_EVENT_PREFIX.length)))
+}
 
 /** Copies the checkout's installation inputs without its dependencies. */
 function makeCleanInstallFixture(t) {
@@ -178,6 +191,26 @@ function runCli(args, options = {}) {
   })
 }
 
+/** Spawns the CLI with context warm-up disabled and both output streams captured. */
+function spawnCli(args, env = {}) {
+  return spawnSync(process.execPath, [cliPath, ...args], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '1', ...env },
+  })
+}
+
+/** Loads the private CLI parser without exporting it from the executable module. */
+function loadCliArgumentParser() {
+  const source = readFileSync(cliPath, 'utf8')
+  const start = source.indexOf('const OPTION_SPECS = new Map([')
+  const end = source.indexOf('\n/**\n * Extract and parse the first JSON object found in a string of text.', start)
+  assert.notEqual(start, -1, 'the CLI option table should exist')
+  assert.notEqual(end, -1, 'the private parser section should have a stable boundary')
+  return new Function(`${source.slice(start, end)}\nreturn parseArgs\n`)()
+}
+
 test('CLI help documents review invocation', () => {
   const output = runCli(['--help'])
 
@@ -336,10 +369,34 @@ process.stdout.write(JSON.stringify(result))
   chmodSync(path, 0o755)
 }
 
+/** Creates a committed AGENTS.md fixture and an ODW that captures workflow args. */
+function setUpAgentInstructionRepo(t, content) {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-agent-instructions-'))
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const targetRepo = join(tempRoot, 'repo')
+  mkdirSync(targetRepo, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  if (content !== undefined) {
+    writeFileSync(join(targetRepo, 'AGENTS.md'), content)
+    execFileSync('git', ['-C', targetRepo, 'add', 'AGENTS.md'])
+  }
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'trusted base'])
+  const fakeOdw = join(tempRoot, 'capture-odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const values = process.argv.slice(2)
+const input = JSON.parse(values[values.indexOf('--args') + 1])
+process.stdout.write(JSON.stringify({ ok: true, receivedArgs: input }))
+`)
+  chmodSync(fakeOdw, 0o755)
+  return { tempRoot, targetRepo, fakeOdw, runsRoot: join(tempRoot, 'runs') }
+}
+
 test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout', () => {
   const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpConfigCaptureRepo()
   const packagedConfig = join(repoRoot, 'odw.config.json')
-  const piAdapters = ['pi-luna-flex', 'pi-luna-flex-medium', 'pi-terra-flex']
+  const piAdapters = ['pi-luna-flex', 'pi-luna-flex-medium', 'pi-luna-flex-high', 'pi-terra-flex', 'pi-terra-flex-high']
   const runOnce = (extraArgs) =>
     JSON.parse(
       runCli(
@@ -404,6 +461,61 @@ for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
     assert.deepEqual(result.receivedArgs[key], expected)
   })
 }
+
+test('CLI forwards a GitHub origin slug and omits a missing origin slug', () => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+  const args = [
+    '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw,
+  ]
+
+  const withoutOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
+  assert.equal(Object.hasOwn(withoutOrigin.receivedArgs, 'repoSlug'), false, 'repoSlug must be omitted when origin is absent')
+
+  execFileSync('git', ['-C', targetRepo, 'remote', 'add', 'origin', 'git@github.com:owner/repository.git'])
+  const withOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
+  assert.equal(withOrigin.receivedArgs.repoSlug, 'owner/repository', 'a GitHub origin must forward its owner/name slug')
+})
+
+test('CLI warns when Git cannot resolve an existing origin URL', () => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+  const wrapperDir = mkdtempSync(join(tmpdir(), 'dakar-git-wrapper-'))
+  const fakeGit = join(wrapperDir, 'git')
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+  execFileSync('git', ['-C', targetRepo, 'remote', 'add', 'origin', 'git@github.com:owner/repository.git'])
+  writeFileSync(
+    fakeGit,
+    `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
+const args = process.argv.slice(2)
+  if (args[0] === '-C' && args[1] === ${JSON.stringify(targetRepo)} && args[2] === 'config' && args[3] === '--get' && args[4] === 'remote.origin.url') {
+  process.stderr.write('simulated origin URL lookup failure\\n')
+  process.exitCode = 128
+} else {
+  const result = spawnSync(${JSON.stringify(realGit)}, args, { encoding: 'utf8' })
+  process.stdout.write(result.stdout || '')
+  process.stderr.write(result.stderr || '')
+  process.exitCode = result.status ?? 1
+}
+`,
+  )
+  chmodSync(fakeGit, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig, PATH: `${wrapperDir}:${process.env.PATH}` },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  const output = JSON.parse(result.stdout)
+  assert.equal(Object.hasOwn(output.receivedArgs, 'repoSlug'), false, 'a failed origin lookup must not invent a DeepWiki slug')
+  assert.match(result.stderr, /Git failed while reading the origin URL; DeepWiki context is unavailable/u)
+})
 
 test('CLI passes normalized policy rather than YAML-only prompt context', () => {
   const { targetRepo, runsRoot, fakeOdw } = setUpArgsCaptureRepo()
@@ -477,6 +589,66 @@ test('CLI rejects a non-numeric value for a numeric review-tuning flag', () => {
   assert.equal(result.status, 1)
   assert.equal(error.stage, 'cli')
   assert.match(error.error, /--budget-gbp must be a number/u)
+})
+
+test('CLI parser preserves empty, inline, repeated, and negative option values', (t) => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+  t.after(() => {
+    rmSync(targetRepo, { recursive: true, force: true })
+    rmSync(runsRoot, { recursive: true, force: true })
+    rmSync(xdgConfig, { recursive: true, force: true })
+  })
+  const baseArgs = ['--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw]
+  const parsed = JSON.parse(runCli([
+    '--dry-run', ...baseArgs,
+    '--budget-gbp', '-1.25',
+    '--routing-policy', 'first-value',
+    '--routing-policy=retained=after=the-first-equals',
+    '--luna-reasoning=',
+    '--max-tasks', '7',
+  ], { env: { XDG_CONFIG_HOME: xdgConfig } })).receivedArgs
+
+  assert.deepEqual(loadCliArgumentParser()([]), {}, 'empty parser input yields a plain empty object')
+  assert.equal(parsed.dryRun, true, 'an inline empty string does not consume the following option token')
+  assert.equal(parsed.budgetGbp, -1.25, 'negative finite numeric values remain valid')
+  assert.equal(parsed.routingPolicy, 'retained=after=the-first-equals', 'inline values preserve text after the first equals')
+  assert.equal(parsed.lunaReasoning, '', 'an empty inline string remains a present value')
+  assert.equal(parsed.maxTasks, 7, 'separate option values are consumed and converted')
+
+  const emptyNumber = JSON.parse(runCli([
+    '--dry-run', ...baseArgs, '--budget-gbp=', '--max-tasks=3',
+  ], { env: { XDG_CONFIG_HOME: xdgConfig } })).receivedArgs
+  assert.equal(emptyNumber.budgetGbp, 0, 'Number("") behaviour is preserved for an empty numeric value')
+  assert.equal(emptyNumber.maxTasks, 3, 'inline values leave subsequent option tokens unconsumed')
+})
+
+test('CLI parser reports structured errors with existing precedence', async (t) => {
+  const cases = [
+    { name: 'empty option-like argument is positional', args: ['unexpected'], error: 'unexpected positional argument: unexpected' },
+    { name: 'unknown option', args: ['--not-real'], error: 'unknown option: --not-real' },
+    { name: 'unknown option is rejected before its value', args: ['--not-real=--value'], error: 'unknown option: --not-real' },
+    { name: 'missing trailing value', args: ['--luna-reasoning'], error: '--luna-reasoning requires a value' },
+    { name: 'next option is not consumed as a value', args: ['--budget-gbp', '--help'], error: '--budget-gbp requires a value' },
+    { name: 'next unknown option is not parsed before missing-value rejection', args: ['--budget-gbp', '--not-real'], error: '--budget-gbp requires a value' },
+    { name: 'inline option-like value', args: ['--luna-reasoning=--help'], error: '--luna-reasoning requires a value' },
+    { name: 'boolean inline value', args: ['--dry-run=true'], error: '--dry-run does not take a value' },
+    { name: 'empty boolean inline value', args: ['--dry-run='], error: '--dry-run does not take a value' },
+    { name: 'non-finite number', args: ['--budget-gbp', 'Infinity'], error: '--budget-gbp must be a number' },
+    { name: 'arguments after help are still validated', args: ['--help', '--not-real'], error: 'unknown option: --not-real' },
+    { name: 'arguments after version are still validated', args: ['--version', '--not-real'], error: 'unknown option: --not-real' },
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      const result = spawnCli(scenario.args)
+      const error = JSON.parse(result.stderr)
+
+      assert.equal(result.status, 1, 'invalid parser input exits with status 1')
+      assert.equal(result.stdout, '', 'parser errors reserve stdout for no result')
+      assert.equal(error.stage, 'cli', 'parser failures use the structured CLI error envelope')
+      assert.equal(error.error, scenario.error, 'the exact parser diagnostic and error order are preserved')
+    })
+  }
 })
 
 test('CLI help documents the review-tuning flags', () => {
@@ -642,6 +814,84 @@ process.stdout.write(JSON.stringify({ ok: true, agentInstructions: input.agentIn
   assert.equal(result.ok, true)
   assert.match(result.agentInstructions.content, /Respect local review policy/u)
   assert.doesNotMatch(result.agentInstructions.content, /Mutable marker/u)
+})
+
+test('CLI omits agentInstructions when the trusted commit has no AGENTS.md', (t) => {
+  const { targetRepo, fakeOdw, runsRoot } = setUpAgentInstructionRepo(t)
+  const result = JSON.parse(runCli([
+    '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+    '--timeout', '20', '--odw-bin', fakeOdw,
+  ]))
+
+  assert.equal(result.ok, true)
+  assert.equal('agentInstructions' in result.receivedArgs, false, 'absent trusted instructions are omitted from workflow args')
+})
+
+test('CLI applies the trusted AGENTS.md truncation limit exactly', (t) => {
+  for (const [label, length, truncated] of [
+    ['at the limit', 24_000, false],
+    ['above the limit', 24_001, true],
+  ]) {
+    const { targetRepo, fakeOdw, runsRoot } = setUpAgentInstructionRepo(t, 'x'.repeat(length))
+    const result = JSON.parse(runCli([
+      '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+      '--timeout', '20', '--odw-bin', fakeOdw,
+    ]))
+
+    assert.equal(result.ok, true, `the CLI completes with AGENTS.md content ${label}`)
+    assert.equal(result.receivedArgs.agentInstructions.content.length, 24_000, `content ${label} has the trusted limit`)
+    assert.equal(result.receivedArgs.agentInstructions.truncated, truncated, `the truncation flag is correct for content ${label}`)
+  }
+})
+
+test('CLI preserves trusted-instruction Git failure diagnostics', async (t) => {
+  for (const operation of ['ls-tree', 'show']) {
+    for (const emptyStderr of [false, true]) {
+      await t.test(`${operation} failure${emptyStderr ? ' with empty stderr' : ''}`, (subtest) => {
+        const { targetRepo, fakeOdw, runsRoot, tempRoot } = setUpAgentInstructionRepo(subtest, 'trusted instructions\n')
+        const toolDir = join(tempRoot, 'git-bin')
+        mkdirSync(toolDir)
+        writeFileSync(join(toolDir, 'git'), `#!/bin/sh
+operation=
+for arg in "$@"; do
+  case "$arg" in ls-tree|show) operation="$arg" ;; esac
+done
+if [ "$operation" = "$DAKAR_TEST_FAIL_GIT_OPERATION" ]; then
+  if [ "$DAKAR_TEST_EMPTY_GIT_STDERR" != 1 ]; then
+    printf 'injected %s failure\\n' "$operation" >&2
+  fi
+  exit 17
+fi
+exec "$DAKAR_TEST_REAL_GIT" "$@"
+`)
+        chmodSync(join(toolDir, 'git'), 0o755)
+        const result = spawnSync(process.execPath, [
+          cliPath, '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+          '--timeout', '20', '--odw-bin', fakeOdw,
+        ], {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            DAKAR_SKIP_CONTEXT_WARMUP: '1',
+            DAKAR_TEST_FAIL_GIT_OPERATION: operation,
+            DAKAR_TEST_EMPTY_GIT_STDERR: emptyStderr ? '1' : '0',
+            DAKAR_TEST_REAL_GIT: '/usr/bin/git',
+            PATH: `${toolDir}:${process.env.PATH}`,
+          },
+        })
+        const error = JSON.parse(result.stderr).error
+        const command = operation === 'ls-tree' ? 'inspect' : 'read'
+        const fallback = operation === 'ls-tree' ? 'git ls-tree failed' : 'git show failed'
+
+        assert.equal(result.status, 1, 'a trusted instruction Git failure exits non-zero')
+        assert.equal(result.stdout, '', 'a trusted instruction Git failure keeps stdout empty')
+        assert.match(error, new RegExp(`^cannot ${command} [0-9a-f]{40}:AGENTS\\.md:`, 'u'), 'the existing operation diagnostic prefix is retained')
+        assert.ok(error.endsWith(emptyStderr ? fallback : `injected ${operation} failure`), 'stderr or the command fallback is preserved')
+      })
+    }
+  }
 })
 
 test('CLI sets PI_CODING_AGENT_DIR and PI_SKIP_VERSION_CHECK on the ODW spawn', () => {
@@ -854,6 +1104,60 @@ test('CLI refuses to record when recordInput contradicts the prepared snapshot',
   assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
 })
 
+test('CLI refuses malformed, incomplete, and reordered changed-file snapshots', async (t) => {
+  const cases = [
+    { name: 'null changedFiles', override: '{ changedFiles: null }', expected: () => null },
+    { name: 'string changedFiles', override: "{ changedFiles: 'b.txt' }", expected: () => 'b.txt' },
+    { name: 'shorter changedFiles', override: '{ changedFiles: [] }', expected: () => [] },
+    { name: 'different path at the same length', override: "{ changedFiles: ['other.txt'] }", expected: () => ['other.txt'] },
+    {
+      name: 'reversed changed-file order',
+      override: '{ changedFiles: [...prepared.changedFiles].reverse() }',
+      expected: (output) => [...output.changedFiles].reverse(),
+      addSecondFile: true,
+    },
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, (subtest) => {
+      const { tempRoot, targetRepo, base } = setUpRecordRepo()
+      subtest.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+      const stateRoot = join(tempRoot, 'trusted-state')
+      const fakeOdw = join(tempRoot, 'odw.mjs')
+      if (scenario.addSecondFile) {
+        writeFileSync(join(targetRepo, 'c.txt'), 'c\n')
+        execFileSync('git', ['-C', targetRepo, 'add', 'c.txt'])
+        execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'second changed file'])
+      }
+      writePreparedEchoOdw(fakeOdw, { recordInputOverride: scenario.override })
+
+      const result = spawnSync(
+        process.execPath,
+        [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+          '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+        {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '1' },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+      const output = JSON.parse(result.stdout)
+
+      assert.equal(result.status, 1, 'a changedFiles mismatch exits non-zero')
+      assert.equal(output.ok, false, 'a changedFiles mismatch marks the result unsuccessful')
+      assert.equal(output.stage, 'record', 'a changedFiles mismatch is reported at the record stage')
+      assert.match(output.error, /recordInput\.changedFiles does not match the prepared review snapshot/u, 'the mismatch diagnostic identifies changedFiles')
+      assert.ok(output.recordInput, 'the mismatched recordInput is preserved for manual retry')
+      assert.deepEqual(output.recordInput.changedFiles, scenario.expected(output), 'the original changedFiles value is preserved')
+      if (scenario.addSecondFile) {
+        assert.equal(output.changedFiles.length, 2, 'the order fixture contains two changed files')
+      }
+      assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false, 'a mismatch never appends review history')
+    })
+  }
+})
+
 test('CLI attaches reported usage before recording so reviews.toml carries the tokens', () => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
   const stateRoot = join(tempRoot, 'trusted-state')
@@ -883,6 +1187,81 @@ appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-terra', usage: { input
   const stateText = readFileSync(output.stateFile, 'utf8')
   assert.match(stateText, /reportedTokens/u)
   assert.match(stateText, /41000/u)
+})
+
+test('CLI consumes usage logs and preserves record metrics across absent, empty, invalid, and mixed records', async (t) => {
+  const usage = { model: 'fixture', usage: { input: '10', output: 4, cacheRead: '3' } }
+  const cases = [
+    { name: 'no log', content: null, records: [] },
+    { name: 'empty log', content: '', records: [] },
+    { name: 'blank and invalid JSON only', content: '\nnot-json\n', records: [] },
+    { name: 'valid records among blanks and invalid JSON', content: `\nnot-json\n${JSON.stringify(usage)}\n${JSON.stringify({ model: 'missing-usage' })}\n`, records: [usage, { model: 'missing-usage' }] },
+  ]
+  for (const scenario of cases) {
+    await t.test(scenario.name, (subtest) => {
+      const { tempRoot, targetRepo, base } = setUpRecordRepo()
+      subtest.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+      const stateRoot = join(tempRoot, 'state')
+      const fakeOdw = join(tempRoot, 'odw.mjs')
+      const logPathCapture = join(tempRoot, 'log-path')
+      writePreparedEchoOdw(fakeOdw, {
+        recordInputOverride: "{ metrics: { existing: 'retained', reportedTokens: { input: 99 }, reportedUsage: ['prior'] } }",
+        bodyPrefix: `appendFileSync(${JSON.stringify(logPathCapture)}, process.env.DAKAR_USAGE_LOG)\n` +
+          `if (${JSON.stringify(scenario.content)} !== null) appendFileSync(process.env.DAKAR_USAGE_LOG, ${JSON.stringify(scenario.content)})`,
+      })
+      const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+        '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+      assert.equal(completed.status, 0, completed.stderr)
+      const output = JSON.parse(completed.stdout)
+      assert.equal(output.recordInput.metrics.existing, 'retained', 'existing record metrics remain intact')
+      assert.equal(output.metrics.taskCount, 2, 'existing output metrics remain intact')
+      const usageLogPath = readFileSync(logPathCapture, 'utf8')
+      assert.equal(existsSync(usageLogPath), false, 'a successfully read usage log is removed')
+      if (scenario.records.length === 0) {
+        assert.equal(output.metrics.reportedUsage, undefined, 'no valid records leave the result unannotated')
+        assert.deepEqual(output.recordInput.metrics.reportedTokens, { input: 99 }, 'absent usage preserves prior token metrics')
+        assert.deepEqual(output.recordInput.metrics.reportedUsage, ['prior'], 'absent usage preserves prior usage metrics')
+      } else {
+        assert.deepEqual(output.metrics.reportedUsage, scenario.records, 'valid records retain their original order')
+        assert.deepEqual(output.metrics.reportedTokens, { input: 10, output: 4, cacheRead: 3, cacheWrite: 0 })
+        assert.deepEqual(output.recordInput.metrics.reportedTokens, output.metrics.reportedTokens)
+        assert.deepEqual(output.sarif.runs[0].properties.dakar.reportedTokens, output.metrics.reportedTokens)
+        assert.match(readFileSync(output.stateFile, 'utf8'), /reportedTokens/u, 'persisted history carries reported totals')
+        assert.match(readFileSync(output.stateFile, 'utf8'), /cacheRead/u, 'persisted history carries the same token fields')
+      }
+    })
+  }
+})
+
+test('CLI initializes absent record metrics before copying reported usage', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writePreparedEchoOdw(fakeOdw, {
+    recordInputOverride: '{ metrics: undefined }',
+    bodyPrefix: "appendFileSync(process.env.DAKAR_USAGE_LOG, JSON.stringify({ usage: { input: 5 } }) + '\\n')",
+  })
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'),
+    '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+  assert.equal(completed.status, 0, completed.stderr)
+  const output = JSON.parse(completed.stdout)
+  assert.deepEqual(output.recordInput.metrics.reportedTokens, { input: 5, output: 0, cacheRead: 0, cacheWrite: 0 })
+})
+
+test('CLI dry-run does not copy reported metrics into recordInput or write history', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, dryRun: true,
+  metrics: { reportedTokens: { input: 7 } }, recordInput: { metrics: { existing: 'retained' } } }))\n`)
+  chmodSync(fakeOdw, 0o755)
+  const stateRoot = join(tempRoot, 'state')
+  const completed = spawnCli(['--dry-run', '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+    '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+  assert.equal(completed.status, 0, completed.stderr)
+  const output = JSON.parse(completed.stdout)
+  assert.deepEqual(output.recordInput.metrics, { existing: 'retained' })
+  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
 })
 
 test('CLI defaults the ODW wait timeout to 3600 seconds when --timeout is omitted', () => {
@@ -1271,6 +1650,56 @@ pre_merge_checks:
   assert.equal(existsSync(marker), false, 'ODW must not run after a trusted-base lookup failure')
 })
 
+test('repository-local gate policy executes the trusted base version for root, nested, and dot-prefixed names', async (t) => {
+  for (const name of ['gates.yaml', 'nested/gates.yaml', '..policy.yaml']) {
+    await t.test(name, (subtest) => {
+      const { tempRoot, targetRepo } = setUpRecordRepo()
+      subtest.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+      const config = join(targetRepo, name)
+      mkdirSync(join(config, '..'), { recursive: true })
+      const baseMarker = join(tempRoot, 'base-gate-ran')
+      const headMarker = join(tempRoot, 'head-gate-ran')
+      const policy = (marker) => `pre_merge_checks:\n  custom_checks:\n    - mode: error\n      name: Trusted fixture\n      command: touch ${marker}\n`
+      writeFileSync(config, policy(baseMarker))
+      execFileSync('git', ['-C', targetRepo, 'add', name])
+      execFileSync('git', ['-C', targetRepo, 'commit', '--amend', '--no-edit'])
+      const trustedBase = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+      writeFileSync(config, policy(headMarker))
+      execFileSync('git', ['-C', targetRepo, 'add', name])
+      execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'change gate policy at head'])
+      const fakeOdw = join(tempRoot, 'odw.mjs')
+      writePreparedEchoOdw(fakeOdw)
+
+      const result = spawnCli(['--repo-root', targetRepo, '--base', trustedBase, '--config', config,
+        '--state-root', join(tempRoot, 'state'), '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(JSON.parse(result.stdout).ok, true)
+      assert.equal(existsSync(baseMarker), true, 'the trusted base gate runs')
+      assert.equal(existsSync(headMarker), false, 'the changed head gate never runs')
+    })
+  }
+})
+
+test('an external sibling configuration stays disk-backed even when its directory shares the repository prefix', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const sibling = `${targetRepo}-peer`
+  mkdirSync(sibling)
+  const marker = join(tempRoot, 'external-gate-ran')
+  const config = join(sibling, 'gates.yaml')
+  writeFileSync(config, `pre_merge_checks:\n  custom_checks:\n    - mode: error\n      name: External fixture\n      command: touch ${marker}\n`)
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writePreparedEchoOdw(fakeOdw)
+
+  const result = spawnCli(['--repo-root', targetRepo, '--base', base, '--config', config,
+    '--state-root', join(tempRoot, 'state'), '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true)
+  assert.equal(existsSync(marker), true, 'the sibling configuration is read from disk')
+})
+
 test('install script installs a callable CLI from a clean checkout', (t) => {
   const missingPrerequisite = ['bun', 'node', 'npm', 'odw'].find(
     (command) => spawnSync(command, ['--version'], { encoding: 'utf8' }).status !== 0,
@@ -1599,6 +2028,374 @@ process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], r
   assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false, 'nothing may be recorded')
 })
 
+test('live CLI warmup indexes unique Markdown context through the MCP CLI', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-mcp-warmup-'))
+  const targetRepo = join(tempRoot, 'repo')
+  const runsRoot = join(tempRoot, 'runs')
+  const stateRoot = join(tempRoot, 'state')
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const mcpLog = join(tempRoot, 'mcp.jsonl')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  mkdirSync(targetRepo, { recursive: true })
+  mkdirSync(mcpDir, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  writeFileSync(join(targetRepo, 'AGENTS.md'), '# Agent instructions\n')
+  writeFileSync(join(targetRepo, 'README.md'), '# Base README\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'AGENTS.md', 'README.md'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base context'])
+  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(targetRepo, 'README.md'), '# Changed README\n')
+  execFileSync('git', ['-C', targetRepo, 'commit', '-am', 'review markdown change'])
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+const invocation = process.argv.slice(2)
+appendFileSync(process.env.DAKAR_MCP_LOG, JSON.stringify(invocation) + '\\n')
+const supported = invocation[0] === '--list' || (
+  invocation[0] === 'codegraph' &&
+  ['codegraph_index_directory', 'codegraph_index_markdown'].includes(invocation[1])
+)
+process.exitCode = supported ? 0 : 1
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+      '--odw-bin', fakeOdw, '--runs-root', runsRoot],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        DAKAR_SKIP_CONTEXT_WARMUP: '',
+        DAKAR_MCP_LOG: mcpLog,
+        PATH: `${mcpDir}:${process.env.PATH}`,
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(invocations[0], ['--list'], 'the MCP availability probe must run before indexing')
+  assert.equal(invocations.some((entry) => entry[1] === 'codegraph_index_directory'), true, 'the reviewed directory must be indexed')
+  const markdownCalls = invocations.filter((entry) => entry[1] === 'codegraph_index_markdown')
+  assert.equal(markdownCalls.filter((entry) => JSON.parse(entry[2]).path.endsWith('README.md')).length, 1, 'duplicate README candidates must be indexed once')
+  assert.equal(markdownCalls.length, 2, 'only the unique existing Markdown candidates must be indexed')
+  assert.match(result.stderr, /CodeGraph warmup complete \(2 markdown file\(s\) indexed\)\./u, 'completion output must count successful Markdown calls')
+
+  const events = contextWarmupEvents(result.stderr)
+  const operations = events.filter((event) => event.type === 'operation')
+  assert.equal(operations.find((event) => event.operation === 'mcp_list_probe')?.outcome, 'succeeded', 'the MCP probe outcome must be observable')
+  assert.equal(operations.find((event) => event.operation === 'codegraph_index_directory')?.outcome, 'succeeded', 'the directory index outcome must be observable')
+  assert.equal(operations.filter((event) => event.operation === 'codegraph_index_markdown').length, 2, 'each Markdown call must emit one operation event')
+  assert.ok(operations.every((event) => Number.isFinite(event.durationMs) && event.durationMs >= 0), 'operation durations must be non-negative')
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.markdownAttempts, 2, 'the summary must report Markdown attempts')
+  assert.equal(summary?.markdownSuccesses, 2, 'the summary must report Markdown successes')
+  assert.equal(summary?.outcome, 'succeeded', 'the summary must report a successful aggregate warmup')
+  assert.equal(summary?.deadlineExhausted, false, 'the summary must report that the shared deadline remained')
+  assert.ok(events.every((event) => !('path' in event) && !('payload' in event)), 'telemetry must not expose paths or MCP payloads')
+})
+
+test('live CLI warns and continues when the MCP availability probe fails', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const mcpLog = join(tempRoot, 'mcp.jsonl')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  mkdirSync(mcpDir, { recursive: true })
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.DAKAR_MCP_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+process.exitCode = 1
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'), '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        DAKAR_SKIP_CONTEXT_WARMUP: '',
+        DAKAR_MCP_LOG: mcpLog,
+        PATH: `${mcpDir}:${process.env.PATH}`,
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true, 'an unavailable MCP CLI must not block ODW review launch')
+  const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(invocations, [['--list']], 'an unsuccessful availability probe must stop MCP indexing')
+  assert.match(result.stderr, /mcp CLI unavailable; skipping CodeGraph warmup\./u, 'the unavailable MCP advisory must be visible on stderr')
+  const events = contextWarmupEvents(result.stderr)
+  const probe = events.find((event) => event.type === 'operation' && event.operation === 'mcp_list_probe')
+  assert.equal(probe?.outcome, 'failed', 'an unsuccessful MCP probe must be visible in telemetry')
+  assert.equal(probe?.failureCategory, 'nonzero_exit', 'the probe failure must use a bounded category')
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.skipReason, 'mcp_unavailable', 'the warmup summary must explain why indexing was skipped')
+})
+
+test('advisory warmup bounds failed Markdown attempts and still launches the review', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-mcp-failures-'))
+  const targetRepo = join(tempRoot, 'repo')
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const mcpLog = join(tempRoot, 'mcp.jsonl')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  mkdirSync(targetRepo, { recursive: true })
+  mkdirSync(mcpDir, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  writeFileSync(join(targetRepo, 'AGENTS.md'), '# Agent instructions\n')
+  writeFileSync(join(targetRepo, 'README.md'), '# Base README\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'AGENTS.md', 'README.md'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base context'])
+  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  for (let index = 0; index < 25; index += 1) {
+    const docs = join(targetRepo, 'docs')
+    mkdirSync(docs, { recursive: true })
+    writeFileSync(join(docs, `changed-${index}.md`), `# Changed ${index}\n`)
+  }
+  execFileSync('git', ['-C', targetRepo, 'add', 'docs'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'many changed markdown files'])
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.DAKAR_MCP_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+process.exitCode = process.argv[2] === '--list' ? 0 : 1
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '', DAKAR_MCP_LOG: mcpLog, PATH: `${mcpDir}:${process.env.PATH}` },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true)
+  const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(invocations[0], ['--list'], 'the MCP availability probe must run before warmup calls')
+  assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_directory').length, 1, 'the directory index must be attempted once')
+  assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_markdown').length, 20, 'failed Markdown calls must still count against the attempt cap')
+  assert.match(result.stderr, /CodeGraph warmup call codegraph_index_directory failed; continuing without it\./u)
+  assert.match(result.stderr, /CodeGraph warmup completed with failures \(0 markdown file\(s\) indexed\)\./u)
+  const events = contextWarmupEvents(result.stderr)
+  const markdownEvents = events.filter((event) => event.type === 'operation' && event.operation === 'codegraph_index_markdown')
+  assert.equal(markdownEvents.length, 20, 'failed Markdown invocations must each have an operation event')
+  assert.ok(markdownEvents.every((event) => event.outcome === 'failed' && event.failureCategory === 'nonzero_exit'), 'failure events must expose only the bounded failure category')
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.outcome, 'degraded', 'failed indexing calls must not be reported as completed successfully')
+  assert.equal(summary?.markdownAttempts, 20, 'the summary must count failed attempts against the cap')
+  assert.equal(summary?.markdownSuccesses, 0, 'the summary must count only successful Markdown calls')
+  assert.equal(summary?.deadlineExhausted, false, 'the attempt cap must not be reported as deadline exhaustion')
+})
+
+test('a timed-out MCP directory call exhausts the shared deadline without blocking ODW', (t) => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-mcp-timeout-'))
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const targetRepo = join(tempRoot, 'repo')
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const mcpLog = join(tempRoot, 'mcp.jsonl')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  mkdirSync(targetRepo, { recursive: true })
+  mkdirSync(mcpDir, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  writeFileSync(join(targetRepo, 'AGENTS.md'), '# Agent instructions\n')
+  writeFileSync(join(targetRepo, 'README.md'), '# Base README\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'AGENTS.md', 'README.md'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base context'])
+  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(targetRepo, 'docs'), 'changed review context\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'docs'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'change review context'])
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+const invocation = process.argv.slice(2)
+appendFileSync(process.env.DAKAR_MCP_LOG, JSON.stringify(invocation) + '\\n')
+if (invocation[0] === '--list') process.exitCode = 0
+else if (invocation[1] === 'codegraph_index_directory') setTimeout(() => {}, 60_000)
+else process.exitCode = 0
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        DAKAR_SKIP_CONTEXT_WARMUP: '',
+        DAKAR_MCP_LOG: mcpLog,
+        PATH: `${mcpDir}:${process.env.PATH}`,
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true, 'a warmup timeout must not block the review')
+  const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(invocations.map((entry) => entry.slice(0, 2)), [
+    ['--list'],
+    ['codegraph', 'codegraph_index_directory'],
+  ], 'the timed-out directory call must prevent later Markdown calls')
+  const events = contextWarmupEvents(result.stderr)
+  const directory = events.find((event) => event.type === 'operation' && event.operation === 'codegraph_index_directory')
+  assert.equal(directory?.outcome, 'timed_out', 'the directory operation must report its timeout')
+  assert.equal(directory?.failureCategory, 'timeout', 'the operation must report a bounded timeout category')
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.outcome, 'timed_out', 'the aggregate warmup must report its exhausted deadline')
+  assert.equal(summary?.deadlineExhausted, true, 'the summary must mark the shared deadline as exhausted')
+  assert.equal(summary?.markdownAttempts, 0, 'no Markdown work starts after the deadline expires')
+  assert.match(result.stderr, /CodeGraph warmup timed out \(0 markdown file\(s\) indexed\)\./u)
+})
+
+test('live reviews skip CodeGraph warmup unless the reviewed head is cleanly checked out', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-mcp-snapshot-'))
+  const targetRepo = join(tempRoot, 'repo')
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+  mkdirSync(targetRepo, { recursive: true })
+  mkdirSync(mcpDir, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  writeFileSync(join(targetRepo, 'base.txt'), 'base\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'base.txt'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base'])
+  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(targetRepo, 'reviewed.txt'), 'reviewed\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'reviewed.txt'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'reviewed head'])
+  const reviewedHead = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(targetRepo, 'later.txt'), 'later\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'later.txt'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'later checkout'])
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.DAKAR_MCP_LOG, 'called\\n')
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const run = (suffix, checkoutDescription, expectedSkipReason, expectedDiagnostic = /reviewed head is not checked out cleanly; skipping CodeGraph warmup\./u) => {
+    const mcpLog = join(tempRoot, `${suffix}.mcp.log`)
+    const result = spawnSync(
+      process.execPath,
+      [cliPath, '--repo-root', targetRepo, '--base', base, '--head', reviewedHead, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, `${suffix}-runs`)],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '', DAKAR_MCP_LOG: mcpLog, PATH: `${mcpDir}:${process.env.PATH}` },
+      },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(JSON.parse(result.stdout).ok, true)
+    assert.equal(existsSync(mcpLog), false, `the MCP CLI must not run for ${checkoutDescription}`)
+    assert.match(result.stderr, expectedDiagnostic, `warmup skip output must explain ${checkoutDescription}`)
+    const events = contextWarmupEvents(result.stderr)
+    const summary = events.find((event) => event.type === 'summary')
+    assert.equal(summary?.outcome, 'skipped', `the warmup summary must mark ${checkoutDescription} as skipped`)
+    assert.equal(summary?.skipReason, expectedSkipReason, `the warmup summary must identify ${checkoutDescription}`)
+    assert.equal(summary?.probeOutcome, 'not_attempted', `the MCP probe must not run for ${checkoutDescription}`)
+    assert.equal(summary?.directoryOutcome, 'not_attempted', `the directory index must not run for ${checkoutDescription}`)
+    assert.equal(summary?.markdownAttempts, 0, `no Markdown indexing must be attempted for ${checkoutDescription}`)
+    assert.equal(summary?.markdownSuccesses, 0, `no Markdown indexing must succeed for ${checkoutDescription}`)
+    assert.deepEqual(
+      events.filter((event) => event.type === 'operation'),
+      [],
+      `no MCP operations must be reported for ${checkoutDescription}`,
+    )
+  }
+
+  run('different-head', 'a different checked-out head', 'different_head')
+  execFileSync('git', ['-C', targetRepo, 'checkout', '--detach', reviewedHead])
+  writeFileSync(join(targetRepo, 'dirty.txt'), 'dirty\n')
+  run('dirty-checkout', 'a dirty worktree at the reviewed head', 'dirty_checkout')
+  rmSync(join(targetRepo, 'dirty.txt'))
+  writeFileSync(
+    join(mcpDir, 'git'),
+    `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
+const args = process.argv.slice(2)
+if (args[0] === '-C' && args[1] === ${JSON.stringify(targetRepo)} && args[2] === 'status' && args[3] === '--porcelain' && args[4] === '--untracked-files=all') {
+  process.stderr.write('simulated worktree status failure\\n')
+  process.exitCode = 128
+} else {
+  const result = spawnSync(${JSON.stringify(realGit)}, args, { encoding: 'utf8' })
+  process.stdout.write(result.stdout || '')
+  process.stderr.write(result.stderr || '')
+  process.exitCode = result.status ?? 1
+}
+`,
+  )
+  chmodSync(join(mcpDir, 'git'), 0o755)
+  run(
+    'git-status-failure',
+    'a Git worktree-status failure',
+    'checkout_verification_failed',
+    /could not verify the reviewed checkout while checking worktree status; skipping CodeGraph warmup\./u,
+  )
+})
+
 test('a hung log follow still fetches and records the completed result', () => {
   const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
   const stateRoot = join(tempRoot, 'trusted-state')
@@ -1650,6 +2447,7 @@ if (mode === 'run') {
   assert.equal(output.ok, true)
   assert.equal(output.recorded.ok, true, 'the completed result must be recorded despite the hung follow')
   assert.equal(output.recorded.headCommit, head)
+  assert.match(result.stderr, /log follow timed out after 1s; attempting one result fetch/u)
 })
 
 test('a failed grace fetch reports the result error in the log envelope', () => {
@@ -1680,8 +2478,87 @@ if (mode === 'run') {
 
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
+  assert.match(result.stderr, /log follow timed out after 1s; attempting one result fetch/u)
   assert.match(result.stderr, /"stage":\s*"odw-logs"/u)
   assert.match(result.stderr, /"error":\s*"grace fetch exploded"/u)
+})
+
+test('a timed-out log follow polls again when its first result fetch is unavailable', (t) => {
+  const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  const preparedPath = join(tempRoot, 'prepared.json')
+  const resultCallsPath = join(tempRoot, 'result-calls')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+const values = process.argv.slice(2)
+if (values[0] === 'run') {
+  const input = JSON.parse(values[values.indexOf('--args') + 1])
+  writeFileSync(${JSON.stringify(preparedPath)}, JSON.stringify(input.prepared))
+  process.stdout.write('started run 20260719-000000-abcdef\\n')
+} else if (values[0] === 'logs') {
+  setInterval(() => {}, 1000)
+} else if (values[0] === 'result') {
+  const calls = existsSync(${JSON.stringify(resultCallsPath)}) ? Number(readFileSync(${JSON.stringify(resultCallsPath)}, 'utf8')) : 0
+  writeFileSync(${JSON.stringify(resultCallsPath)}, String(calls + 1))
+  if (calls === 0) {
+    process.stderr.write('result not available yet\\n')
+    process.exitCode = 3
+  } else {
+    const prepared = JSON.parse(readFileSync(${JSON.stringify(preparedPath)}, 'utf8'))
+    process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], reportMarkdown: 'x', metrics: {},
+      recordInput: { reviewId: 'head-' + prepared.headCommit, baseCommit: prepared.reviewBase,
+        headCommit: prepared.headCommit, commitCount: prepared.commitCount,
+        changedFiles: prepared.changedFiles, models: ['gpt-5.6-luna'], findingsTotal: 0,
+        summary: 'clean', metrics: {} } }))
+  }
+}
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'),
+    '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'])
+  assert.equal(completed.status, 0, completed.stderr)
+  assert.match(completed.stderr, /log follow timed out after 1s; attempting one result fetch/u)
+  assert.equal(Number(readFileSync(resultCallsPath, 'utf8')), 2, 'grace recovery retries an unavailable result')
+  const output = JSON.parse(completed.stdout)
+  assert.equal(output.recorded.ok, true)
+  assert.equal(output.recorded.headCommit, head)
+})
+
+test('a non-timeout log failure warns and still fetches a successful result', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const mode = process.argv[2]
+if (mode === 'run') process.stdout.write('started run 20260719-000000-fedcba\\n')
+if (mode === 'logs') process.exitCode = 7
+if (mode === 'result') process.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
+    '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '2'])
+  assert.equal(completed.status, 0, completed.stderr)
+  assert.match(completed.stderr, /ODW log stream exited with status 7; fetching result anyway/u)
+  assert.equal(JSON.parse(completed.stdout).ok, true)
+})
+
+test('a normal log exit with failed result retrieval reports the odw-result envelope', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const mode = process.argv[2]
+if (mode === 'run') process.stdout.write('started run 20260719-000000-fedcba\\n')
+if (mode === 'result') { process.stderr.write('result fetch failed\\n'); process.exitCode = 42 }
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
+    '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'])
+  assert.equal(completed.status, 1)
+  assert.equal(completed.stdout, '')
+  assert.match(completed.stderr, /"stage":\s*"odw-result"/u)
+  assert.match(completed.stderr, /"error":\s*"result fetch failed"/u)
 })
 
 test('an outer timeout below the retry worst case warns on stderr', () => {
