@@ -1,4 +1,4 @@
-.PHONY: check fmt check-fmt docs-check lint typecheck markdownlint nixie test spelling \
+.PHONY: check fmt check-fmt docs-check lint biome-lint typecheck markdownlint nixie test spelling \
 	workflow-build workflow-freshness workflow-check
 
 MD_FILES := $(shell git ls-files '*.md')
@@ -36,7 +36,11 @@ check-fmt:
 		xargs -0 -r sh -c 'for file do test "$$(tail -c 1 "$$file")" = "" || { printf "%s: missing final newline\n" "$$file"; exit 1; }; done' sh
 	$(MDTABLEFIX) --check $(MDTABLEFIX_SELECT) $(MDTABLEFIX_RULES)
 
-lint: markdownlint nixie docs-check
+lint: biome-lint markdownlint nixie docs-check
+
+# Enforce sub-10 cognitive complexity on the authored CLI and SARIF sources.
+biome-lint:
+	@npm run lint:complexity
 
 docs-check:
 	@npm run docs:check

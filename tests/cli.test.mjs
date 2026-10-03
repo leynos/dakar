@@ -635,6 +635,7 @@ test('CLI parser reports structured errors with existing precedence', async (t) 
     { name: 'empty boolean inline value', args: ['--dry-run='], error: '--dry-run does not take a value' },
     { name: 'non-finite number', args: ['--budget-gbp', 'Infinity'], error: '--budget-gbp must be a number' },
     { name: 'arguments after help are still validated', args: ['--help', '--not-real'], error: 'unknown option: --not-real' },
+    { name: 'arguments after version are still validated', args: ['--version', '--not-real'], error: 'unknown option: --not-real' },
   ]
 
   for (const scenario of cases) {
@@ -1188,6 +1189,81 @@ appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-terra', usage: { input
   assert.match(stateText, /41000/u)
 })
 
+test('CLI consumes usage logs and preserves record metrics across absent, empty, invalid, and mixed records', async (t) => {
+  const usage = { model: 'fixture', usage: { input: '10', output: 4, cacheRead: '3' } }
+  const cases = [
+    { name: 'no log', content: null, records: [] },
+    { name: 'empty log', content: '', records: [] },
+    { name: 'blank and invalid JSON only', content: '\nnot-json\n', records: [] },
+    { name: 'valid records among blanks and invalid JSON', content: `\nnot-json\n${JSON.stringify(usage)}\n${JSON.stringify({ model: 'missing-usage' })}\n`, records: [usage, { model: 'missing-usage' }] },
+  ]
+  for (const scenario of cases) {
+    await t.test(scenario.name, (subtest) => {
+      const { tempRoot, targetRepo, base } = setUpRecordRepo()
+      subtest.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+      const stateRoot = join(tempRoot, 'state')
+      const fakeOdw = join(tempRoot, 'odw.mjs')
+      const logPathCapture = join(tempRoot, 'log-path')
+      writePreparedEchoOdw(fakeOdw, {
+        recordInputOverride: "{ metrics: { existing: 'retained', reportedTokens: { input: 99 }, reportedUsage: ['prior'] } }",
+        bodyPrefix: `appendFileSync(${JSON.stringify(logPathCapture)}, process.env.DAKAR_USAGE_LOG)\n` +
+          `if (${JSON.stringify(scenario.content)} !== null) appendFileSync(process.env.DAKAR_USAGE_LOG, ${JSON.stringify(scenario.content)})`,
+      })
+      const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+        '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+      assert.equal(completed.status, 0, completed.stderr)
+      const output = JSON.parse(completed.stdout)
+      assert.equal(output.recordInput.metrics.existing, 'retained', 'existing record metrics remain intact')
+      assert.equal(output.metrics.taskCount, 2, 'existing output metrics remain intact')
+      const usageLogPath = readFileSync(logPathCapture, 'utf8')
+      assert.equal(existsSync(usageLogPath), false, 'a successfully read usage log is removed')
+      if (scenario.records.length === 0) {
+        assert.equal(output.metrics.reportedUsage, undefined, 'no valid records leave the result unannotated')
+        assert.deepEqual(output.recordInput.metrics.reportedTokens, { input: 99 }, 'absent usage preserves prior token metrics')
+        assert.deepEqual(output.recordInput.metrics.reportedUsage, ['prior'], 'absent usage preserves prior usage metrics')
+      } else {
+        assert.deepEqual(output.metrics.reportedUsage, scenario.records, 'valid records retain their original order')
+        assert.deepEqual(output.metrics.reportedTokens, { input: 10, output: 4, cacheRead: 3, cacheWrite: 0 })
+        assert.deepEqual(output.recordInput.metrics.reportedTokens, output.metrics.reportedTokens)
+        assert.deepEqual(output.sarif.runs[0].properties.dakar.reportedTokens, output.metrics.reportedTokens)
+        assert.match(readFileSync(output.stateFile, 'utf8'), /reportedTokens/u, 'persisted history carries reported totals')
+        assert.match(readFileSync(output.stateFile, 'utf8'), /cacheRead/u, 'persisted history carries the same token fields')
+      }
+    })
+  }
+})
+
+test('CLI initializes absent record metrics before copying reported usage', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writePreparedEchoOdw(fakeOdw, {
+    recordInputOverride: '{ metrics: undefined }',
+    bodyPrefix: "appendFileSync(process.env.DAKAR_USAGE_LOG, JSON.stringify({ usage: { input: 5 } }) + '\\n')",
+  })
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'),
+    '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+  assert.equal(completed.status, 0, completed.stderr)
+  const output = JSON.parse(completed.stdout)
+  assert.deepEqual(output.recordInput.metrics.reportedTokens, { input: 5, output: 0, cacheRead: 0, cacheWrite: 0 })
+})
+
+test('CLI dry-run does not copy reported metrics into recordInput or write history', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, dryRun: true,
+  metrics: { reportedTokens: { input: 7 } }, recordInput: { metrics: { existing: 'retained' } } }))\n`)
+  chmodSync(fakeOdw, 0o755)
+  const stateRoot = join(tempRoot, 'state')
+  const completed = spawnCli(['--dry-run', '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+    '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+  assert.equal(completed.status, 0, completed.stderr)
+  const output = JSON.parse(completed.stdout)
+  assert.deepEqual(output.recordInput.metrics, { existing: 'retained' })
+  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
+})
+
 test('CLI defaults the ODW wait timeout to 3600 seconds when --timeout is omitted', () => {
   const { targetRepo, runsRoot, xdgConfig } = setUpArgsCaptureRepo()
   const fakeOdw = join(targetRepo, 'argv-odw.mjs')
@@ -1572,6 +1648,56 @@ pre_merge_checks:
   assert.match(completed.stderr, /cannot read trusted review configuration/u)
   assert.match(completed.stderr, /\.coderabbit\.yaml/u)
   assert.equal(existsSync(marker), false, 'ODW must not run after a trusted-base lookup failure')
+})
+
+test('repository-local gate policy executes the trusted base version for root, nested, and dot-prefixed names', async (t) => {
+  for (const name of ['gates.yaml', 'nested/gates.yaml', '..policy.yaml']) {
+    await t.test(name, (subtest) => {
+      const { tempRoot, targetRepo } = setUpRecordRepo()
+      subtest.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+      const config = join(targetRepo, name)
+      mkdirSync(join(config, '..'), { recursive: true })
+      const baseMarker = join(tempRoot, 'base-gate-ran')
+      const headMarker = join(tempRoot, 'head-gate-ran')
+      const policy = (marker) => `pre_merge_checks:\n  custom_checks:\n    - mode: error\n      name: Trusted fixture\n      command: touch ${marker}\n`
+      writeFileSync(config, policy(baseMarker))
+      execFileSync('git', ['-C', targetRepo, 'add', name])
+      execFileSync('git', ['-C', targetRepo, 'commit', '--amend', '--no-edit'])
+      const trustedBase = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+      writeFileSync(config, policy(headMarker))
+      execFileSync('git', ['-C', targetRepo, 'add', name])
+      execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'change gate policy at head'])
+      const fakeOdw = join(tempRoot, 'odw.mjs')
+      writePreparedEchoOdw(fakeOdw)
+
+      const result = spawnCli(['--repo-root', targetRepo, '--base', trustedBase, '--config', config,
+        '--state-root', join(tempRoot, 'state'), '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(JSON.parse(result.stdout).ok, true)
+      assert.equal(existsSync(baseMarker), true, 'the trusted base gate runs')
+      assert.equal(existsSync(headMarker), false, 'the changed head gate never runs')
+    })
+  }
+})
+
+test('an external sibling configuration stays disk-backed even when its directory shares the repository prefix', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const sibling = `${targetRepo}-peer`
+  mkdirSync(sibling)
+  const marker = join(tempRoot, 'external-gate-ran')
+  const config = join(sibling, 'gates.yaml')
+  writeFileSync(config, `pre_merge_checks:\n  custom_checks:\n    - mode: error\n      name: External fixture\n      command: touch ${marker}\n`)
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writePreparedEchoOdw(fakeOdw)
+
+  const result = spawnCli(['--repo-root', targetRepo, '--base', base, '--config', config,
+    '--state-root', join(tempRoot, 'state'), '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true)
+  assert.equal(existsSync(marker), true, 'the sibling configuration is read from disk')
 })
 
 test('install script installs a callable CLI from a clean checkout', (t) => {
@@ -2321,6 +2447,7 @@ if (mode === 'run') {
   assert.equal(output.ok, true)
   assert.equal(output.recorded.ok, true, 'the completed result must be recorded despite the hung follow')
   assert.equal(output.recorded.headCommit, head)
+  assert.match(result.stderr, /log follow timed out after 1s; attempting one result fetch/u)
 })
 
 test('a failed grace fetch reports the result error in the log envelope', () => {
@@ -2351,8 +2478,87 @@ if (mode === 'run') {
 
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
+  assert.match(result.stderr, /log follow timed out after 1s; attempting one result fetch/u)
   assert.match(result.stderr, /"stage":\s*"odw-logs"/u)
   assert.match(result.stderr, /"error":\s*"grace fetch exploded"/u)
+})
+
+test('a timed-out log follow polls again when its first result fetch is unavailable', (t) => {
+  const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  const preparedPath = join(tempRoot, 'prepared.json')
+  const resultCallsPath = join(tempRoot, 'result-calls')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+const values = process.argv.slice(2)
+if (values[0] === 'run') {
+  const input = JSON.parse(values[values.indexOf('--args') + 1])
+  writeFileSync(${JSON.stringify(preparedPath)}, JSON.stringify(input.prepared))
+  process.stdout.write('started run 20260719-000000-abcdef\\n')
+} else if (values[0] === 'logs') {
+  setInterval(() => {}, 1000)
+} else if (values[0] === 'result') {
+  const calls = existsSync(${JSON.stringify(resultCallsPath)}) ? Number(readFileSync(${JSON.stringify(resultCallsPath)}, 'utf8')) : 0
+  writeFileSync(${JSON.stringify(resultCallsPath)}, String(calls + 1))
+  if (calls === 0) {
+    process.stderr.write('result not available yet\\n')
+    process.exitCode = 3
+  } else {
+    const prepared = JSON.parse(readFileSync(${JSON.stringify(preparedPath)}, 'utf8'))
+    process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], reportMarkdown: 'x', metrics: {},
+      recordInput: { reviewId: 'head-' + prepared.headCommit, baseCommit: prepared.reviewBase,
+        headCommit: prepared.headCommit, commitCount: prepared.commitCount,
+        changedFiles: prepared.changedFiles, models: ['gpt-5.6-luna'], findingsTotal: 0,
+        summary: 'clean', metrics: {} } }))
+  }
+}
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'),
+    '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'])
+  assert.equal(completed.status, 0, completed.stderr)
+  assert.match(completed.stderr, /log follow timed out after 1s; attempting one result fetch/u)
+  assert.equal(Number(readFileSync(resultCallsPath, 'utf8')), 2, 'grace recovery retries an unavailable result')
+  const output = JSON.parse(completed.stdout)
+  assert.equal(output.recorded.ok, true)
+  assert.equal(output.recorded.headCommit, head)
+})
+
+test('a non-timeout log failure warns and still fetches a successful result', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const mode = process.argv[2]
+if (mode === 'run') process.stdout.write('started run 20260719-000000-fedcba\\n')
+if (mode === 'logs') process.exitCode = 7
+if (mode === 'result') process.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
+    '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '2'])
+  assert.equal(completed.status, 0, completed.stderr)
+  assert.match(completed.stderr, /ODW log stream exited with status 7; fetching result anyway/u)
+  assert.equal(JSON.parse(completed.stdout).ok, true)
+})
+
+test('a normal log exit with failed result retrieval reports the odw-result envelope', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const mode = process.argv[2]
+if (mode === 'run') process.stdout.write('started run 20260719-000000-fedcba\\n')
+if (mode === 'result') { process.stderr.write('result fetch failed\\n'); process.exitCode = 42 }
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
+    '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'])
+  assert.equal(completed.status, 1)
+  assert.equal(completed.stdout, '')
+  assert.match(completed.stderr, /"stage":\s*"odw-result"/u)
+  assert.match(completed.stderr, /"error":\s*"result fetch failed"/u)
 })
 
 test('an outer timeout below the retry worst case warns on stderr', () => {

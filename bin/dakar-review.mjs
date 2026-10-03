@@ -137,6 +137,70 @@ function odwEnv(usageLogPath = usageLogFile) {
 const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`)
 
 /**
+ * Read and consume the pi extension's JSON-lines usage log.
+ *
+ * @param {string} logPath - path supplied to the pi extension.
+ * @returns {unknown[]} parsed records in order, omitting invalid JSON lines.
+ */
+function readReportedUsage(logPath) {
+  let raw
+  try {
+    raw = readFileSync(logPath, 'utf8')
+  } catch {
+    return []
+  }
+  try {
+    rmSync(logPath, { force: true })
+  } catch {
+    // A leftover temp file is harmless.
+  }
+  return raw
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)]
+      } catch {
+        return []
+      }
+    })
+}
+
+/**
+ * Sum the four reported token fields without changing their numeric coercion.
+ *
+ * @param {unknown[]} lines - parsed usage-log records.
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number }} reported totals.
+ */
+function sumReportedTokens(lines) {
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  for (const line of lines) {
+    for (const key of Object.keys(totals)) {
+      totals[key] += Number(line.usage?.[key]) || 0
+    }
+  }
+  return totals
+}
+
+/**
+ * Stamp reported usage and totals onto workflow metrics and its first SARIF run.
+ *
+ * @param {object} output - parsed workflow result to annotate in place.
+ * @param {unknown[]} lines - parsed usage records retained on the result.
+ * @param {{ input: number, output: number, cacheRead: number, cacheWrite: number }} totals - summed token counts.
+ */
+function annotateReportedUsage(output, lines, totals) {
+  output.metrics = output.metrics || {}
+  output.metrics.reportedUsage = lines
+  output.metrics.reportedTokens = totals
+  const sarifDakar = output.sarif?.runs?.[0]?.properties?.dakar
+  if (sarifDakar && typeof sarifDakar === 'object') {
+    sarifDakar.reportedUsage = lines
+    sarifDakar.reportedTokens = totals
+  }
+}
+
+/**
  * Attach the pi extension's reported usage lines to the workflow output.
  *
  * The extension appends one JSON line per model call to `DAKAR_USAGE_LOG`
@@ -150,42 +214,12 @@ const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.js
  * @returns {object} the same output, annotated when usage lines exist.
  */
 function attachReportedUsage(output) {
-  let raw
-  try {
-    raw = readFileSync(usageLogFile, 'utf8')
-  } catch {
-    return output
-  }
-  try {
-    rmSync(usageLogFile, { force: true })
-  } catch {
-    // A leftover temp file is harmless.
-  }
-  const lines = raw
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)]
-      } catch {
-        return []
-      }
-    })
-  if (lines.length === 0 || typeof output !== 'object' || output === null) return output
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-  for (const line of lines) {
-    for (const key of Object.keys(totals)) {
-      totals[key] += Number(line.usage?.[key]) || 0
-    }
-  }
-  output.metrics = output.metrics || {}
-  output.metrics.reportedUsage = lines
-  output.metrics.reportedTokens = totals
-  const sarifDakar = output.sarif?.runs?.[0]?.properties?.dakar
-  if (sarifDakar && typeof sarifDakar === 'object') {
-    sarifDakar.reportedUsage = lines
-    sarifDakar.reportedTokens = totals
-  }
+  const lines = readReportedUsage(usageLogFile)
+  if (lines.length === 0) return output
+  if (typeof output !== 'object') return output
+  if (output === null) return output
+  const totals = sumReportedTokens(lines)
+  annotateReportedUsage(output, lines, totals)
   return output
 }
 
@@ -534,6 +568,56 @@ function warmContextTool(tool, payload, timeout, deadline) {
 }
 
 /**
+ * Attempt to index one Markdown context path within the shared warmup budget.
+ *
+ * The deadline check intentionally precedes de-duplication and filesystem
+ * checks so every candidate observes the same expiry boundary.
+ *
+ * @param {string} repoRoot - Absolute path to the repository root.
+ * @param {string} relPath - Repository-relative candidate Markdown path.
+ * @param {Set<string>} seen - Absolute paths already indexed or attempted.
+ * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
+ * @returns {{ attempted: boolean, succeeded: boolean, deadlineExhausted: boolean }}
+ *   Whether this candidate was attempted and its advisory indexing outcome.
+ */
+function indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline) {
+  if (warmupTimeout(deadline, 1) === null) {
+    return { attempted: false, succeeded: false, deadlineExhausted: true }
+  }
+  const absolute = join(repoRoot, relPath)
+  if (seen.has(absolute) || !existsSync(absolute)) {
+    return { attempted: false, succeeded: false, deadlineExhausted: false }
+  }
+  seen.add(absolute)
+  const result = warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000, deadline)
+  return { attempted: true, succeeded: result.succeeded, deadlineExhausted: result.deadlineExhausted }
+}
+
+/**
+ * Report whether the Markdown warmup has reached its fixed attempt budget.
+ *
+ * @param {number} attempts - Number of MCP Markdown calls already attempted.
+ * @returns {boolean} Whether another candidate must be skipped.
+ */
+function markdownWarmupLimitReached(attempts) {
+  return attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS
+}
+
+/**
+ * Add one candidate's outcome to the aggregate Markdown warmup counts.
+ *
+ * @param {{ attempts: number, successes: number, deadlineExhausted: boolean }} summary - Mutable aggregate counts.
+ * @param {{ attempted: boolean, succeeded: boolean, deadlineExhausted: boolean }} result - Candidate indexing outcome.
+ * @returns {boolean} Whether the deadline requires the candidate loop to stop.
+ */
+function recordMarkdownWarmupOutcome(summary, result) {
+  if (result.attempted) summary.attempts += 1
+  if (result.succeeded) summary.successes += 1
+  if (result.deadlineExhausted) summary.deadlineExhausted = true
+  return result.deadlineExhausted
+}
+
+/**
  * Index bounded, existing, unique Markdown context files and count successes.
  *
  * @param {string} repoRoot - Absolute path to the repository root.
@@ -545,27 +629,13 @@ function warmContextTool(tool, payload, timeout, deadline) {
 function warmMarkdownContext(repoRoot, changedFiles, deadline) {
   const candidates = ['AGENTS.md', 'README.md'].concat((changedFiles || []).filter((path) => path.endsWith('.md')))
   const seen = new Set()
-  let attempts = 0
-  let successes = 0
-  let deadlineExhausted = false
+  const summary = { attempts: 0, successes: 0, deadlineExhausted: false }
   for (const relPath of candidates) {
-    if (attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS) break
-    if (warmupTimeout(deadline, 1) === null) {
-      deadlineExhausted = true
-      break
-    }
-    const absolute = join(repoRoot, relPath)
-    if (seen.has(absolute) || !existsSync(absolute)) continue
-    seen.add(absolute)
-    attempts += 1
-    const result = warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000, deadline)
-    if (result.succeeded) successes += 1
-    if (result.deadlineExhausted) {
-      deadlineExhausted = true
-      break
-    }
+    if (markdownWarmupLimitReached(summary.attempts)) break
+    const result = indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline)
+    if (recordMarkdownWarmupOutcome(summary, result)) break
   }
-  return { attempts, successes, deadlineExhausted }
+  return summary
 }
 
 /**
@@ -964,6 +1034,20 @@ function recordReview(output, trustedLocation, prepared) {
 }
 
 /**
+ * Copy provider-reported metrics into the recordable result when present.
+ *
+ * @param {object} output - the parsed ODW workflow result.
+ */
+function copyReportedMetricsToRecordInput(output) {
+  if (!output) return
+  if (typeof output !== 'object') return
+  if (!output.recordInput) return
+  const metrics = (output.recordInput.metrics = output.recordInput.metrics || {})
+  if (output.metrics?.reportedUsage !== undefined) metrics.reportedUsage = output.metrics.reportedUsage
+  if (output.metrics?.reportedTokens !== undefined) metrics.reportedTokens = output.metrics.reportedTokens
+}
+
+/**
  * Attach reported usage, fold it into recordInput, then record the review.
  *
  * The reported-usage lines are attached (and their token totals folded into
@@ -980,11 +1064,7 @@ function finalizeWorkflowResult(output, workflowArgs) {
   // A dry run never records: there is no prepared snapshot to validate against
   // and no completed head to append.
   if (workflowArgs.dryRun) return output
-  if (output && typeof output === 'object' && output.recordInput) {
-    const metrics = (output.recordInput.metrics = output.recordInput.metrics || {})
-    if (output.metrics?.reportedUsage !== undefined) metrics.reportedUsage = output.metrics.reportedUsage
-    if (output.metrics?.reportedTokens !== undefined) metrics.reportedTokens = output.metrics.reportedTokens
-  }
+  copyReportedMetricsToRecordInput(output)
   return recordReview(
     output,
     { 'repo-root': workflowArgs.repoRoot, 'state-root': workflowArgs.stateRoot },
@@ -1061,6 +1141,7 @@ function followOdwLogs(odwBin, args, timeoutMs) {
  * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
  * @returns {Promise<object>} the parsed and (on success) recorded workflow result.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The supplied recovery contract requires this retry loop to remain unchanged.
 async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1000) {
   const odwBin = options.odwBin || 'odw'
   const deadline = Date.now() + timeoutMs
@@ -1086,6 +1167,59 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
 }
 
 /**
+ * Give a timed-out log follow a separate five-second result-recovery window.
+ *
+ * @param {object} options - parsed CLI options.
+ * @param {object} workflowArgs - workflow arguments to pass via `--args`.
+ * @param {string} runId - ODW run identifier to recover.
+ * @returns {Promise<{ output?: object, status?: number }>} recovered result or failure status.
+ */
+async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
+  // A hung or outlasted log stream must not abandon a possibly-completed
+  // (and already billed) review: give the result one short grace fetch so
+  // a run that finished while the follow was stuck is still recorded.
+  process.stderr.write(
+    `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch\n`,
+  )
+  try {
+    return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify(
+        {
+          ok: false,
+          stage: 'odw-logs',
+          runId,
+          error:
+            error.message ||
+            `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    return { status: 1 }
+  }
+}
+
+/**
+ * Report an unsuccessful ODW launch using the CLI's established error envelope.
+ *
+ * @param {object} result - synchronous ODW launch result.
+ * @returns {{ status: number }} non-zero command status for the caller.
+ */
+function reportOdwLaunchFailure(result) {
+  const error = {
+    ok: false,
+    stage: 'odw',
+    status: result.status,
+    error: result.stderr.trim() || result.stdout.trim() || 'ODW failed',
+  }
+  process.stderr.write(`${JSON.stringify(error, null, 2)}\n`)
+  return { status: result.status || 1 }
+}
+
+/**
  * Run ODW asynchronously, streaming live log output to stderr while preserving a clean stdout result.
  *
  * Launches a non-waiting `odw run`, follows logs via {@link followOdwLogs}, then
@@ -1104,14 +1238,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   })
 
   if (result.status !== 0) {
-    const error = {
-      ok: false,
-      stage: 'odw',
-      status: result.status,
-      error: result.stderr.trim() || result.stdout.trim() || 'ODW failed',
-    }
-    process.stderr.write(`${JSON.stringify(error, null, 2)}\n`)
-    return { status: result.status || 1 }
+    return reportOdwLaunchFailure(result)
   }
 
   if (result.stderr.trim()) {
@@ -1123,31 +1250,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   process.stderr.write(`dakar-review: following ODW run ${runId}\n`)
   const logStatus = await followOdwLogs(odwBin, buildRunScopedArgs('logs', options, runId, ['--follow']), timeoutMs)
   if (logStatus === 124) {
-    // A hung or outlasted log stream must not abandon a possibly-completed
-    // (and already billed) review: give the result one short grace fetch so
-    // a run that finished while the follow was stuck is still recorded.
-    process.stderr.write(
-      `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch\n`,
-    )
-    try {
-      return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
-    } catch (error) {
-      process.stderr.write(
-        `${JSON.stringify(
-          {
-            ok: false,
-            stage: 'odw-logs',
-            runId,
-            error:
-              error.message ||
-              `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
-          },
-          null,
-          2,
-        )}\n`,
-      )
-      return { status: 1 }
-    }
+    return recoverOdwResultAfterLogTimeout(options, workflowArgs, runId)
   }
   if (logStatus !== 0) {
     process.stderr.write(`dakar-review: ODW log stream exited with status ${logStatus}; fetching result anyway\n`)
@@ -1297,7 +1400,20 @@ function blockingGateResult(gates, config, prepared) {
 }
 
 /**
- * Reads executable gate policy from the trusted review base when repository-local.
+ * Classify a lexical path as repository-local without resolving symlinks.
+ *
+ * @param {string} relativePath - path relative to the reviewed root.
+ * @returns {boolean} whether the path stays lexically inside the root.
+ */
+function isRepositoryRelativePath(relativePath) {
+  if (isAbsolute(relativePath)) return false
+  if (relativePath === '..') return false
+  if (relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) return false
+  return true
+}
+
+/**
+ * Read executable gate policy from the trusted review base when repository-local.
  *
  * A pull request may edit its own working-tree configuration, so executing that
  * text would grant the reviewed head command execution. Repository-local gate
@@ -1313,7 +1429,7 @@ function blockingGateResult(gates, config, prepared) {
  */
 function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
   const relativePath = relative(repoRoot, configPath)
-  if (!isAbsolute(relativePath) && relativePath !== '..' && !relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
+  if (isRepositoryRelativePath(relativePath)) {
     const revisionPath = relativePath.replaceAll('\\', '/')
     const revision = `${reviewBase}:${revisionPath}`
     const result = spawnSync('git', ['-C', repoRoot, 'show', revision], {
