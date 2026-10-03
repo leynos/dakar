@@ -37,6 +37,13 @@ const CONTEXT_WARMUP_TIMEOUT_MILLISECONDS = 30_000
 
 /** Bound Markdown indexing attempts even when every MCP call fails. */
 const MAX_MARKDOWN_WARMUP_ATTEMPTS = 20
+
+/** Human-readable completion text for each aggregate context warmup outcome. */
+const CONTEXT_WARMUP_COMPLETION = Object.freeze({
+  succeeded: 'complete',
+  degraded: 'completed with failures',
+  timed_out: 'timed out',
+})
 /**
  * Clamp a per-call timeout to the same default and bounds the workflow applies.
  *
@@ -562,6 +569,19 @@ function warmMarkdownContext(repoRoot, changedFiles, deadline) {
 }
 
 /**
+ * Classify the whole warmup from its directory and Markdown outcomes.
+ *
+ * @param {{ outcome: string, deadlineExhausted: boolean }} directory - Directory index result.
+ * @param {{ attempts: number, successes: number, deadlineExhausted: boolean }} markdown - Markdown index counts and deadline state.
+ * @returns {'succeeded' | 'degraded' | 'timed_out'} Aggregate warmup outcome.
+ */
+function contextWarmupOutcome(directory, markdown) {
+  if (directory.deadlineExhausted || markdown.deadlineExhausted) return 'timed_out'
+  if (directory.outcome !== 'succeeded' || markdown.successes < markdown.attempts) return 'degraded'
+  return 'succeeded'
+}
+
+/**
  * Emit a bounded summary of the advisory MCP warmup on stderr.
  *
  * @param {object} summary - Bounded warmup statuses, counts, and skip reason.
@@ -651,15 +671,18 @@ function warmContextIndex(repoRoot, changedFiles) {
   process.stderr.write('dakar-review: warming CodeGraph index for the reviewed checkout.\n')
   const directory = warmContextTool('codegraph_index_directory', { path: repoRoot }, 600_000, deadline)
   const markdown = warmMarkdownContext(repoRoot, changedFiles, deadline)
-  process.stderr.write(`dakar-review: CodeGraph warmup complete (${markdown.successes} markdown file(s) indexed).\n`)
+  const outcome = contextWarmupOutcome(directory, markdown)
+  process.stderr.write(
+    `dakar-review: CodeGraph warmup ${CONTEXT_WARMUP_COMPLETION[outcome]} (${markdown.successes} markdown file(s) indexed).\n`,
+  )
   reportContextWarmupSummary({
-    outcome: 'completed',
+    outcome,
     startedAt,
     probeOutcome: probe.outcome,
     directoryOutcome: directory.outcome,
     markdownAttempts: markdown.attempts,
     markdownSuccesses: markdown.successes,
-    deadlineExhausted: directory.deadlineExhausted || markdown.deadlineExhausted,
+    deadlineExhausted: outcome === 'timed_out',
   })
 }
 

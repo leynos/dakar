@@ -1977,6 +1977,7 @@ process.exitCode = supported ? 0 : 1
   const summary = events.find((event) => event.type === 'summary')
   assert.equal(summary?.markdownAttempts, 2, 'the summary must report Markdown attempts')
   assert.equal(summary?.markdownSuccesses, 2, 'the summary must report Markdown successes')
+  assert.equal(summary?.outcome, 'succeeded', 'the summary must report a successful aggregate warmup')
   assert.equal(summary?.deadlineExhausted, false, 'the summary must report that the shared deadline remained')
   assert.ok(events.every((event) => !('path' in event) && !('payload' in event)), 'telemetry must not expose paths or MCP payloads')
 })
@@ -2088,15 +2089,88 @@ process.exitCode = process.argv[2] === '--list' ? 0 : 1
   assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_directory').length, 1, 'the directory index must be attempted once')
   assert.equal(invocations.filter((entry) => entry[1] === 'codegraph_index_markdown').length, 20, 'failed Markdown calls must still count against the attempt cap')
   assert.match(result.stderr, /CodeGraph warmup call codegraph_index_directory failed; continuing without it\./u)
-  assert.match(result.stderr, /CodeGraph warmup complete \(0 markdown file\(s\) indexed\)\./u)
+  assert.match(result.stderr, /CodeGraph warmup completed with failures \(0 markdown file\(s\) indexed\)\./u)
   const events = contextWarmupEvents(result.stderr)
   const markdownEvents = events.filter((event) => event.type === 'operation' && event.operation === 'codegraph_index_markdown')
   assert.equal(markdownEvents.length, 20, 'failed Markdown invocations must each have an operation event')
   assert.ok(markdownEvents.every((event) => event.outcome === 'failed' && event.failureCategory === 'nonzero_exit'), 'failure events must expose only the bounded failure category')
   const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.outcome, 'degraded', 'failed indexing calls must not be reported as completed successfully')
   assert.equal(summary?.markdownAttempts, 20, 'the summary must count failed attempts against the cap')
   assert.equal(summary?.markdownSuccesses, 0, 'the summary must count only successful Markdown calls')
   assert.equal(summary?.deadlineExhausted, false, 'the attempt cap must not be reported as deadline exhaustion')
+})
+
+test('a timed-out MCP directory call exhausts the shared deadline without blocking ODW', (t) => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-mcp-timeout-'))
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const targetRepo = join(tempRoot, 'repo')
+  const mcpDir = join(tempRoot, 'mcp-bin')
+  const mcpLog = join(tempRoot, 'mcp.jsonl')
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  mkdirSync(targetRepo, { recursive: true })
+  mkdirSync(mcpDir, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  writeFileSync(join(targetRepo, 'AGENTS.md'), '# Agent instructions\n')
+  writeFileSync(join(targetRepo, 'README.md'), '# Base README\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'AGENTS.md', 'README.md'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base context'])
+  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(targetRepo, 'docs'), 'changed review context\n')
+  execFileSync('git', ['-C', targetRepo, 'add', 'docs'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'change review context'])
+  writeFileSync(
+    join(mcpDir, 'mcp'),
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs'
+const invocation = process.argv.slice(2)
+appendFileSync(process.env.DAKAR_MCP_LOG, JSON.stringify(invocation) + '\\n')
+if (invocation[0] === '--list') process.exitCode = 0
+else if (invocation[1] === 'codegraph_index_directory') setTimeout(() => {}, 60_000)
+else process.exitCode = 0
+`,
+  )
+  chmodSync(join(mcpDir, 'mcp'), 0o755)
+  writeFileSync(
+    fakeOdw,
+    "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, recordWithheld: { reason: 'fixture' } }))\n",
+  )
+  chmodSync(fakeOdw, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        DAKAR_SKIP_CONTEXT_WARMUP: '',
+        DAKAR_MCP_LOG: mcpLog,
+        PATH: `${mcpDir}:${process.env.PATH}`,
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true, 'a warmup timeout must not block the review')
+  const invocations = readFileSync(mcpLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(invocations.map((entry) => entry.slice(0, 2)), [
+    ['--list'],
+    ['codegraph', 'codegraph_index_directory'],
+  ], 'the timed-out directory call must prevent later Markdown calls')
+  const events = contextWarmupEvents(result.stderr)
+  const directory = events.find((event) => event.type === 'operation' && event.operation === 'codegraph_index_directory')
+  assert.equal(directory?.outcome, 'timed_out', 'the directory operation must report its timeout')
+  assert.equal(directory?.failureCategory, 'timeout', 'the operation must report a bounded timeout category')
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.outcome, 'timed_out', 'the aggregate warmup must report its exhausted deadline')
+  assert.equal(summary?.deadlineExhausted, true, 'the summary must mark the shared deadline as exhausted')
+  assert.equal(summary?.markdownAttempts, 0, 'no Markdown work starts after the deadline expires')
+  assert.match(result.stderr, /CodeGraph warmup timed out \(0 markdown file\(s\) indexed\)\./u)
 })
 
 test('live reviews skip CodeGraph warmup unless the reviewed head is cleanly checked out', () => {

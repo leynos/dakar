@@ -320,6 +320,11 @@ import { appendReview, prepare } from "../scripts/review-state.mjs";
 var DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300;
 var CONTEXT_WARMUP_TIMEOUT_MILLISECONDS = 3e4;
 var MAX_MARKDOWN_WARMUP_ATTEMPTS = 20;
+var CONTEXT_WARMUP_COMPLETION = Object.freeze({
+  succeeded: "complete",
+  degraded: "completed with failures",
+  timed_out: "timed out"
+});
 function clampPerCallTimeout(value = DEFAULT_PER_CALL_TIMEOUT_SECONDS) {
   const floored = Math.floor(Number(value));
   return Number.isFinite(floored) && floored >= 30 ? Math.min(floored, 900) : DEFAULT_PER_CALL_TIMEOUT_SECONDS;
@@ -616,6 +621,11 @@ function warmMarkdownContext(repoRoot, changedFiles, deadline) {
   }
   return { attempts, successes, deadlineExhausted };
 }
+function contextWarmupOutcome(directory, markdown) {
+  if (directory.deadlineExhausted || markdown.deadlineExhausted) return "timed_out";
+  if (directory.outcome !== "succeeded" || markdown.successes < markdown.attempts) return "degraded";
+  return "succeeded";
+}
 function reportContextWarmupSummary(summary) {
   const event = {
     event: "context_warmup",
@@ -679,16 +689,19 @@ function warmContextIndex(repoRoot, changedFiles) {
   process.stderr.write("dakar-review: warming CodeGraph index for the reviewed checkout.\n");
   const directory = warmContextTool("codegraph_index_directory", { path: repoRoot }, 6e5, deadline);
   const markdown = warmMarkdownContext(repoRoot, changedFiles, deadline);
-  process.stderr.write(`dakar-review: CodeGraph warmup complete (${markdown.successes} markdown file(s) indexed).
-`);
+  const outcome = contextWarmupOutcome(directory, markdown);
+  process.stderr.write(
+    `dakar-review: CodeGraph warmup ${CONTEXT_WARMUP_COMPLETION[outcome]} (${markdown.successes} markdown file(s) indexed).
+`
+  );
   reportContextWarmupSummary({
-    outcome: "completed",
+    outcome,
     startedAt,
     probeOutcome: probe.outcome,
     directoryOutcome: directory.outcome,
     markdownAttempts: markdown.attempts,
     markdownSuccesses: markdown.successes,
-    deadlineExhausted: directory.deadlineExhausted || markdown.deadlineExhausted
+    deadlineExhausted: outcome === "timed_out"
   });
 }
 function isCheckedOutReviewHead(repoRoot, headCommit) {
