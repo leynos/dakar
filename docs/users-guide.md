@@ -261,15 +261,17 @@ precedence over repository instructions.
 ### Context tools: CodeGraph and DeepWiki
 
 When the operator's `mcp` CLI is on `PATH`, finder prompts describe two
-optional context tools, and the CLI warms the CodeGraph index before any finder
-is dispatched: it calls `codegraph_index_directory` on the reviewed checkout,
-then `codegraph_index_markdown` on the root `AGENTS.md`, `README.md`, and any
-markdown files in the review's changed set (bounded). Warmup is advisory — a
-missing `mcp` command or a failed call warns on standard error and never blocks
-the review — and can be disabled by setting `DAKAR_SKIP_CONTEXT_WARMUP` in the
-environment. Finders are directed at the CodeGraph query tools (context,
-callers, impact, symbol, and documentation search) in preference to broad file
-reads.
+optional context tools. The CLI attempts CodeGraph warmup before dispatch only
+when the reviewed head is checked out and the worktree is clean; otherwise it
+skips warmup with a warning on standard error. Warmup calls share an overall
+30-second deadline. When eligible, the CLI calls `codegraph_index_directory` on
+the reviewed checkout, then `codegraph_index_markdown` on the root `AGENTS.md`,
+`README.md`, and any markdown files in the review's changed set (bounded).
+Warmup is advisory — a missing `mcp` command or a failed call warns on standard
+error and never blocks the review — and can be disabled by setting
+`DAKAR_SKIP_CONTEXT_WARMUP` in the environment. Finders are directed at the
+CodeGraph query tools (context, callers, impact, symbol, and documentation
+search) in preference to broad file reads.
 
 The CLI also derives the repository's `owner/name` slug from the `origin`
 remote and passes it to the workflow so finder prompts can parameterize

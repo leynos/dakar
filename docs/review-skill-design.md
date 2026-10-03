@@ -244,9 +244,11 @@ The finding-oriented corpus quantified the trade. At low reasoning,
 `netsuke#545` returned zero findings where CodeRabbit had flagged a
 functional-correctness Major; at `--luna-reasoning medium` Dakar accepted the
 same defect at the same anchor (`test_support/src/manifest.rs:109`) for roughly
-four times the reported finder spend. The skill therefore recommends medium
+four times the reported finder spend. The skill therefore recommended medium
 reasoning for suspect or unreviewed branches and the low default for routine
-incremental review.
+incremental review. That low-default recommendation was superseded by the
+2026-08-13 repricing: high reasoning is now the default, with medium and low
+available as de-escalation options.
 
 ### 4.4 CodeRabbit benchmark comparison on pre-review commits
 

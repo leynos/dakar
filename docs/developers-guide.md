@@ -205,7 +205,10 @@ an agent to inspect diffs should use `git -C <repoRoot>` rather than plain
 
 ## 3. CLI conventions
 
-`bin/dakar-review.mjs` is the installable command exposed by `package.json`.
+`package.json` exposes `bin/dakar-review.bundle.mjs` as the installable
+`dakar-review` command. The bundle is generated from `bin/dakar-review.mjs`; do
+not edit it by hand. After changing the CLI source, run `npm run cli:build`,
+and use `npm run cli:freshness` to verify that the committed bundle is current.
 `install.sh` is the canonical installation method. Before asking Bun to install
 Dakar from the absolute checkout path, it installs the locked dependencies into
 that checkout. This is required because Bun links a local package's executable
