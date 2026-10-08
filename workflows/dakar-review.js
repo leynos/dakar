@@ -757,7 +757,8 @@ function semanticProvenance(candidate, sourceLedger) {
     reasoningEffort: sourceLedger?.reasoningEffort
   };
 }
-function semanticSarifResult(candidate, accepted, discard, verdict, sourceLedger, pricingTableVersion) {
+function semanticSarifResult(candidate, evidence, pricingTableVersion) {
+  const { accepted, discard, verdict, sourceLedger } = evidence;
   const disposition = semanticDisposition(accepted, discard, verdict);
   return {
     ruleId: `dakar/semantic/${candidate.candidateId}`,
@@ -839,7 +840,11 @@ function assembleSarif(input) {
     const discard = discardById.get(candidate.candidateId);
     const verdict = verdictFor(candidate.candidateId, verdicts);
     const sourceLedger = ledgerFor(candidate, ledger);
-    return semanticSarifResult(candidate, accepted, discard, verdict, sourceLedger, input.pricingTableVersion);
+    return semanticSarifResult(
+      candidate,
+      { accepted, discard, verdict, sourceLedger },
+      input.pricingTableVersion
+    );
   }).sort((left, right) => {
     const leftId = left.fingerprints["dakar/candidateId"];
     const rightId = right.fingerprints["dakar/candidateId"];

@@ -59,6 +59,18 @@ export interface SarifAssemblyInput {
   verdicts?: Verdict[]
 }
 
+/** Evidence selected for one semantic SARIF result by the assembly pass. */
+interface SemanticSarifEvidence {
+  /** Accepted candidate, when the reviewed candidate was selected. */
+  accepted: Candidate | undefined
+  /** Discard record associated with the candidate, when present. */
+  discard: Discarded | undefined
+  /** Verifier audit verdict associated with the candidate, when present. */
+  verdict: Verdict | undefined
+  /** Source ledger row supplying the candidate's routing provenance. */
+  sourceLedger: LedgerEntry | undefined
+}
+
 /** Returns a stable severity mapping for SARIF result levels. */
 function sarifLevel(severity: string): 'error' | 'warning' | 'note' {
   if (severity === 'critical' || severity === 'high') return 'error'
@@ -144,12 +156,10 @@ function semanticProvenance(candidate: Candidate, sourceLedger: LedgerEntry | un
 /** Project one normalized candidate into the canonical semantic SARIF shape. */
 function semanticSarifResult(
   candidate: Candidate,
-  accepted: Candidate | undefined,
-  discard: Discarded | undefined,
-  verdict: Verdict | undefined,
-  sourceLedger: LedgerEntry | undefined,
+  evidence: SemanticSarifEvidence,
   pricingTableVersion: string,
 ) {
+  const { accepted, discard, verdict, sourceLedger } = evidence
   const disposition = semanticDisposition(accepted, discard, verdict)
   return {
     ruleId: `dakar/semantic/${candidate.candidateId}`,
@@ -252,7 +262,11 @@ export function assembleSarif(input: SarifAssemblyInput): DakarSarif {
       const discard = discardById.get(candidate.candidateId)
       const verdict = verdictFor(candidate.candidateId, verdicts)
       const sourceLedger = ledgerFor(candidate, ledger)
-      return semanticSarifResult(candidate, accepted, discard, verdict, sourceLedger, input.pricingTableVersion)
+      return semanticSarifResult(
+        candidate,
+        { accepted, discard, verdict, sourceLedger },
+        input.pricingTableVersion,
+      )
     })
     .sort((left, right) => {
       const leftId = left.fingerprints['dakar/candidateId']
