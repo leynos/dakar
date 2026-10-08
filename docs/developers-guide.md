@@ -26,7 +26,7 @@ diagrams.
 Use focused commands while iterating:
 
 ```bash
-node --test tests/cli.test.mjs
+node --test tests/cli.test.mjs tests/install.test.mjs
 node --test tests/review-state.test.mjs
 node --test tests/workflow-dry-run.test.mjs
 npm run odw:dry-run
@@ -219,7 +219,7 @@ Dakar from the absolute checkout path, it installs the locked dependencies into
 that checkout. This is required because Bun links a local package's executable
 back to its source, from which Node cannot resolve Bun's separate global
 dependency tree. Keep the clean-checkout installation test in
-`tests/cli.test.mjs` representative of this layout. The installer owns an
+`tests/install.test.mjs` representative of this layout. The installer owns an
 `.dakar-install.lock` directory under Bun's configured global installation root
 and acquires it before `npm ci`; the lock remains held through
 `bun remove -g dakar` and `bun install -g "$script_dir"` so concurrent runs

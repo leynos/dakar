@@ -18,7 +18,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
     "test:state": "node --test tests/review-state.test.mjs",
-    "test:cli": "node --test tests/cli.test.mjs",
+    "test:cli": "node --test tests/cli.test.mjs tests/install.test.mjs",
     "cli:build": "node scripts/build-cli.mjs",
     "cli:freshness": "node scripts/build-cli.mjs --check",
     "workflow:build": "node scripts/build-workflow.mjs",
