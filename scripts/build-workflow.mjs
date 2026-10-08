@@ -21,7 +21,6 @@ const RUNTIME_MODULES = [
   'admission.ts',
   'candidates.ts',
   'config.ts',
-  'context-tools.ts',
   'main.ts',
   'model-routing.ts',
   'pricing.ts',

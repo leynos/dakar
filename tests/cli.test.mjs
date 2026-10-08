@@ -308,18 +308,21 @@ for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
   })
 }
 
-test('CLI forwards a GitHub origin slug and omits a missing origin slug', () => {
+test('CLI translates GitHub origin context and reports DeepWiki unavailable without a slug', () => {
   const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
   const args = [
     '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw,
   ]
 
   const withoutOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
-  assert.equal(Object.hasOwn(withoutOrigin.receivedArgs, 'repoSlug'), false, 'repoSlug must be omitted when origin is absent')
+  assert.equal(Object.hasOwn(withoutOrigin.receivedArgs, 'repoSlug'), false, 'GitHub identity must not cross into workflow arguments')
+  assert.match(withoutOrigin.receivedArgs.contextGuidance, /DeepWiki: unavailable for this repository/u, 'guidance must explain missing DeepWiki identity')
 
   execFileSync('git', ['-C', targetRepo, 'remote', 'add', 'origin', 'git@github.com:owner/repository.git'])
   const withOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
-  assert.equal(withOrigin.receivedArgs.repoSlug, 'owner/repository', 'a GitHub origin must forward its owner/name slug')
+  assert.equal(Object.hasOwn(withOrigin.receivedArgs, 'repoSlug'), false, 'the workflow contract must stay vendor-neutral')
+  assert.match(withOrigin.receivedArgs.contextGuidance, /owner\/repository/u, 'host-rendered guidance must use the resolved repository identity')
+  assert.match(withOrigin.receivedArgs.contextGuidance, /mcp deepwiki ask_question/u, 'a GitHub origin enables repository-scoped DeepWiki guidance')
 })
 
 test('CLI warns when Git cannot resolve an existing origin URL', () => {
@@ -359,7 +362,8 @@ const args = process.argv.slice(2)
 
   assert.equal(result.status, 0, result.stderr)
   const output = JSON.parse(result.stdout)
-  assert.equal(Object.hasOwn(output.receivedArgs, 'repoSlug'), false, 'a failed origin lookup must not invent a DeepWiki slug')
+  assert.equal(Object.hasOwn(output.receivedArgs, 'repoSlug'), false, 'a failed origin lookup must not pass GitHub identity to the workflow')
+  assert.match(output.receivedArgs.contextGuidance, /DeepWiki: unavailable for this repository/u, 'failed identity lookup must use unavailable DeepWiki guidance')
   assert.match(result.stderr, /Git failed while reading the origin URL; DeepWiki context is unavailable/u)
 })
 
@@ -1021,18 +1025,19 @@ appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-terra', usage: { input
     runCli(['--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')]),
   )
 
-  assert.equal(output.ok, true)
-  assert.equal(Array.isArray(output.metrics.reportedUsage), true)
-  assert.equal(output.metrics.reportedUsage.length, 2)
-  assert.deepEqual(output.metrics.reportedTokens, { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 })
-  assert.equal(output.sarif.runs[0].properties.dakar.reportedUsage.length, 2)
+  assert.equal(output.ok, true, 'usage-bearing ODW output completes successfully')
+  assert.equal(Array.isArray(output.metrics.reportedUsage), true, 'reported usage is attached as an ordered array')
+  assert.equal(output.metrics.reportedUsage.length, 2, 'both model usage records are retained')
+  assert.deepEqual(output.metrics.reportedTokens, { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 }, 'reported tokens sum across model records')
+  assert.equal(output.sarif.runs[0].properties.dakar.reportedUsage.length, 2, 'SARIF carries the same usage records')
   assert.deepEqual(
     output.sarif.runs[0].properties.dakar.reportedTokens,
     { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 },
+    'SARIF carries the same reported token totals',
   )
   const stateText = readFileSync(output.stateFile, 'utf8')
-  assert.match(stateText, /reportedTokens/u)
-  assert.match(stateText, /41000/u)
+  assert.match(stateText, /reportedTokens/u, 'persisted review history contains reported token metrics')
+  assert.match(stateText, /41000/u, 'persisted review history contains the summed input token count')
 })
 
 test('CLI consumes usage logs and preserves record metrics across absent, empty, invalid, and mixed records', async (t) => {
@@ -1057,8 +1062,9 @@ test('CLI consumes usage logs and preserves record metrics across absent, empty,
       })
       const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
         '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
-      assert.equal(completed.status, 0, completed.stderr)
+      assert.equal(completed.status, 0, completed.stderr || 'a valid usage log must not fail the CLI')
       const output = JSON.parse(completed.stdout)
+      assert.equal(output.ok, true, 'a well-formed usage-log fixture completes successfully')
       assert.equal(output.recordInput.metrics.existing, 'retained', 'existing record metrics remain intact')
       assert.equal(output.metrics.taskCount, 2, 'existing output metrics remain intact')
       const usageLogPath = readFileSync(logPathCapture, 'utf8')
@@ -1069,9 +1075,9 @@ test('CLI consumes usage logs and preserves record metrics across absent, empty,
         assert.deepEqual(output.recordInput.metrics.reportedUsage, ['prior'], 'absent usage preserves prior usage metrics')
       } else {
         assert.deepEqual(output.metrics.reportedUsage, scenario.records, 'valid records retain their original order')
-        assert.deepEqual(output.metrics.reportedTokens, { input: 10, output: 4, cacheRead: 3, cacheWrite: 0 })
-        assert.deepEqual(output.recordInput.metrics.reportedTokens, output.metrics.reportedTokens)
-        assert.deepEqual(output.sarif.runs[0].properties.dakar.reportedTokens, output.metrics.reportedTokens)
+        assert.deepEqual(output.metrics.reportedTokens, { input: 10, output: 4, cacheRead: 3, cacheWrite: 0 }, 'numeric strings and missing token fields aggregate with existing conversion rules')
+        assert.deepEqual(output.recordInput.metrics.reportedTokens, output.metrics.reportedTokens, 'recordInput receives the same reported token totals')
+        assert.deepEqual(output.sarif.runs[0].properties.dakar.reportedTokens, output.metrics.reportedTokens, 'SARIF receives the same reported token totals')
         assert.match(readFileSync(output.stateFile, 'utf8'), /reportedTokens/u, 'persisted history carries reported totals')
         assert.match(readFileSync(output.stateFile, 'utf8'), /cacheRead/u, 'persisted history carries the same token fields')
       }
@@ -1089,9 +1095,9 @@ test('CLI initializes absent record metrics before copying reported usage', (t) 
   })
   const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'),
     '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
-  assert.equal(completed.status, 0, completed.stderr)
+  assert.equal(completed.status, 0, completed.stderr || 'reported usage must not prevent recording')
   const output = JSON.parse(completed.stdout)
-  assert.deepEqual(output.recordInput.metrics.reportedTokens, { input: 5, output: 0, cacheRead: 0, cacheWrite: 0 })
+  assert.deepEqual(output.recordInput.metrics.reportedTokens, { input: 5, output: 0, cacheRead: 0, cacheWrite: 0 }, 'reported tokens initialize absent record metrics')
 })
 
 test('CLI dry-run does not copy reported metrics into recordInput or write history', (t) => {
@@ -1104,10 +1110,10 @@ test('CLI dry-run does not copy reported metrics into recordInput or write histo
   const stateRoot = join(tempRoot, 'state')
   const completed = spawnCli(['--dry-run', '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
     '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
-  assert.equal(completed.status, 0, completed.stderr)
+  assert.equal(completed.status, 0, completed.stderr || 'dry-run result must complete successfully')
   const output = JSON.parse(completed.stdout)
-  assert.deepEqual(output.recordInput.metrics, { existing: 'retained' })
-  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
+  assert.deepEqual(output.recordInput.metrics, { existing: 'retained' }, 'dry-run leaves recordInput metrics unchanged')
+  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false, 'dry-run does not append review history')
 })
 
 test('CLI defaults the ODW wait timeout to 3600 seconds when --timeout is omitted', () => {
@@ -1653,6 +1659,7 @@ process.exitCode = supported ? 0 : 1
   assert.equal(summary?.markdownSuccesses, 2, 'the summary must report Markdown successes')
   assert.equal(summary?.outcome, 'succeeded', 'the summary must report a successful aggregate warmup')
   assert.equal(summary?.deadlineExhausted, false, 'the summary must report that the shared deadline remained')
+  assert.equal(summary?.failureCounts.codegraph_index_markdown.nonzero_exit, 0, 'successful indexing has no Markdown failures')
   assert.ok(events.every((event) => !('path' in event) && !('payload' in event)), 'telemetry must not expose paths or MCP payloads')
 })
 
@@ -1705,6 +1712,7 @@ process.exitCode = 1
   assert.equal(probe?.failureCategory, 'nonzero_exit', 'the probe failure must use a bounded category')
   const summary = events.find((event) => event.type === 'summary')
   assert.equal(summary?.skipReason, 'mcp_unavailable', 'the warmup summary must explain why indexing was skipped')
+  assert.equal(summary?.failureCounts.mcp_list_probe.nonzero_exit, 1, 'the summary counts failed MCP probes by bounded operation and category')
 })
 
 test('advisory warmup bounds failed Markdown attempts and still launches the review', () => {
@@ -1773,6 +1781,8 @@ process.exitCode = process.argv[2] === '--list' ? 0 : 1
   assert.equal(summary?.markdownAttempts, 20, 'the summary must count failed attempts against the cap')
   assert.equal(summary?.markdownSuccesses, 0, 'the summary must count only successful Markdown calls')
   assert.equal(summary?.deadlineExhausted, false, 'the attempt cap must not be reported as deadline exhaustion')
+  assert.equal(summary?.failureCounts.codegraph_index_directory.nonzero_exit, 1, 'directory failures are aggregated by operation and category')
+  assert.equal(summary?.failureCounts.codegraph_index_markdown.nonzero_exit, 20, 'failed Markdown calls are counted by operation and category')
 })
 
 test('a timed-out MCP directory call exhausts the shared deadline without blocking ODW', (t) => {
@@ -1844,6 +1854,7 @@ else process.exitCode = 0
   assert.equal(summary?.outcome, 'timed_out', 'the aggregate warmup must report its exhausted deadline')
   assert.equal(summary?.deadlineExhausted, true, 'the summary must mark the shared deadline as exhausted')
   assert.equal(summary?.markdownAttempts, 0, 'no Markdown work starts after the deadline expires')
+  assert.equal(summary?.failureCounts.codegraph_index_directory.timeout, 1, 'a directory timeout is counted in the aggregate failure metrics')
   assert.match(result.stderr, /CodeGraph warmup timed out \(0 markdown file\(s\) indexed\)\./u)
 })
 

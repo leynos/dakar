@@ -1,4 +1,8 @@
-/** @file Unit-test workflow argument resolution from TypeScript source. */
+/**
+ * Unit-test workflow argument resolution from TypeScript source.
+ *
+ * @module
+ */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -13,6 +17,7 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   assert.equal(config.baseRef, 'origin/main')
   assert.equal(config.headRef, 'HEAD')
   assert.equal(config.repoRoot, '.')
+  assert.equal(config.contextGuidance, '')
   assert.equal(config.dryRun, false)
   assert.equal(config.maxCandidates, 30)
   assert.equal(config.maxFindings, 20)
@@ -33,6 +38,15 @@ test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   assert.equal(Object.isFrozen(config.reviewModels), true)
   assert.equal(config.reviewModels.every(Object.isFrozen), true)
   assert.throws(() => config.reviewModels.push({ model: 'leak', reasoning: 'low' }), TypeError)
+})
+
+test('resolveWorkflowConfig accepts only non-blank translated context guidance', () => {
+  assert.equal(
+    resolveWorkflowConfig({ contextGuidance: 'Repository context is available.' }).contextGuidance,
+    'Repository context is available.',
+  )
+  assert.equal(resolveWorkflowConfig({ contextGuidance: '  ' }).contextGuidance, '')
+  assert.equal(resolveWorkflowConfig({ contextGuidance: 42 }).contextGuidance, '')
 })
 
 test('resolveWorkflowConfig supplies the ADR 002 Flex knob defaults', () => {

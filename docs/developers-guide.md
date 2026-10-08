@@ -276,13 +276,13 @@ review continues with the prompt's git/direct-inspection fallback. The ODW
 workflow does not own this warmup, so direct ODW invocations do not receive
 this host-side preflight automatically.
 
-`buildWorkflowArgs()` also calls `deriveRepoSlug()` against the reviewed
-checkout's `origin` remote. Only a GitHub `owner/name` URL is accepted; when no
-matching origin exists, `repoSlug` is omitted. When present, the value flows
-through `WorkflowConfig` into the run's `PromptContext`, and
-`contextToolsBlock()` enables the optional DeepWiki commands for that slug.
-DeepWiki is supplementary, potentially stale context, never evidence for the
-current diff; CodeGraph, git, and command output remain untrusted prompt data.
+The CLI resolves a GitHub `owner/name` from the reviewed checkout's `origin`
+and constructs optional context guidance at its host-side adapter boundary.
+Only that translated guidance crosses into the workflow; repository identity
+and MCP command details are not workflow arguments. Without a matching GitHub
+origin, the guidance marks DeepWiki as unavailable. DeepWiki is supplementary,
+potentially stale context, never evidence for the current diff; CodeGraph, git,
+and command output remain untrusted prompt data.
 
 `scripts/review-config.mjs` owns CodeRabbit configuration resolution. The CLI
 is now the sole caller: it resolves configuration and prepares the review range

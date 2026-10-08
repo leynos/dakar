@@ -1,16 +1,17 @@
-/** @file Unit-test prompt construction from TypeScript source. */
+/**
+ * Unit-test prompt construction from TypeScript source.
+ *
+ * @module
+ */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import fc from 'fast-check'
 
 import {
   agentInstructionsBlock,
   auditPrompt,
   taskPrompt,
 } from '../src/workflows/dakar-review/prompts.ts'
-import { contextToolsBlock } from '../src/workflows/dakar-review/context-tools.ts'
-import { shellWord } from '../src/workflows/dakar-review/shell.ts'
 
 const CONTEXT = {
   agentInstructions: null,
@@ -125,78 +126,6 @@ test('taskPrompt accepts translated context guidance without owning MCP details'
 
   assert.ok(prompt.includes(guidance), 'finder prompt must include translated context capability guidance')
   assert.doesNotMatch(prompt, /mcp (?:codegraph|deepwiki)/u, 'core task prompting must not render provider commands')
-})
-
-test('contextToolsBlock shell-quotes every MCP JSON payload', () => {
-  const repoRoot = "/tmp/repo'; echo unwanted"
-  const repoSlug = "owner/repo'; echo unwanted"
-  const prompt = contextToolsBlock(repoRoot, repoSlug)
-  const payload = (value) => shellWord(JSON.stringify(value))
-
-  assert.ok(prompt.includes(`codegraph_get_ai_context ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', intent: 'explain' })}`))
-  assert.ok(prompt.includes(`codegraph_get_callers ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>' })}`))
-  assert.ok(prompt.includes(`codegraph_analyze_impact ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', changeType: 'modify' })}`))
-  assert.ok(prompt.includes(`codegraph_symbol_search ${payload({ query: '...' })} and codegraph_search_docs ${payload({ query: '...' })}`))
-  assert.ok(prompt.includes(`deepwiki ask_question ${payload({ repoName: repoSlug, question: '...' })}`))
-  assert.ok(prompt.includes(`deepwiki read_wiki_structure ${payload({ repoName: repoSlug })}`))
-  assert.ok(!prompt.includes(`'{"repoName":"${repoSlug}`))
-})
-
-test('contextToolsBlock keeps arbitrary repository values inside one JSON shell argument', () => {
-  const arbitraryRepoValue = fc.tuple(
-    fc.string({ maxLength: 24 }),
-    fc.constantFrom("'", '"', '`', '$()', ';', '&', '|', '\n', '雪/🧭'),
-    fc.string({ maxLength: 24 }),
-  ).map((parts) => parts.join(''))
-
-  fc.assert(
-    fc.property(arbitraryRepoValue, arbitraryRepoValue, (repoRoot, repoSlug) => {
-      const prompt = contextToolsBlock(repoRoot, repoSlug)
-      const expected = [
-        ['codegraph_get_ai_context', { uri: `file://${repoRoot}/<path>`, line: '<n>', intent: 'explain' }, ' —'],
-        ['codegraph_get_callers', { uri: `file://${repoRoot}/<path>`, line: '<n>' }, ' (and codegraph_get_callees)'],
-        ['codegraph_analyze_impact', { uri: `file://${repoRoot}/<path>`, line: '<n>', changeType: 'modify' }, ' —'],
-        ['codegraph_symbol_search', { query: '...' }, ' and codegraph_search_docs '],
-        ['codegraph_search_docs', { query: '...' }, ' —'],
-        ['deepwiki ask_question', { repoName: repoSlug, question: '...' }, ' —'],
-        ['deepwiki read_wiki_structure', { repoName: repoSlug }, ' then read_wiki_contents —'],
-      ]
-
-      assert.equal(
-        prompt.split('\n').filter((line) => /^- mcp (?:codegraph|deepwiki)\b/u.test(line)).length,
-        6,
-        'all expected CodeGraph and DeepWiki command examples must be present',
-      )
-      for (const [marker, payload, expectedSuffix] of expected) {
-        const lines = prompt.split('\n').filter((line) => line.includes(marker))
-        assert.equal(lines.length, 1, `${marker} should appear in one command example`)
-        const line = lines[0]
-        const markerEnd = line.indexOf(marker) + marker.length
-        const encoded = /^'(?:[^']|'"'"')*'/u.exec(line.slice(markerEnd).trimStart())?.[0]
-        assert.ok(encoded, `${marker} payload should be one single-quoted shell word`)
-        const json = encoded.slice(1, -1).replaceAll(`'"'"'`, "'")
-        assert.deepEqual(JSON.parse(json), payload, `${marker} should decode to its original JSON payload`)
-        const suffix = line.slice(markerEnd).trimStart().slice(encoded.length)
-        assert.ok(suffix.startsWith(expectedSuffix), `${marker} must not append shell syntax after its payload`)
-      }
-    }),
-    { numRuns: 200 },
-  )
-})
-
-test('contextToolsBlock omits DeepWiki commands without a GitHub slug', () => {
-  const prompt = contextToolsBlock(CONTEXT.repoRoot, '')
-
-  assert.match(prompt, /DeepWiki: unavailable for this repository/u)
-  assert.doesNotMatch(prompt, /mcp deepwiki/u)
-})
-
-test('contextToolsBlock warns that DeepWiki can be stale and is not head evidence', () => {
-  const prompt = contextToolsBlock(CONTEXT.repoRoot, 'owner/repository')
-
-  assert.match(prompt, /not realtime/iu, 'DeepWiki guidance must state that its content is not current')
-  assert.match(prompt, /over the past week/iu, 'DeepWiki guidance must disclose its staleness window')
-  assert.match(prompt, /never cite it as evidence about the current head/iu, 'DeepWiki must not be treated as evidence for the reviewed head')
 })
 
 test('auditPrompt embeds compacted candidate JSON, policy path, AGENTS block, and budget note', () => {

@@ -60,8 +60,8 @@ export interface WorkflowConfig {
   readonly prepared: PreparedReview | undefined
   /** Non-blank repository root, defaulting to `.` when blank. */
   readonly repoRoot: string
-  /** Optional `owner/name` repository slug used for DeepWiki lookups. */
-  readonly repoSlug: string
+  /** Optional host-translated context capability guidance for finder prompts. */
+  readonly contextGuidance: string
   /** Validated, normalized review policy governing scope, tone, and custom checks. */
   readonly reviewPolicy: Readonly<NormalizedReviewPolicy>
   /** Validated review model specifications, falling back to `DEFAULT_REVIEW_MODELS` when none are configured. */
@@ -370,9 +370,7 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     // main.ts validates these fields fail-closed before any downstream use.
     prepared: isObject(args.prepared) ? (args.prepared as PreparedReview) : undefined,
     repoRoot: nonBlankString(args.repoRoot, '.'),
-    // `owner/name` for DeepWiki lookups; the CLI derives it from the origin
-    // remote and omits it when no GitHub remote exists.
-    repoSlug: nonBlankString(args.repoSlug, ''),
+    contextGuidance: nonBlankString(args.contextGuidance, ''),
     reviewPolicy: policy.policy,
     reviewModels,
     // Recorded in metrics and used (via the CLI) to gate the OPENAI_API_KEY

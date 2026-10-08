@@ -149,15 +149,22 @@ immutable reviewed head is currently checked out cleanly; otherwise it skips
 with a warning on stderr. All warmup calls share a 30-second deadline. It
 remains advisory: `DAKAR_SKIP_CONTEXT_WARMUP`, an unavailable CLI, or an
 indexing failure leaves the review running and reports the condition on stderr.
-Finder prompts use the resulting CodeGraph context when available and fall back
-to git and direct inspection when it is not; direct ODW callers do not receive
-the CLI's warmup automatically.
+Structured stderr operation events and the final summary include durations
+measured with the injected monotonic clock; the summary also includes bounded
+failure counts keyed by fixed operation and failure category. Finder prompts
+use the resulting CodeGraph context when available and fall back to git and
+direct inspection when it is not; direct ODW callers do not receive the CLI's
+warmup automatically.
 
-The CLI derives an optional `owner/name` `repoSlug` from the reviewed
-checkout's GitHub `origin` remote while building workflow arguments. The value
-flows through `WorkflowConfig` into `PromptContext`; `contextToolsBlock()`
-includes DeepWiki commands only when the slug is present. DeepWiki is
-supplementary and may be stale, so it is not evidence about the current head.
+The CLI adapter derives an optional `owner/name` repository identity from the
+reviewed checkout's GitHub `origin` remote and uses it to render optional
+context guidance. MCP command construction, JSON payload serialization, shell
+quoting, and file-URI formatting belong at this host boundary, not in the
+workflow domain. The workflow receives only the translated, optional
+`contextGuidance` string; it does not depend on GitHub identity or MCP
+transport details. DeepWiki guidance is included only when a repository
+identity is available. DeepWiki is supplementary and may be stale, so it is not
+evidence about the current head.
 
 ODW still receives one workflow file, but that runtime constraint does not
 require one source file. ADR 001 establishes typed source modules under

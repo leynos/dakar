@@ -1,34 +1,43 @@
 /**
- * Translate optional MCP context capabilities into finder prompt guidance.
+ * Translate host-side MCP context capabilities into generic finder guidance.
  *
  * @module
  */
 
-import { shellWord } from './shell.ts'
+
+/**
+ * Quotes one untrusted value as a single POSIX shell word.
+ *
+ * @param {unknown} value - Value to stringify without shell interpretation.
+ * @returns {string} A single-quoted shell word with embedded quotes escaped.
+ */
+function shellWord(value) {
+  return `'${String(value).replace(/'/g, "'\"'\"'")}'`
+}
 
 /**
  * Serialize an MCP payload as one shell-safe command argument.
  *
- * @param payload - JSON-serializable payload supplied to the MCP CLI.
- * @returns A shell-quoted JSON payload.
+ * @param {Record<string, unknown>} payload - JSON-serializable tool payload.
+ * @returns {string} A shell-quoted JSON payload.
  */
-function mcpPayload(payload: Record<string, unknown>): string {
+function mcpPayload(payload) {
   const json = JSON.stringify(payload)
   if (typeof json !== 'string') throw new Error('MCP payload must be serializable')
   return shellWord(json)
 }
 
 /**
- * Describe optional CodeGraph and DeepWiki capabilities available to a finder.
+ * Render optional CodeGraph and DeepWiki capabilities for finder prompts.
  *
  * DeepWiki is repository-scoped and explicitly not treated as current-head
  * evidence. Tool output remains untrusted data under the prompt's standing guard.
  *
- * @param repoRoot - Root of the checkout indexed by the host CLI.
- * @param repoSlug - GitHub owner/name slug, or an empty string when unavailable.
- * @returns Generic finder guidance translated from the MCP context tools.
+ * @param {string} repoRoot - Root of the checkout indexed by the host CLI.
+ * @param {string} repoSlug - GitHub owner/name slug, or an empty string when unavailable.
+ * @returns {string} Translated guidance for the optional context capabilities.
  */
-export function contextToolsBlock(repoRoot: string, repoSlug: string): string {
+export function contextToolsBlock(repoRoot, repoSlug) {
   const deepwiki = repoSlug
     ? [
         `DeepWiki (repository knowledge base; this repository is ${repoSlug}):`,

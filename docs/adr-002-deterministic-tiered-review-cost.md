@@ -210,12 +210,14 @@ advisory: an operator may set `DAKAR_SKIP_CONTEXT_WARMUP`, and an unavailable
 CLI or failed indexing call only produces a stderr warning. Direct ODW callers
 do not receive this CLI preflight automatically.
 
-While assembling workflow arguments, the CLI derives `repoSlug` only from a
-GitHub `origin` remote matching `owner/name`. It omits the field when the
-remote is absent or non-GitHub. The workflow carries the value through its
-validated configuration and `PromptContext`; `contextToolsBlock()` exposes
-DeepWiki only when it is present. DeepWiki is supplementary, potentially stale
-repository context and is never a substitute for current-head evidence.
+While assembling workflow arguments, the CLI resolves repository identity from
+a GitHub `origin` remote and constructs optional context guidance at its
+host-side adapter boundary. MCP command construction and payload serialization
+remain outside the workflow domain; only the translated `contextGuidance`
+string crosses into the workflow. When no usable GitHub identity is available,
+the guidance marks DeepWiki as unavailable. DeepWiki is supplementary,
+potentially stale repository context and is never a substitute for current-head
+evidence.
 
 ## Luna Flex transactional boundary
 

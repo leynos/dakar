@@ -273,13 +273,16 @@ error and never blocks the review — and can be disabled by setting
 CodeGraph query tools (context, callers, impact, symbol, and documentation
 search) in preference to broad file reads.
 
-The CLI also derives the repository's `owner/name` slug from the `origin`
-remote and passes it to the workflow so finder prompts can parameterize
-DeepWiki lookups (`ask_question`, `read_wiki_structure`, `read_wiki_contents`).
-The prompt carries an explicit caveat: DeepWiki is not realtime. It helps a
-finder understand dependencies and the overall purpose of the codebase, but it
-may not incorporate changes made over the past week, so it must never be cited
-as evidence about the head under review.
+The CLI resolves the repository's GitHub identity from its `origin` remote and
+constructs optional context guidance at the host-side adapter boundary. Only
+this translated guidance crosses into the workflow; the repository identity and
+MCP command details do not. If no usable GitHub origin is available, the
+guidance says that DeepWiki is unavailable. Otherwise it describes the DeepWiki
+lookups (`ask_question`, `read_wiki_structure`, `read_wiki_contents`) with an
+explicit caveat: DeepWiki is not realtime. It helps a finder understand
+dependencies and the overall purpose of the codebase, but it may not
+incorporate changes made over the past week, so it must never be cited as
+evidence about the head under review.
 
 For a syntax and contract check that does not call review agents, run either:
 

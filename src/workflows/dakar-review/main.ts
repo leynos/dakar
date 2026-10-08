@@ -15,7 +15,6 @@ import {
 } from './candidates.ts'
 import { admit } from './admission.ts'
 import { resolveWorkflowConfig } from './config.ts'
-import { contextToolsBlock } from './context-tools.ts'
 import { flexLaneRole, lunaFlexLaneRole, modelName } from './model-routing.ts'
 import { DEFAULT_PRICING_TABLE, estimateWorstCaseUsd } from './pricing.ts'
 import { auditPrompt, taskPrompt } from './prompts.ts'
@@ -151,6 +150,7 @@ const {
   baseRef: BASE_REF,
   budgetGbp: BUDGET_GBP,
   configArg: CONFIG_ARG,
+  contextGuidance: CONTEXT_GUIDANCE,
   dryRun: DRY_RUN,
   flexAttempts: FLEX_ATTEMPTS,
   flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
@@ -167,7 +167,6 @@ const {
   maxTasks: MAX_TASKS,
   prepared: PREPARED,
   repoRoot: REPO_ROOT,
-  repoSlug: REPO_SLUG,
   reviewPolicy: REVIEW_POLICY,
   reviewModels: REVIEW_MODELS,
   routingPolicy: ROUTING_POLICY,
@@ -216,7 +215,7 @@ const promptContext: PromptContext = Object.freeze({
   policyPath: CODE_RABBIT_CONFIG,
   repoRoot: REPO_ROOT,
 })
-const FINDER_CONTEXT_GUIDANCE = contextToolsBlock(REPO_ROOT, REPO_SLUG)
+const FINDER_CONTEXT_GUIDANCE = CONTEXT_GUIDANCE
 // Hard budget admission is wired in M4; for now the audit is told plainly that
 // it is the final model call and is not rewarded for issue volume.
 const REMAINING_BUDGET_NOTE =

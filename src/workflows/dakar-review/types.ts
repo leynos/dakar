@@ -123,6 +123,8 @@ export interface WorkflowArgs {
   prepared?: PreparedReview
   /** Raw repository root argument, before falling back to `.` when blank. */
   repoRoot?: string
+  /** Optional host-translated, domain-neutral context guidance for finder prompts. */
+  contextGuidance?: string
   /** Raw live routing policy identifier; constrained to a known value before use. */
   routingPolicy?: unknown
   /** Raw XDG state root argument used to locate review-history state. */
@@ -141,8 +143,6 @@ export interface WorkflowArgs {
   transactionMaxInputTokens?: unknown
   /** Raw output-token cap for the Luna finder lane; validated and bounded before use. */
   transactionMaxOutputTokens?: unknown
-  /** Optional GitHub `owner/name` slug used to scope DeepWiki repository lookups. */
-  repoSlug?: string
 }
 
 /** Captures the deterministic review range returned by the state helper. */

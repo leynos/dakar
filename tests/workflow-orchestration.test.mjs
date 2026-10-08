@@ -1,9 +1,14 @@
-/** @file Drive the generated Flex-lane workflow through injected primitives. */
+/**
+ * Drive the generated Flex-lane workflow through injected primitives.
+ *
+ * @module
+ */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildAgentMock, extractAuditCandidates, extractTaskFiles, FixtureFailure } from './helpers/mock-agents.mjs'
 import { runCompiledWorkflow } from './helpers/run-workflow.mjs'
+import { contextToolsBlock } from '../scripts/context-tools.mjs'
 import { deterministicJitter } from '../src/workflows/dakar-review/retry.ts'
 
 // Finder packs (labels `luna-flex-<n>`) emit one candidate per assigned file by
@@ -178,11 +183,11 @@ test('Luna reasoning chooses the matching finder lane without changing the Terra
   }
 })
 
-test('repoSlug context guidance reaches finder prompts with a safe unavailable fallback', async () => {
-  const available = await runWorkflow({ knobs: { repoSlug: 'owner/repository' } })
+test('host-translated context guidance reaches finder prompts with an unavailable fallback', async () => {
+  const available = await runWorkflow({ knobs: { contextGuidance: contextToolsBlock('/tmp/repo', 'owner/repository') } })
   const availablePrompts = finderLabels(available.agentLabels).map((label) => available.prompts.get(label))
 
-  assert.ok(availablePrompts.length > 0, 'the configured repoSlug must reach at least one finder')
+  assert.ok(availablePrompts.length > 0, 'translated context guidance must reach at least one finder')
   for (const prompt of availablePrompts) {
     assert.match(prompt, /mcp codegraph codegraph_get_ai_context/u, 'finder prompts include CodeGraph query guidance')
     assert.match(prompt, /mcp deepwiki ask_question/u, 'a resolved slug enables repository-scoped DeepWiki guidance')
@@ -191,7 +196,7 @@ test('repoSlug context guidance reaches finder prompts with a safe unavailable f
     assert.match(prompt, /never cite it as evidence about the current head/u, 'DeepWiki is excluded as evidence for the reviewed head')
   }
 
-  const unavailable = await runWorkflow({ knobs: { repoSlug: '' } })
+  const unavailable = await runWorkflow({ knobs: { contextGuidance: contextToolsBlock('/tmp/repo', '') } })
   const unavailablePrompts = finderLabels(unavailable.agentLabels).map((label) => unavailable.prompts.get(label))
 
   assert.ok(unavailablePrompts.length > 0, 'the unavailable-slug run must still dispatch finders')
