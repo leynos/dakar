@@ -242,6 +242,11 @@ function gatesAllowExecution(gates: DeterministicGateResult[]) {
   return gates.every((gate) => gate.status === 'passed' || !gate.blocking)
 }
 
+/** Snapshot the optional candidate list before result enrichment and sorting. */
+function candidateInventory(candidates: Candidate[] | undefined): Candidate[] {
+  return [...(candidates || [])]
+}
+
 /**
  * Assembles the canonical SARIF 2.1.0 document from immutable review evidence.
  *
@@ -252,7 +257,7 @@ function gatesAllowExecution(gates: DeterministicGateResult[]) {
  * @returns One deterministic SARIF run containing every accepted and discarded item.
  */
 export function assembleSarif(input: SarifAssemblyInput): DakarSarif {
-  const candidates = [...(input.candidates || [])]
+  const candidates = candidateInventory(input.candidates)
   const acceptedById = new Map(
     (input.accepted || []).map((candidate): [string, Candidate] => [candidate.candidateId, candidate]),
   )

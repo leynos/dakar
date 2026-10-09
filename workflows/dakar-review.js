@@ -801,8 +801,11 @@ function gateSarifResults(input) {
 function gatesAllowExecution(gates) {
   return gates.every((gate) => gate.status === "passed" || !gate.blocking);
 }
+function candidateInventory(candidates) {
+  return [...candidates || []];
+}
 function assembleSarif(input) {
-  const candidates = [...input.candidates || []];
+  const candidates = candidateInventory(input.candidates);
   const acceptedById = new Map(
     (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
   );
