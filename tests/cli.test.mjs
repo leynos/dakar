@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { repoRoot, cliPath, runCli, spawnCli, loadCliArgumentParser, setUpArgsCaptureRepo, setUpConfigCaptureRepo, setUpAgentInstructionRepo } from './cli-test-support.mjs'
+import { repoRoot, cliPath, runCli, spawnCli, loadCliArgumentParser, setUpCaptureRepo, setUpAgentInstructionRepo } from './cli-test-support.mjs'
 
 process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
 
@@ -65,7 +65,7 @@ const REVIEW_TUNING_FLAGS = [
 ]
 
 test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout', () => {
-  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpConfigCaptureRepo()
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('config')
   const packagedConfig = join(repoRoot, 'odw.config.json')
   const piAdapters = ['pi-luna-flex', 'pi-luna-flex-medium', 'pi-luna-flex-high', 'pi-terra-flex', 'pi-terra-flex-high']
   const runOnce = (extraArgs) =>
@@ -109,7 +109,7 @@ test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout',
 
 for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
   test(`CLI forwards ${flag} to the ${key} workflow argument`, () => {
-    const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+    const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('args')
     const output = runCli(
       [
         '--dry-run',
@@ -134,7 +134,7 @@ for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
 }
 
 test('CLI translates GitHub origin context and reports DeepWiki unavailable without a slug', () => {
-  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('args')
   const args = [
     '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw,
   ]
@@ -154,7 +154,7 @@ test('CLI translates GitHub origin context and reports DeepWiki unavailable with
 })
 
 test('CLI warns when Git cannot resolve an existing origin URL', () => {
-  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('args')
   const wrapperDir = mkdtempSync(join(tmpdir(), 'dakar-git-wrapper-'))
   const fakeGit = join(wrapperDir, 'git')
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
@@ -196,7 +196,7 @@ const args = process.argv.slice(2)
 })
 
 test('CLI passes normalized policy rather than YAML-only prompt context', () => {
-  const { targetRepo, runsRoot, fakeOdw } = setUpArgsCaptureRepo()
+  const { targetRepo, runsRoot, fakeOdw } = setUpCaptureRepo('args')
   const config = join(targetRepo, 'policy.yaml')
   writeFileSync(config, `
 language: en-GB
@@ -270,7 +270,7 @@ test('CLI rejects a non-numeric value for a numeric review-tuning flag', () => {
 })
 
 test('CLI parser preserves empty, inline, repeated, and negative option values', (t) => {
-  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('args')
   t.after(() => {
     rmSync(targetRepo, { recursive: true, force: true })
     rmSync(runsRoot, { recursive: true, force: true })

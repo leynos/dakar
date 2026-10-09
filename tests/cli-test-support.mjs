@@ -55,48 +55,59 @@ export function loadCliArgumentParser() {
   return new Function(`${source.slice(start, end)}\nreturn parseArgs\n`)()
 }
 
-// Builds a committed repository plus a fake ODW binary that echoes the workflow
-// `--args` object as `receivedArgs`, so tests can inspect the CLI passthrough.
-/** Builds an isolated workflow-argument capture fixture. */
-export function setUpArgsCaptureRepo() {
-  const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-tuning-repo-'))
-  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
-  const fakeOdw = join(targetRepo, 'capture-odw.mjs')
-  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
-  writeFileSync(fakeOdw, `#!/usr/bin/env node
+/**
+ * Builds one isolated repository fixture for CLI argument or config capture.
+ *
+ * @param {'args' | 'config'} kind - The fake ODW response the fixture captures.
+ * @returns {{ targetRepo: string, runsRoot: string, xdgConfig: string, fakeOdw: string }}
+ *   The isolated repository, run root, XDG config root, and executable paths.
+ */
+export function setUpCaptureRepo(kind) {
+  if (kind === 'args') {
+    return makeCaptureRepo({
+      repoPrefix: 'dakar-tuning-repo-',
+      fakeOdwFilename: 'capture-odw.mjs',
+      fakeOdwScript: `#!/usr/bin/env node
 const values = process.argv.slice(2)
 const input = JSON.parse(values[values.indexOf('--args') + 1])
 process.stdout.write(JSON.stringify({ ok: true, receivedArgs: input }))
-`)
-  chmodSync(fakeOdw, 0o755)
-  return { targetRepo, runsRoot, xdgConfig, fakeOdw }
-}
+`,
+    })
+  }
 
-// Builds a committed repository plus a fake ODW binary that echoes the `--config`
-// path it was handed and that file's parsed contents, so tests can prove the CLI
-// hands ODW a derived config carrying the per-call timeout rather than the
-// packaged path.
-/** Builds an isolated derived-configuration capture fixture. */
-export function setUpConfigCaptureRepo() {
-  const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-config-repo-'))
-  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
-  const fakeOdw = join(targetRepo, 'capture-config-odw.mjs')
-  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
-  writeFileSync(fakeOdw, `#!/usr/bin/env node
+  return makeCaptureRepo({
+    repoPrefix: 'dakar-config-repo-',
+    fakeOdwFilename: 'capture-config-odw.mjs',
+    fakeOdwScript: `#!/usr/bin/env node
 import { readFileSync } from 'node:fs'
 const values = process.argv.slice(2)
 const configPath = values[values.indexOf('--config') + 1]
 const config = JSON.parse(readFileSync(configPath, 'utf8'))
 process.stdout.write(JSON.stringify({ ok: true, configPath, config }))
-`)
+`,
+  })
+}
+
+/**
+ * Allocate the shared committed-repository and fake-ODW scaffold for capture fixtures.
+ *
+ * @param {object} options - Fixture-specific repository and executable settings.
+ * @param {string} options.repoPrefix - Prefix for the temporary repository directory.
+ * @param {string} options.fakeOdwFilename - Name of the fake ODW executable in that repository.
+ * @param {string} options.fakeOdwScript - Exact executable source used by the fixture.
+ * @returns {{ targetRepo: string, runsRoot: string, xdgConfig: string, fakeOdw: string }}
+ *   The isolated repository, run root, XDG config root, and executable paths.
+ */
+function makeCaptureRepo({ repoPrefix, fakeOdwFilename, fakeOdwScript }) {
+  const targetRepo = mkdtempSync(join(tmpdir(), repoPrefix))
+  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  const fakeOdw = join(targetRepo, fakeOdwFilename)
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
+  writeFileSync(fakeOdw, fakeOdwScript)
   chmodSync(fakeOdw, 0o755)
   return { targetRepo, runsRoot, xdgConfig, fakeOdw }
 }

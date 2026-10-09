@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { repoRoot, cliPath, runCli, spawnCli, setUpArgsCaptureRepo, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
+import { repoRoot, cliPath, runCli, spawnCli, setUpCaptureRepo, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
 
 process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
 
@@ -267,7 +267,7 @@ test('CLI dry-run does not copy reported metrics into recordInput or write histo
 })
 
 test('CLI defaults the ODW wait timeout to 3600 seconds when --timeout is omitted', () => {
-  const { targetRepo, runsRoot, xdgConfig } = setUpArgsCaptureRepo()
+  const { targetRepo, runsRoot, xdgConfig } = setUpCaptureRepo('args')
   const fakeOdw = join(targetRepo, 'argv-odw.mjs')
   writeFileSync(
     fakeOdw,
