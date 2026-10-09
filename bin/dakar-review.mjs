@@ -150,7 +150,7 @@ const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.js
  * @param {string} logPath - path supplied to the pi extension.
  * @returns {unknown[]} parsed records in order, omitting invalid JSON lines.
  */
-function readReportedUsage(logPath) {
+function consumeReportedUsageLog(logPath) {
   let raw
   try {
     raw = readFileSync(logPath, 'utf8')
@@ -222,7 +222,7 @@ function annotateReportedUsage(output, lines, totals) {
  * @returns {object} the same output, annotated when usage lines exist.
  */
 function attachReportedUsage(output) {
-  const lines = readReportedUsage(usageLogFile)
+  const lines = consumeReportedUsageLog(usageLogFile)
   if (lines.length === 0) return output
   if (typeof output !== 'object') return output
   if (output === null) return output
@@ -487,17 +487,17 @@ function addContextGuidance(workflowArgs, repoRoot) {
 function isMcpCliAvailable(timeout, clock, failureCounts) {
   const startedAt = clock.now()
   if (timeout === null) {
-    reportContextWarmupOperation('mcp_list_probe', 'deadline_exhausted', startedAt, clock, failureCounts, 'deadline')
+    reportContextWarmupOperation({ operation: 'mcp_list_probe', outcome: 'deadline_exhausted', startedAt, failureCategory: 'deadline' }, { clock, failureCounts })
     return { available: false, outcome: 'deadline_exhausted', deadlineExhausted: true }
   }
   const probe = spawnSync('mcp', ['--list'], { encoding: 'utf8', timeout })
   if (!probe.error && probe.status === 0) {
-    reportContextWarmupOperation('mcp_list_probe', 'succeeded', startedAt, clock, failureCounts)
+    reportContextWarmupOperation({ operation: 'mcp_list_probe', outcome: 'succeeded', startedAt }, { clock, failureCounts })
     return { available: true, outcome: 'succeeded', deadlineExhausted: false }
   }
   const deadlineExhausted = probe.error?.code === 'ETIMEDOUT'
   const outcome = deadlineExhausted ? 'timed_out' : 'failed'
-  reportContextWarmupOperation('mcp_list_probe', outcome, startedAt, clock, failureCounts, warmupFailureCategory(probe.error))
+  reportContextWarmupOperation({ operation: 'mcp_list_probe', outcome, startedAt, failureCategory: warmupFailureCategory(probe.error) }, { clock, failureCounts })
   return { available: false, outcome, deadlineExhausted }
 }
 
@@ -515,15 +515,11 @@ function warmupFailureCategory(error) {
 /**
  * Record one bounded warmup operation on stderr without paths or payloads.
  *
- * @param {string} operation - Stable probe or CodeGraph operation name.
- * @param {string} outcome - Bounded operation outcome.
- * @param {number} startedAt - Monotonic start time in milliseconds.
- * @param {{ now: () => number }} clock - Injected monotonic clock.
- * @param {object} failureCounts - Mutable bounded operation/category counters.
- * @param {string} [failureCategory] - Bounded category, never raw process output.
+ * @param {{ operation: string, outcome: string, startedAt: number, failureCategory?: string }} operationEvent - Bounded operation evidence.
+ * @param {{ clock: { now: () => number }, failureCounts: object }} context - Timing and aggregate failure evidence.
  * @returns {void}
  */
-function reportContextWarmupOperation(operation, outcome, startedAt, clock, failureCounts, failureCategory) {
+function reportContextWarmupOperation({ operation, outcome, startedAt, failureCategory }, { clock, failureCounts }) {
   const event = {
     event: 'context_warmup',
     type: 'operation',
@@ -558,17 +554,16 @@ function warmupTimeout(deadline, requestedTimeout, clock) {
  * @param {string} tool - CodeGraph MCP tool name.
  * @param {object} payload - JSON-serializable tool payload.
  * @param {number} timeout - Maximum invocation time in milliseconds.
- * @param {number} deadline - Absolute monotonic-millisecond warmup deadline.
- * @param {{ now: () => number }} clock - Injected monotonic clock.
- * @param {object} failureCounts - Mutable bounded operation/category counters.
+ * @param {{ deadline: number, clock: { now: () => number }, failureCounts: object }} context - Shared warmup budget and failure counters.
  * @returns {{ succeeded: boolean, outcome: string, deadlineExhausted: boolean }}
  *   Whether the advisory invocation succeeded and consumed the deadline.
  */
-function warmContextTool(tool, payload, timeout, deadline, clock, failureCounts) {
+function warmContextTool(tool, payload, timeout, context) {
+  const { deadline, clock } = context
   const boundedTimeout = warmupTimeout(deadline, timeout, clock)
   const startedAt = clock.now()
   if (boundedTimeout === null) {
-    reportContextWarmupOperation(tool, 'deadline_exhausted', startedAt, clock, failureCounts, 'deadline')
+    reportContextWarmupOperation({ operation: tool, outcome: 'deadline_exhausted', startedAt, failureCategory: 'deadline' }, context)
     return { succeeded: false, outcome: 'deadline_exhausted', deadlineExhausted: true }
   }
   const result = spawnSync('mcp', ['codegraph', tool, JSON.stringify(payload)], {
@@ -579,10 +574,10 @@ function warmContextTool(tool, payload, timeout, deadline, clock, failureCounts)
     process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.\n`)
     const deadlineExhausted = result.error?.code === 'ETIMEDOUT'
     const outcome = deadlineExhausted ? 'timed_out' : 'failed'
-    reportContextWarmupOperation(tool, outcome, startedAt, clock, failureCounts, warmupFailureCategory(result.error))
+    reportContextWarmupOperation({ operation: tool, outcome, startedAt, failureCategory: warmupFailureCategory(result.error) }, context)
     return { succeeded: false, outcome, deadlineExhausted }
   }
-  reportContextWarmupOperation(tool, 'succeeded', startedAt, clock, failureCounts)
+  reportContextWarmupOperation({ operation: tool, outcome: 'succeeded', startedAt }, context)
   return { succeeded: true, outcome: 'succeeded', deadlineExhausted: false }
 }
 
@@ -595,13 +590,12 @@ function warmContextTool(tool, payload, timeout, deadline, clock, failureCounts)
  * @param {string} repoRoot - Absolute path to the repository root.
  * @param {string} relPath - Repository-relative candidate Markdown path.
  * @param {Set<string>} seen - Absolute paths already indexed or attempted.
- * @param {number} deadline - Absolute monotonic-millisecond warmup deadline.
- * @param {{ now: () => number }} clock - Injected monotonic clock.
- * @param {object} failureCounts - Mutable bounded operation/category counters.
+ * @param {{ deadline: number, clock: { now: () => number }, failureCounts: object }} context - Shared warmup budget and failure counters.
  * @returns {{ attempted: boolean, succeeded: boolean, deadlineExhausted: boolean }}
  *   Whether this candidate was attempted and its advisory indexing outcome.
  */
-function indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline, clock, failureCounts) {
+function indexMarkdownContextCandidate(repoRoot, relPath, seen, context) {
+  const { deadline, clock } = context
   if (warmupTimeout(deadline, 1, clock) === null) {
     return { attempted: false, succeeded: false, deadlineExhausted: true }
   }
@@ -610,7 +604,7 @@ function indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline, clock,
     return { attempted: false, succeeded: false, deadlineExhausted: false }
   }
   seen.add(absolute)
-  const result = warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000, deadline, clock, failureCounts)
+  const result = warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000, context)
   return { attempted: true, succeeded: result.succeeded, deadlineExhausted: result.deadlineExhausted }
 }
 
@@ -643,19 +637,17 @@ function recordMarkdownWarmupOutcome(summary, result) {
  *
  * @param {string} repoRoot - Absolute path to the repository root.
  * @param {string[]} changedFiles - Repository-relative changed paths for this review.
- * @param {number} deadline - Absolute epoch-millisecond warmup deadline.
- * @param {{ now: () => number }} clock - Injected monotonic clock.
- * @param {object} failureCounts - Mutable bounded operation/category counters.
+ * @param {{ deadline: number, clock: { now: () => number }, failureCounts: object }} context - Shared warmup budget and failure counters.
  * @returns {{ attempts: number, successes: number, deadlineExhausted: boolean }}
  *   Attempt and success counts plus whether the shared deadline stopped indexing.
  */
-function warmMarkdownContext(repoRoot, changedFiles, deadline, clock, failureCounts) {
+function warmMarkdownContext(repoRoot, changedFiles, context) {
   const candidates = ['AGENTS.md', 'README.md'].concat((changedFiles || []).filter((path) => path.endsWith('.md')))
   const seen = new Set()
   const summary = { attempts: 0, successes: 0, deadlineExhausted: false }
   for (const relPath of candidates) {
     if (markdownWarmupLimitReached(summary.attempts)) break
-    const result = indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline, clock, failureCounts)
+    const result = indexMarkdownContextCandidate(repoRoot, relPath, seen, context)
     if (recordMarkdownWarmupOutcome(summary, result)) break
   }
   return summary
@@ -799,8 +791,9 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
     return
   }
   process.stderr.write('dakar-review: warming CodeGraph index for the reviewed checkout.\n')
-  const directory = warmContextTool('codegraph_index_directory', { path: repoRoot }, 600_000, deadline, clock, failureCounts)
-  const markdown = warmMarkdownContext(repoRoot, changedFiles, deadline, clock, failureCounts)
+  const context = { deadline, clock, failureCounts }
+  const directory = warmContextTool('codegraph_index_directory', { path: repoRoot }, 600_000, context)
+  const markdown = warmMarkdownContext(repoRoot, changedFiles, context)
   const outcome = contextWarmupOutcome(directory, markdown)
   process.stderr.write(
     `dakar-review: CodeGraph warmup ${CONTEXT_WARMUP_COMPLETION[outcome]} (${markdown.successes} markdown file(s) indexed).\n`,

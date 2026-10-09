@@ -711,14 +711,17 @@ function verdictDisposition(verdict, fallbackStatus) {
     evidenceChecked: verdict?.evidenceChecked || ""
   };
 }
-function semanticDisposition(accepted, discard, verdict) {
-  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
-  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
+function discardDisposition(discard, disposition) {
   return {
     status: discard?.status || disposition.status,
     reason: discard?.reason || disposition.reason,
     evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked
   };
+}
+function semanticDisposition(accepted, discard, verdict) {
+  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
+  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
+  return discardDisposition(discard, disposition);
 }
 function semanticProvenance(candidate, sourceLedger) {
   return {
@@ -860,6 +863,15 @@ function dakarProperties(result) {
   const dakar = properties.dakar;
   return dakar && typeof dakar === "object" ? dakar : {};
 }
+function projectSemanticResults(sarif, project) {
+  const [run] = sarif.runs;
+  if (!run) return [];
+  return run.results.flatMap((result) => {
+    const dakar = dakarProperties(result);
+    if (dakar.kind !== "semantic") return [];
+    return project(dakar);
+  });
+}
 function compatibilityFinding(dakar) {
   const disposition = dakar.disposition;
   const candidate = dakar.candidate;
@@ -876,11 +888,7 @@ function compatibilityFinding(dakar) {
   };
 }
 function projectFindingsFromSarif(sarif) {
-  const [run] = sarif.runs;
-  if (!run) return [];
-  return run.results.flatMap((result) => {
-    const dakar = dakarProperties(result);
-    if (dakar.kind !== "semantic") return [];
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition;
     if (!["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
     return [compatibilityFinding(dakar)];
@@ -896,11 +904,7 @@ function compatibilityDiscard(dakar) {
   };
 }
 function projectDiscardedFromSarif(sarif) {
-  const [run] = sarif.runs;
-  if (!run) return [];
-  return run.results.flatMap((result) => {
-    const dakar = dakarProperties(result);
-    if (dakar.kind !== "semantic") return [];
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition;
     if (["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
     return [compatibilityDiscard(dakar)];

@@ -4,16 +4,7 @@
  * @module
  */
 
-
-/**
- * Quotes one untrusted value as a single POSIX shell word.
- *
- * @param {unknown} value - Value to stringify without shell interpretation.
- * @returns {string} A single-quoted shell word with embedded quotes escaped.
- */
-function shellWord(value) {
-  return `'${String(value).replace(/'/g, "'\"'\"'")}'`
-}
+import { shellWord } from '../src/workflows/dakar-review/shell.ts'
 
 /**
  * Serialize an MCP payload as one shell-safe command argument.

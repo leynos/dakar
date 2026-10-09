@@ -6,10 +6,10 @@
  */
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { accessSync, chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { once } from 'node:events'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -18,6 +18,20 @@ const installPath = join(repoRoot, 'install.sh')
 // Installation tests do not invoke the review CLI, but keep the inherited
 // environment safe if an installed executable delegates to it unexpectedly.
 process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
+
+/** Resolves a real fixture utility before a child process receives a restricted PATH. */
+function resolvePathUtility(command, searchPath = process.env.PATH ?? '') {
+  const executable = searchPath.split(delimiter).map((directory) => join(directory || '.', command)).find((candidate) => {
+    try {
+      accessSync(candidate, fsConstants.X_OK)
+      return true
+    } catch {
+      return false
+    }
+  })
+  assert.ok(executable, `required test utility ${command} was not found on the original PATH`)
+  return executable
+}
 
 /** Copies the checkout's installation inputs without its dependencies. */
 function makeCleanInstallFixture(t) {
@@ -83,6 +97,8 @@ function makeInstallerHarness(t) {
   const secondFixture = makeCleanInstallFixture(t)
   const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
   const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
+  const originalPath = process.env.PATH ?? ''
+  const realMkdir = resolvePathUtility('mkdir', originalPath)
   t.after(() => rmSync(toolDir, { recursive: true, force: true }))
   t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
   mkdirSync(join(bunInstall, 'install'), { recursive: true })
@@ -99,7 +115,7 @@ function makeInstallerHarness(t) {
 if [ "$1" = "$DAKAR_TEST_LOCK_DIR" ] && [ -d "$1" ]; then
   : > "$DAKAR_TEST_LOCK_WAITER"
 fi
-exec /usr/bin/mkdir "$@"
+exec "$DAKAR_TEST_REAL_MKDIR" "$@"
 `,
   )
   writeFileSync(
@@ -147,7 +163,8 @@ fi
     DAKAR_TEST_LOCK_DIR: lockDir,
     DAKAR_TEST_LOCK_WAITER: lockWaiter,
     DAKAR_TEST_RELEASE: release,
-    PATH: `${toolDir}:${process.env.PATH}`,
+    DAKAR_TEST_REAL_MKDIR: realMkdir,
+    PATH: `${toolDir}:${originalPath}`,
   }
 
   return {
@@ -436,18 +453,19 @@ esac
 test('install script stops before installation when npm is unavailable', (t) => {
   const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
   t.after(() => rmSync(toolDir, { recursive: true, force: true }))
+  const realDirname = resolvePathUtility('dirname', process.env.PATH ?? '')
   const installMarker = join(toolDir, 'bun-invoked')
   writeFileSync(join(toolDir, 'bun'), `#!/bin/sh\n: > '${installMarker}'\n`)
   writeFileSync(join(toolDir, 'node'), '#!/bin/sh\nexit 0\n')
   writeFileSync(join(toolDir, 'odw'), '#!/bin/sh\nexit 0\n')
-  writeFileSync(join(toolDir, 'dirname'), '#!/bin/sh\nexec /usr/bin/dirname "$@"\n')
+  writeFileSync(join(toolDir, 'dirname'), '#!/bin/sh\nexec "$DAKAR_TEST_REAL_DIRNAME" "$@"\n')
   for (const command of ['bun', 'node', 'odw', 'dirname']) {
     chmodSync(join(toolDir, command), 0o755)
   }
 
   const result = spawnSync('/bin/sh', [installPath], {
     cwd: repoRoot,
-    env: { PATH: toolDir },
+    env: { PATH: toolDir, DAKAR_TEST_REAL_DIRNAME: realDirname },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })

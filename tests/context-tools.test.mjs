@@ -19,12 +19,12 @@ test('context adapter shell-quotes every MCP JSON payload', () => {
   const guidance = contextToolsBlock(repoRoot, repoSlug)
   const payload = (value) => shellWord(JSON.stringify(value))
 
-  assert.ok(guidance.includes(`codegraph_get_ai_context ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', intent: 'explain' })}`))
-  assert.ok(guidance.includes(`codegraph_get_callers ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>' })}`))
-  assert.ok(guidance.includes(`codegraph_analyze_impact ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', changeType: 'modify' })}`))
-  assert.ok(guidance.includes(`codegraph_symbol_search ${payload({ query: '...' })} and codegraph_search_docs ${payload({ query: '...' })}`))
-  assert.ok(guidance.includes(`deepwiki ask_question ${payload({ repoName: repoSlug, question: '...' })}`))
-  assert.ok(guidance.includes(`deepwiki read_wiki_structure ${payload({ repoName: repoSlug })}`))
+  assert.ok(guidance.includes(`codegraph_get_ai_context ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', intent: 'explain' })}`), 'AI context payload must be shell-quoted JSON')
+  assert.ok(guidance.includes(`codegraph_get_callers ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>' })}`), 'caller lookup payload must be shell-quoted JSON')
+  assert.ok(guidance.includes(`codegraph_analyze_impact ${payload({ uri: `file://${repoRoot}/<path>`, line: '<n>', changeType: 'modify' })}`), 'impact analysis payload must be shell-quoted JSON')
+  assert.ok(guidance.includes(`codegraph_symbol_search ${payload({ query: '...' })} and codegraph_search_docs ${payload({ query: '...' })}`), 'symbol and documentation search payloads must be shell-quoted JSON')
+  assert.ok(guidance.includes(`deepwiki ask_question ${payload({ repoName: repoSlug, question: '...' })}`), 'DeepWiki question payload must be shell-quoted JSON')
+  assert.ok(guidance.includes(`deepwiki read_wiki_structure ${payload({ repoName: repoSlug })}`), 'DeepWiki structure payload must be shell-quoted JSON')
   assert.ok(!guidance.includes(`'{"repoName":"${repoSlug}`), 'repository identity must remain inside a JSON shell argument')
 })
 
@@ -73,8 +73,8 @@ test('context adapter keeps arbitrary repository values inside one JSON shell ar
 test('context adapter omits DeepWiki commands without a GitHub identity', () => {
   const guidance = contextToolsBlock(REPO_ROOT, '')
 
-  assert.match(guidance, /DeepWiki: unavailable for this repository/u)
-  assert.doesNotMatch(guidance, /mcp deepwiki/u)
+  assert.match(guidance, /DeepWiki: unavailable for this repository/u, 'missing GitHub identity must report DeepWiki as unavailable')
+  assert.doesNotMatch(guidance, /mcp deepwiki/u, 'missing GitHub identity must omit DeepWiki commands')
 })
 
 test('context adapter warns that DeepWiki can be stale and is not head evidence', () => {

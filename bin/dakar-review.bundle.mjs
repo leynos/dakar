@@ -18,10 +18,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { deriveOdwConfig } from "../scripts/odw-config.mjs";
 
-// scripts/context-tools.mjs
+// src/workflows/dakar-review/shell.ts
 function shellWord(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
+
+// scripts/context-tools.mjs
 function mcpPayload(payload) {
   const json = JSON.stringify(payload);
   if (typeof json !== "string") throw new Error("MCP payload must be serializable");
@@ -150,14 +152,17 @@ function verdictDisposition(verdict, fallbackStatus) {
     evidenceChecked: verdict?.evidenceChecked || ""
   };
 }
-function semanticDisposition(accepted, discard, verdict) {
-  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
-  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
+function discardDisposition(discard, disposition) {
   return {
     status: discard?.status || disposition.status,
     reason: discard?.reason || disposition.reason,
     evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked
   };
+}
+function semanticDisposition(accepted, discard, verdict) {
+  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
+  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
+  return discardDisposition(discard, disposition);
 }
 function semanticProvenance(candidate, sourceLedger) {
   return {
@@ -299,6 +304,15 @@ function dakarProperties(result) {
   const dakar = properties.dakar;
   return dakar && typeof dakar === "object" ? dakar : {};
 }
+function projectSemanticResults(sarif, project) {
+  const [run2] = sarif.runs;
+  if (!run2) return [];
+  return run2.results.flatMap((result) => {
+    const dakar = dakarProperties(result);
+    if (dakar.kind !== "semantic") return [];
+    return project(dakar);
+  });
+}
 function compatibilityFinding(dakar) {
   const disposition = dakar.disposition;
   const candidate = dakar.candidate;
@@ -315,11 +329,7 @@ function compatibilityFinding(dakar) {
   };
 }
 function projectFindingsFromSarif(sarif) {
-  const [run2] = sarif.runs;
-  if (!run2) return [];
-  return run2.results.flatMap((result) => {
-    const dakar = dakarProperties(result);
-    if (dakar.kind !== "semantic") return [];
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition;
     if (!["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
     return [compatibilityFinding(dakar)];
@@ -335,11 +345,7 @@ function compatibilityDiscard(dakar) {
   };
 }
 function projectDiscardedFromSarif(sarif) {
-  const [run2] = sarif.runs;
-  if (!run2) return [];
-  return run2.results.flatMap((result) => {
-    const dakar = dakarProperties(result);
-    if (dakar.kind !== "semantic") return [];
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition;
     if (["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
     return [compatibilityDiscard(dakar)];
@@ -410,7 +416,7 @@ function odwEnv(usageLogPath = usageLogFile) {
   return env;
 }
 var usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`);
-function readReportedUsage(logPath) {
+function consumeReportedUsageLog(logPath) {
   let raw;
   try {
     raw = readFileSync(logPath, "utf8");
@@ -449,7 +455,7 @@ function annotateReportedUsage(output, lines, totals) {
   }
 }
 function attachReportedUsage(output) {
-  const lines = readReportedUsage(usageLogFile);
+  const lines = consumeReportedUsageLog(usageLogFile);
   if (lines.length === 0) return output;
   if (typeof output !== "object") return output;
   if (output === null) return output;
@@ -612,24 +618,24 @@ function addContextGuidance(workflowArgs, repoRoot) {
 function isMcpCliAvailable(timeout, clock, failureCounts) {
   const startedAt = clock.now();
   if (timeout === null) {
-    reportContextWarmupOperation("mcp_list_probe", "deadline_exhausted", startedAt, clock, failureCounts, "deadline");
+    reportContextWarmupOperation({ operation: "mcp_list_probe", outcome: "deadline_exhausted", startedAt, failureCategory: "deadline" }, { clock, failureCounts });
     return { available: false, outcome: "deadline_exhausted", deadlineExhausted: true };
   }
   const probe = spawnSync("mcp", ["--list"], { encoding: "utf8", timeout });
   if (!probe.error && probe.status === 0) {
-    reportContextWarmupOperation("mcp_list_probe", "succeeded", startedAt, clock, failureCounts);
+    reportContextWarmupOperation({ operation: "mcp_list_probe", outcome: "succeeded", startedAt }, { clock, failureCounts });
     return { available: true, outcome: "succeeded", deadlineExhausted: false };
   }
   const deadlineExhausted = probe.error?.code === "ETIMEDOUT";
   const outcome = deadlineExhausted ? "timed_out" : "failed";
-  reportContextWarmupOperation("mcp_list_probe", outcome, startedAt, clock, failureCounts, warmupFailureCategory(probe.error));
+  reportContextWarmupOperation({ operation: "mcp_list_probe", outcome, startedAt, failureCategory: warmupFailureCategory(probe.error) }, { clock, failureCounts });
   return { available: false, outcome, deadlineExhausted };
 }
 function warmupFailureCategory(error) {
   if (!error) return "nonzero_exit";
   return error.code === "ETIMEDOUT" ? "timeout" : "spawn_error";
 }
-function reportContextWarmupOperation(operation, outcome, startedAt, clock, failureCounts, failureCategory) {
+function reportContextWarmupOperation({ operation, outcome, startedAt, failureCategory }, { clock, failureCounts }) {
   const event = {
     event: "context_warmup",
     type: "operation",
@@ -650,11 +656,12 @@ function warmupTimeout(deadline, requestedTimeout, clock) {
   const boundedTimeout = Math.floor(Math.min(requestedTimeout, remaining));
   return boundedTimeout > 0 ? boundedTimeout : null;
 }
-function warmContextTool(tool, payload, timeout, deadline, clock, failureCounts) {
+function warmContextTool(tool, payload, timeout, context) {
+  const { deadline, clock } = context;
   const boundedTimeout = warmupTimeout(deadline, timeout, clock);
   const startedAt = clock.now();
   if (boundedTimeout === null) {
-    reportContextWarmupOperation(tool, "deadline_exhausted", startedAt, clock, failureCounts, "deadline");
+    reportContextWarmupOperation({ operation: tool, outcome: "deadline_exhausted", startedAt, failureCategory: "deadline" }, context);
     return { succeeded: false, outcome: "deadline_exhausted", deadlineExhausted: true };
   }
   const result = spawnSync("mcp", ["codegraph", tool, JSON.stringify(payload)], {
@@ -666,13 +673,14 @@ function warmContextTool(tool, payload, timeout, deadline, clock, failureCounts)
 `);
     const deadlineExhausted = result.error?.code === "ETIMEDOUT";
     const outcome = deadlineExhausted ? "timed_out" : "failed";
-    reportContextWarmupOperation(tool, outcome, startedAt, clock, failureCounts, warmupFailureCategory(result.error));
+    reportContextWarmupOperation({ operation: tool, outcome, startedAt, failureCategory: warmupFailureCategory(result.error) }, context);
     return { succeeded: false, outcome, deadlineExhausted };
   }
-  reportContextWarmupOperation(tool, "succeeded", startedAt, clock, failureCounts);
+  reportContextWarmupOperation({ operation: tool, outcome: "succeeded", startedAt }, context);
   return { succeeded: true, outcome: "succeeded", deadlineExhausted: false };
 }
-function indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline, clock, failureCounts) {
+function indexMarkdownContextCandidate(repoRoot, relPath, seen, context) {
+  const { deadline, clock } = context;
   if (warmupTimeout(deadline, 1, clock) === null) {
     return { attempted: false, succeeded: false, deadlineExhausted: true };
   }
@@ -681,7 +689,7 @@ function indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline, clock,
     return { attempted: false, succeeded: false, deadlineExhausted: false };
   }
   seen.add(absolute);
-  const result = warmContextTool("codegraph_index_markdown", { path: absolute }, 12e4, deadline, clock, failureCounts);
+  const result = warmContextTool("codegraph_index_markdown", { path: absolute }, 12e4, context);
   return { attempted: true, succeeded: result.succeeded, deadlineExhausted: result.deadlineExhausted };
 }
 function markdownWarmupLimitReached(attempts) {
@@ -693,13 +701,13 @@ function recordMarkdownWarmupOutcome(summary, result) {
   if (result.deadlineExhausted) summary.deadlineExhausted = true;
   return result.deadlineExhausted;
 }
-function warmMarkdownContext(repoRoot, changedFiles, deadline, clock, failureCounts) {
+function warmMarkdownContext(repoRoot, changedFiles, context) {
   const candidates = ["AGENTS.md", "README.md"].concat((changedFiles || []).filter((path) => path.endsWith(".md")));
   const seen = /* @__PURE__ */ new Set();
   const summary = { attempts: 0, successes: 0, deadlineExhausted: false };
   for (const relPath of candidates) {
     if (markdownWarmupLimitReached(summary.attempts)) break;
-    const result = indexMarkdownContextCandidate(repoRoot, relPath, seen, deadline, clock, failureCounts);
+    const result = indexMarkdownContextCandidate(repoRoot, relPath, seen, context);
     if (recordMarkdownWarmupOutcome(summary, result)) break;
   }
   return summary;
@@ -789,8 +797,9 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
     return;
   }
   process.stderr.write("dakar-review: warming CodeGraph index for the reviewed checkout.\n");
-  const directory = warmContextTool("codegraph_index_directory", { path: repoRoot }, 6e5, deadline, clock, failureCounts);
-  const markdown = warmMarkdownContext(repoRoot, changedFiles, deadline, clock, failureCounts);
+  const context = { deadline, clock, failureCounts };
+  const directory = warmContextTool("codegraph_index_directory", { path: repoRoot }, 6e5, context);
+  const markdown = warmMarkdownContext(repoRoot, changedFiles, context);
   const outcome = contextWarmupOutcome(directory, markdown);
   process.stderr.write(
     `dakar-review: CodeGraph warmup ${CONTEXT_WARMUP_COMPLETION[outcome]} (${markdown.successes} markdown file(s) indexed).

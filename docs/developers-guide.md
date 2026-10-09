@@ -26,11 +26,18 @@ diagrams.
 Use focused commands while iterating:
 
 ```bash
-node --test tests/cli.test.mjs tests/install.test.mjs
+npm run test:cli
 node --test tests/review-state.test.mjs
 node --test tests/workflow-dry-run.test.mjs
 npm run odw:dry-run
 ```
+
+The CLI suite groups review, recording, preparation, context-warmup, and
+telemetry cases in `tests/cli.test.mjs`, `tests/cli-recording.test.mjs`,
+`tests/cli-preparation.test.mjs`, `tests/cli-context-warmup.test.mjs`, and
+`tests/cli-telemetry.test.mjs`. Shared CLI subprocess and repository-fixture
+helpers live in `tests/cli-test-support.mjs`; `npm run test:cli` also runs the
+bundle and installer tests.
 
 The `make lint` gate runs `npm run lint:complexity`, which uses pinned Biome
 1.9.4 to enforce a maximum cognitive complexity of 9 on the authored CLI
@@ -325,19 +332,19 @@ all progress, run ids, and log-follow warnings on standard error so standard
 output remains reserved for JSON or Markdown result data.
 
 A CLI test that exercises a review must run against its own fixture repository,
-never the checkout under test. `setUpRecordRepo` in `tests/cli.test.mjs` builds
-one: a base commit, a second commit ahead of it, and the base revision to pass
-as `--base`. Pointed at its own checkout the CLI resolves the review base to
-the current head, finds no unreviewed commits, and short-circuits with
-`skipped: true` before ODW is ever spawned, so the case passes or fails
-according to what the developer happens to have committed. Set
-`XDG_CONFIG_HOME` to an empty temporary directory in the same breath, or the
-run reads the developer's own `dakar/config.yaml`.
+never the checkout under test. `setUpRecordRepo` in
+`tests/cli-test-support.mjs` builds one: a base commit, a second commit ahead
+of it, and the base revision to pass as `--base`. Pointed at its own checkout,
+the CLI resolves the review base to the current head, finds no unreviewed
+commits, and short-circuits with `skipped: true` before ODW is ever spawned, so
+the case passes or fails according to what the developer happens to have
+committed. Set `XDG_CONFIG_HOME` to an empty temporary directory in the same
+breath, or the run reads the developer's own `dakar/config.yaml`.
 
 When changing CLI arguments or output, update these places together:
 
 - `bin/dakar-review.mjs`;
-- `tests/cli.test.mjs`;
+- the relevant module under `tests/cli*.test.mjs`;
 - `docs/users-guide.md`;
 - the workflow contract section in `docs/dakar-review-design.md` when the
   underlying ODW result changes.

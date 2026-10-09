@@ -130,15 +130,20 @@ function verdictDisposition(verdict: Verdict | undefined, fallbackStatus: string
   }
 }
 
-/** Prefer accepted evidence, or independently override audit fields with a discard. */
-function semanticDisposition(accepted: Candidate | undefined, discard: Discarded | undefined, verdict: Verdict | undefined) {
-  const disposition = verdictDisposition(verdict, accepted ? 'accepted' : 'not_selected')
-  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity }
+/** Independently prefer each truthy discard field over its verifier fallback. */
+function discardDisposition(discard: Discarded | undefined, disposition: ReturnType<typeof verdictDisposition>) {
   return {
     status: discard?.status || disposition.status,
     reason: discard?.reason || disposition.reason,
     evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked,
   }
+}
+
+/** Prefer accepted evidence, or independently override audit fields with a discard. */
+function semanticDisposition(accepted: Candidate | undefined, discard: Discarded | undefined, verdict: Verdict | undefined) {
+  const disposition = verdictDisposition(verdict, accepted ? 'accepted' : 'not_selected')
+  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity }
+  return discardDisposition(discard, disposition)
 }
 
 /** Carry trusted task provenance and the ledger's optional routing details. */
@@ -316,6 +321,23 @@ function dakarProperties(result: Record<string, unknown>): Record<string, unknow
 }
 
 /**
+ * Traverses semantic results in the first run without changing projection order.
+ *
+ * @param sarif - Dakar SARIF document.
+ * @param project - Selects and converts one semantic result's Dakar properties.
+ * @returns Compatibility records in their original result order.
+ */
+function projectSemanticResults<T>(sarif: DakarSarif, project: (dakar: Record<string, unknown>) => T[]): T[] {
+  const [run] = sarif.runs
+  if (!run) return []
+  return run.results.flatMap((result) => {
+    const dakar = dakarProperties(result)
+    if (dakar.kind !== 'semantic') return []
+    return project(dakar)
+  })
+}
+
+/**
  * Converts accepted Dakar result properties to the legacy finding shape.
  *
  * @param dakar - Dakar-owned semantic result properties.
@@ -344,11 +366,7 @@ function compatibilityFinding(dakar: Record<string, unknown>): Record<string, un
  * @returns Existing CLI finding objects derived only from SARIF evidence.
  */
 export function projectFindingsFromSarif(sarif: DakarSarif): Array<Record<string, unknown>> {
-  const [run] = sarif.runs
-  if (!run) return []
-  return run.results.flatMap((result) => {
-    const dakar = dakarProperties(result)
-    if (dakar.kind !== 'semantic') return []
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition as Record<string, unknown>
     if (!['accepted', 'severity_downgraded'].includes(String(disposition?.status))) return []
     return [compatibilityFinding(dakar)]
@@ -378,11 +396,7 @@ function compatibilityDiscard(dakar: Record<string, unknown>): Discarded {
  * @returns Existing discard objects derived only from SARIF evidence.
  */
 export function projectDiscardedFromSarif(sarif: DakarSarif): Discarded[] {
-  const [run] = sarif.runs
-  if (!run) return []
-  return run.results.flatMap((result) => {
-    const dakar = dakarProperties(result)
-    if (dakar.kind !== 'semantic') return []
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition as Record<string, unknown>
     if (['accepted', 'severity_downgraded'].includes(String(disposition?.status))) return []
     return [compatibilityDiscard(dakar)]

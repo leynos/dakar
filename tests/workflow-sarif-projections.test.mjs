@@ -338,6 +338,19 @@ test('discard projection applies String conversion to truthy non-string fields',
   assert.strictEqual(discards[0].candidate, candidate)
 })
 
+test('projections retain sparse traversal and malformed-result failures', () => {
+  const results = new Array(2)
+  results[1] = projectedResult(semanticDakarResult())
+  const sarif = projectedDocument(results)
+
+  assert.equal(projectFindingsFromSarif(sarif).length, 1, 'sparse result slots are skipped before finding conversion')
+  assert.deepEqual(projectDiscardedFromSarif(sarif), [], 'sparse result slots are skipped before discard selection')
+  for (const project of [projectFindingsFromSarif, projectDiscardedFromSarif]) {
+    assert.throws(() => project(projectedDocument([null])), TypeError, 'null results retain their existing failure')
+    assert.throws(() => project({ runs: [{}] }), TypeError, 'missing results retain their existing failure')
+  }
+})
+
 test('SARIF projections preserve audited severity and distinguish advisory gates', () => {
   const input = fixture()
   input.accepted[0].severity = 'medium'
