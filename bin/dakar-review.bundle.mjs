@@ -10,7 +10,7 @@
 
 // bin/dakar-review.mjs
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -386,13 +386,25 @@ import { appendReview, prepare } from "../scripts/review-state.mjs";
 var DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300;
 var CONTEXT_WARMUP_TIMEOUT_MILLISECONDS = 3e4;
 var CONTEXT_WARMUP_CLOCK = Object.freeze({ now: () => performance.now() });
+var CONTEXT_WARMUP_BOUNDARY = Object.freeze({
+  clock: CONTEXT_WARMUP_CLOCK,
+  runGit: (args, options) => spawnSync("git", args, options),
+  runMcp: (args, options) => spawnSync("mcp", args, options),
+  filesystem: Object.freeze({ realpath: realpathSync, stat: statSync }),
+  report: (message) => process.stderr.write(message)
+});
+var REPORTED_USAGE_BOUNDARY = Object.freeze({
+  read: (path) => readFileSync(path, "utf8"),
+  remove: (path) => rmSync(path, { force: true }),
+  report: (message) => process.stderr.write(message)
+});
 var MAX_MARKDOWN_WARMUP_ATTEMPTS = 20;
 var CONTEXT_WARMUP_COMPLETION = Object.freeze({
   succeeded: "complete",
   degraded: "completed with failures",
   timed_out: "timed out"
 });
-var CONTEXT_WARMUP_FAILURE_CATEGORIES = Object.freeze(["timeout", "spawn_error", "nonzero_exit", "deadline"]);
+var CONTEXT_WARMUP_FAILURE_CATEGORIES = Object.freeze(["timeout", "spawn_error", "nonzero_exit", "deadline", "filesystem_error"]);
 var CONTEXT_WARMUP_OPERATIONS = Object.freeze(["mcp_list_probe", "codegraph_index_directory", "codegraph_index_markdown"]);
 function clampPerCallTimeout(value = DEFAULT_PER_CALL_TIMEOUT_SECONDS) {
   const floored = Math.floor(Number(value));
@@ -419,24 +431,47 @@ function odwEnv(usageLogPath = usageLogFile) {
   return env;
 }
 var usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`);
-function consumeReportedUsageLog(logPath) {
+function consumeReportedUsageLog(logPath, boundary) {
   let raw;
   try {
-    raw = readFileSync(logPath, "utf8");
-  } catch {
-    return [];
+    raw = boundary.read(logPath);
+  } catch (error) {
+    return { lines: [], readOutcome: error?.code === "ENOENT" ? "absent" : "failed", parseOutcome: "not_attempted", cleanupOutcome: "not_attempted", invalidLines: 0 };
   }
+  let cleanupOutcome = "succeeded";
   try {
-    rmSync(logPath, { force: true });
+    boundary.remove(logPath);
   } catch {
+    cleanupOutcome = "failed";
   }
-  return raw.split("\n").filter((line) => line.trim() !== "").flatMap((line) => {
+  return { ...parseReportedUsage(raw), readOutcome: "succeeded", cleanupOutcome };
+}
+function parseReportedUsage(raw) {
+  const lines = [];
+  let invalidLines = 0;
+  let parseOutcome = "succeeded";
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
     try {
-      return [JSON.parse(line)];
+      lines.push(JSON.parse(line));
     } catch {
-      return [];
+      invalidLines += 1;
+      parseOutcome = "degraded";
     }
-  });
+  }
+  return { lines, invalidLines, parseOutcome };
+}
+function reportUsageLogOutcome(result, report) {
+  if (result.readOutcome !== "failed" && result.cleanupOutcome !== "failed" && result.invalidLines === 0) return;
+  const event = {
+    event: "reported_usage_log",
+    readOutcome: result.readOutcome,
+    parseOutcome: result.parseOutcome,
+    cleanupOutcome: result.cleanupOutcome,
+    invalidLines: result.invalidLines
+  };
+  report(`dakar-review: usage log ${JSON.stringify(event)}
+`);
 }
 function sumReportedTokens(lines) {
   const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -458,7 +493,9 @@ function annotateReportedUsage(output, lines, totals) {
   }
 }
 function attachReportedUsage(output) {
-  const lines = consumeReportedUsageLog(usageLogFile);
+  const result = consumeReportedUsageLog(usageLogFile, REPORTED_USAGE_BOUNDARY);
+  reportUsageLogOutcome(result, REPORTED_USAGE_BOUNDARY.report);
+  const { lines } = result;
   if (lines.length === 0) return output;
   if (typeof output !== "object") return output;
   if (output === null) return output;
@@ -599,8 +636,8 @@ function readAgentInstructions(repoRoot, baseRef) {
     truncated: content.length > 24e3
   };
 }
-function deriveRepoSlug(repoRoot) {
-  const result = spawnSync("git", ["-C", repoRoot, "config", "--get", "remote.origin.url"], {
+function deriveRepoSlug(repoRoot, runGit) {
+  const result = runGit(["-C", repoRoot, "config", "--get", "remote.origin.url"], {
     encoding: "utf8",
     timeout: 1e4
   });
@@ -610,35 +647,31 @@ function deriveRepoSlug(repoRoot) {
   const match = /github\.com[/:]([^/]+)\/([^/\s]+?)(?:\.git)?$/u.exec((result.stdout || "").trim());
   return match ? { kind: "slug", value: `${match[1]}/${match[2]}` } : { kind: "unavailable" };
 }
-function addContextGuidance(workflowArgs, repoRoot) {
-  const result = deriveRepoSlug(repoRoot);
+function addContextGuidance(workflowArgs, repoRoot, boundary = CONTEXT_WARMUP_BOUNDARY) {
+  const result = deriveRepoSlug(repoRoot, boundary.runGit);
   if (result.kind === "error") {
-    process.stderr.write(`dakar-review: Git failed while ${result.operation}; DeepWiki context is unavailable.
+    boundary.report(`dakar-review: Git failed while ${result.operation}; DeepWiki context is unavailable.
 `);
   }
   workflowArgs.contextGuidance = contextToolsBlock(repoRoot, result.kind === "slug" ? result.value : "");
 }
-function isMcpCliAvailable(timeout, clock, failureCounts) {
-  const startedAt = clock.now();
+function isMcpCliAvailable(timeout, runMcp) {
   if (timeout === null) {
-    reportContextWarmupOperation({ operation: "mcp_list_probe", outcome: "deadline_exhausted", startedAt, failureCategory: "deadline" }, { clock, failureCounts });
-    return { available: false, outcome: "deadline_exhausted", deadlineExhausted: true };
+    return { available: false, outcome: "deadline_exhausted", deadlineExhausted: true, failureCategory: "deadline" };
   }
-  const probe = spawnSync("mcp", ["--list"], { encoding: "utf8", timeout });
+  const probe = runMcp(["--list"], { encoding: "utf8", timeout });
   if (!probe.error && probe.status === 0) {
-    reportContextWarmupOperation({ operation: "mcp_list_probe", outcome: "succeeded", startedAt }, { clock, failureCounts });
     return { available: true, outcome: "succeeded", deadlineExhausted: false };
   }
   const deadlineExhausted = probe.error?.code === "ETIMEDOUT";
   const outcome = deadlineExhausted ? "timed_out" : "failed";
-  reportContextWarmupOperation({ operation: "mcp_list_probe", outcome, startedAt, failureCategory: warmupFailureCategory(probe.error) }, { clock, failureCounts });
-  return { available: false, outcome, deadlineExhausted };
+  return { available: false, outcome, deadlineExhausted, failureCategory: warmupFailureCategory(probe.error) };
 }
 function warmupFailureCategory(error) {
   if (!error) return "nonzero_exit";
   return error.code === "ETIMEDOUT" ? "timeout" : "spawn_error";
 }
-function reportContextWarmupOperation({ operation, outcome, startedAt, failureCategory }, { clock, failureCounts }) {
+function reportContextWarmupOperation({ operation, outcome, startedAt, failureCategory }, { clock, failureCounts, report }) {
   const event = {
     event: "context_warmup",
     type: "operation",
@@ -650,7 +683,7 @@ function reportContextWarmupOperation({ operation, outcome, startedAt, failureCa
     event.failureCategory = failureCategory;
     recordContextWarmupFailure(failureCounts, operation, failureCategory);
   }
-  process.stderr.write(`dakar-review: warmup ${JSON.stringify(event)}
+  report(`dakar-review: warmup ${JSON.stringify(event)}
 `);
 }
 function warmupTimeout(deadline, requestedTimeout, clock) {
@@ -667,12 +700,12 @@ function warmContextTool(tool, payload, timeout, context) {
     reportContextWarmupOperation({ operation: tool, outcome: "deadline_exhausted", startedAt, failureCategory: "deadline" }, context);
     return { succeeded: false, outcome: "deadline_exhausted", deadlineExhausted: true };
   }
-  const result = spawnSync("mcp", ["codegraph", tool, JSON.stringify(payload)], {
+  const result = context.runMcp(["codegraph", tool, JSON.stringify(payload)], {
     encoding: "utf8",
     timeout: boundedTimeout
   });
   if (result.error || result.status !== 0) {
-    process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.
+    context.report(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.
 `);
     const deadlineExhausted = result.error?.code === "ETIMEDOUT";
     const outcome = deadlineExhausted ? "timed_out" : "failed";
@@ -687,13 +720,31 @@ function indexMarkdownContextCandidate(repoRoot, relPath, seen, context) {
   if (warmupTimeout(deadline, 1, clock) === null) {
     return { attempted: false, succeeded: false, deadlineExhausted: true };
   }
-  const absolute = join(repoRoot, relPath);
-  if (seen.has(absolute) || !existsSync(absolute)) {
+  const candidatePath = resolve(repoRoot, relPath);
+  if (seen.has(candidatePath)) {
     return { attempted: false, succeeded: false, deadlineExhausted: false };
   }
-  seen.add(absolute);
-  const result = warmContextTool("codegraph_index_markdown", { path: absolute }, 12e4, context);
+  const startedAt = clock.now();
+  const markdown = repositoryMarkdownPath(repoRoot, relPath, context.filesystem);
+  if (markdown.kind === "error") {
+    reportContextWarmupOperation({ operation: "codegraph_index_markdown", outcome: "failed", startedAt, failureCategory: "filesystem_error" }, context);
+  }
+  if (markdown.kind !== "present") return { attempted: false, succeeded: false, deadlineExhausted: false };
+  seen.add(candidatePath);
+  const result = warmContextTool("codegraph_index_markdown", { path: markdown.path }, 12e4, context);
   return { attempted: true, succeeded: result.succeeded, deadlineExhausted: result.deadlineExhausted };
+}
+function repositoryMarkdownPath(repoRoot, relPath, filesystem) {
+  try {
+    const realRepoRoot = filesystem.realpath(repoRoot);
+    const markdownPath = filesystem.realpath(resolve(realRepoRoot, relPath));
+    const relativePath = relative(realRepoRoot, markdownPath);
+    if (!isRepositoryRelativePath(relativePath)) return { kind: "outside" };
+    if (!filesystem.stat(markdownPath).isFile()) return { kind: "absent" };
+    return { kind: "present", path: markdownPath };
+  } catch (error) {
+    return { kind: error?.code === "ENOENT" ? "absent" : "error" };
+  }
 }
 function markdownWarmupLimitReached(attempts) {
   return attempts >= MAX_MARKDOWN_WARMUP_ATTEMPTS;
@@ -715,12 +766,13 @@ function warmMarkdownContext(repoRoot, changedFiles, context) {
   }
   return summary;
 }
-function contextWarmupOutcome(directory, markdown) {
+function contextWarmupOutcome(directory, markdown, failureCounts) {
   if (directory.deadlineExhausted || markdown.deadlineExhausted) return "timed_out";
   if (directory.outcome !== "succeeded" || markdown.successes < markdown.attempts) return "degraded";
+  if (failureCounts.codegraph_index_markdown.filesystem_error > 0) return "degraded";
   return "succeeded";
 }
-function reportContextWarmupSummary(summary, clock) {
+function reportContextWarmupSummary(summary, clock, report) {
   const event = {
     event: "context_warmup",
     type: "summary",
@@ -734,10 +786,11 @@ function reportContextWarmupSummary(summary, clock) {
     failureCounts: summary.failureCounts
   };
   if (summary.skipReason) event.skipReason = summary.skipReason;
-  process.stderr.write(`dakar-review: warmup ${JSON.stringify(event)}
+  report(`dakar-review: warmup ${JSON.stringify(event)}
 `);
 }
-function recordSkippedContextWarmup(skipReason, clock) {
+function recordSkippedContextWarmup(skipReason, boundary) {
+  const { clock, report } = boundary;
   reportContextWarmupSummary({
     outcome: "skipped",
     startedAt: clock.now(),
@@ -748,7 +801,7 @@ function recordSkippedContextWarmup(skipReason, clock) {
     deadlineExhausted: false,
     failureCounts: emptyContextWarmupFailureCounts(),
     skipReason
-  }, clock);
+  }, clock, report);
 }
 function emptyContextWarmupFailureCounts() {
   return Object.fromEntries(CONTEXT_WARMUP_OPERATIONS.map((operation) => [
@@ -760,11 +813,12 @@ function recordContextWarmupFailure(counts, operation, category) {
   if (!counts[operation] || !Object.hasOwn(counts[operation], category)) return;
   counts[operation][category] += 1;
 }
-function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) {
+function warmContextIndex(repoRoot, changedFiles, boundary = CONTEXT_WARMUP_BOUNDARY) {
+  const { clock, report, runMcp, filesystem } = boundary;
   const startedAt = clock.now();
   const failureCounts = emptyContextWarmupFailureCounts();
   if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
-    process.stderr.write("dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n");
+    report("dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n");
     reportContextWarmupSummary({
       outcome: "skipped",
       startedAt,
@@ -775,17 +829,18 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
       deadlineExhausted: false,
       failureCounts,
       skipReason: "environment"
-    }, clock);
+    }, clock, report);
     return;
   }
   const deadline = clock.now() + CONTEXT_WARMUP_TIMEOUT_MILLISECONDS;
+  const probeStartedAt = clock.now();
   const probe = isMcpCliAvailable(
     warmupTimeout(deadline, CONTEXT_WARMUP_TIMEOUT_MILLISECONDS, clock),
-    clock,
-    failureCounts
+    runMcp
   );
+  reportContextWarmupOperation({ operation: "mcp_list_probe", outcome: probe.outcome, startedAt: probeStartedAt, failureCategory: probe.failureCategory }, { clock, failureCounts, report });
   if (!probe.available) {
-    process.stderr.write("dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n");
+    report("dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n");
     reportContextWarmupSummary({
       outcome: "skipped",
       startedAt,
@@ -796,15 +851,15 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
       deadlineExhausted: probe.deadlineExhausted,
       failureCounts,
       skipReason: probe.deadlineExhausted ? "deadline_exhausted" : "mcp_unavailable"
-    }, clock);
+    }, clock, report);
     return;
   }
-  process.stderr.write("dakar-review: warming CodeGraph index for the reviewed checkout.\n");
-  const context = { deadline, clock, failureCounts };
+  report("dakar-review: warming CodeGraph index for the reviewed checkout.\n");
+  const context = { deadline, clock, failureCounts, runMcp, filesystem, report };
   const directory = warmContextTool("codegraph_index_directory", { path: repoRoot }, 6e5, context);
   const markdown = warmMarkdownContext(repoRoot, changedFiles, context);
-  const outcome = contextWarmupOutcome(directory, markdown);
-  process.stderr.write(
+  const outcome = contextWarmupOutcome(directory, markdown, failureCounts);
+  report(
     `dakar-review: CodeGraph warmup ${CONTEXT_WARMUP_COMPLETION[outcome]} (${markdown.successes} markdown file(s) indexed).
 `
   );
@@ -817,35 +872,35 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
     markdownSuccesses: markdown.successes,
     deadlineExhausted: outcome === "timed_out",
     failureCounts
-  }, clock);
+  }, clock, report);
 }
-function isCheckedOutReviewHead(repoRoot, headCommit) {
-  const head = spawnSync("git", ["-C", repoRoot, "rev-parse", "HEAD"], { encoding: "utf8" });
+function isCheckedOutReviewHead(repoRoot, headCommit, runGit) {
+  const head = runGit(["-C", repoRoot, "rev-parse", "HEAD"], { encoding: "utf8" });
   if (head.error || head.status !== 0) return { kind: "error", operation: "reading HEAD" };
   if (head.stdout.trim() !== headCommit) return { kind: "different-head" };
-  const status = spawnSync("git", ["-C", repoRoot, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8" });
+  const status = runGit(["-C", repoRoot, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8" });
   if (status.error || status.status !== 0) return { kind: "error", operation: "checking worktree status" };
   return status.stdout === "" ? { kind: "clean" } : { kind: "dirty" };
 }
-function warmReviewedContextIndex(repoRoot, prepared, clock = CONTEXT_WARMUP_CLOCK) {
+function warmReviewedContextIndex(repoRoot, prepared, boundary = CONTEXT_WARMUP_BOUNDARY) {
   const changedFiles = prepared.changedFiles || [];
   if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
-    warmContextIndex(repoRoot, changedFiles, clock);
+    warmContextIndex(repoRoot, changedFiles, boundary);
     return;
   }
-  const checkout = isCheckedOutReviewHead(repoRoot, prepared.headCommit);
+  const checkout = isCheckedOutReviewHead(repoRoot, prepared.headCommit, boundary.runGit);
   if (checkout.kind === "clean") {
-    warmContextIndex(repoRoot, changedFiles, clock);
+    warmContextIndex(repoRoot, changedFiles, boundary);
     return;
   }
   if (checkout.kind === "error") {
-    process.stderr.write(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.
+    boundary.report(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.
 `);
-    recordSkippedContextWarmup("checkout_verification_failed", clock);
+    recordSkippedContextWarmup("checkout_verification_failed", boundary);
     return;
   }
-  process.stderr.write("dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n");
-  recordSkippedContextWarmup(checkout.kind === "dirty" ? "dirty_checkout" : "different_head", clock);
+  boundary.report("dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n");
+  recordSkippedContextWarmup(checkout.kind === "dirty" ? "dirty_checkout" : "different_head", boundary);
 }
 function buildWorkflowArgs(options, repoRoot) {
   const resolvedConfig = resolveReviewConfig({ repoRoot, config: options.config, packageRoot });
@@ -1292,7 +1347,7 @@ function prepareLiveReview(options, repoRoot, workflowArgs, format) {
   if (!process.env.OPENAI_API_KEY) {
     process.stderr.write("dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n");
   }
-  warmReviewedContextIndex(repoRoot, workflowArgs.prepared, CONTEXT_WARMUP_CLOCK);
+  warmReviewedContextIndex(repoRoot, workflowArgs.prepared, CONTEXT_WARMUP_BOUNDARY);
   const worstCase = worstCaseReviewSeconds(
     {
       flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),

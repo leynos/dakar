@@ -192,7 +192,8 @@ const args = process.argv.slice(2)
   const output = JSON.parse(result.stdout)
   assert.equal(Object.hasOwn(output.receivedArgs, 'repoSlug'), false, 'a failed origin lookup must not pass GitHub identity to the workflow')
   assert.match(output.receivedArgs.contextGuidance, /DeepWiki: unavailable for this repository/u, 'failed identity lookup must use unavailable DeepWiki guidance')
-  assert.match(result.stderr, /Git failed while reading the origin URL; DeepWiki context is unavailable/u)
+  assert.match(result.stderr, /Git failed while reading the origin URL; DeepWiki context is unavailable/u,
+    'a failed origin lookup must emit the existing DeepWiki-unavailable diagnostic')
 })
 
 test('CLI passes normalized policy rather than YAML-only prompt context', () => {

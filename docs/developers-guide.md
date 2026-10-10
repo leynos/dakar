@@ -270,18 +270,19 @@ an override for Dakar's schema, output, or safety rules.
 
 ### MCP context and repository identity
 
-For a live review, `prepareLiveReview()` calls the CLI's `warmContextIndex()`
-after trusted range preparation and deterministic gates, but before
-`launchOdw()` can dispatch a finder. The warmup probes the `mcp` CLI, indexes
-the reviewed checkout with CodeGraph, and then indexes at most 20 existing
-Markdown context files: the root `AGENTS.md`, `README.md`, and changed Markdown
-files. It runs only when the immutable reviewed head is currently checked out
-cleanly; otherwise it skips with a warning on stderr. All warmup calls share a
-30-second deadline. It is advisory: `DAKAR_SKIP_CONTEXT_WARMUP` skips it, an
-unavailable CLI or failed indexing call writes a warning to stderr, and the
-review continues with the prompt's git/direct-inspection fallback. The ODW
-workflow does not own this warmup, so direct ODW invocations do not receive
-this host-side preflight automatically.
+For a live review, after trusted range preparation and deterministic gates,
+`prepareLiveReview()` calls `warmReviewedContextIndex()` before `launchOdw()`
+can dispatch a finder. That helper verifies the checkout and delegates eligible
+warmups to `warmContextIndex()`, which probes the `mcp` CLI, indexes the
+reviewed checkout with CodeGraph, and then indexes at most 20 existing Markdown
+context files: the root `AGENTS.md`, `README.md`, and changed Markdown files.
+It runs only when the immutable reviewed head is currently checked out cleanly;
+otherwise it skips with a warning on stderr. All warmup calls share a 30-second
+deadline. It is advisory: `DAKAR_SKIP_CONTEXT_WARMUP` skips it, an unavailable
+CLI or failed indexing call writes a warning to stderr, and the review
+continues with the prompt's git/direct-inspection fallback. The ODW workflow
+does not own this warmup, so direct ODW invocations do not receive this
+host-side preflight automatically.
 
 The CLI resolves a GitHub `owner/name` from the reviewed checkout's `origin`
 and constructs optional context guidance at its host-side adapter boundary.

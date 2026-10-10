@@ -10,7 +10,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { performance } from 'node:perf_hooks'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -39,6 +39,22 @@ const CONTEXT_WARMUP_TIMEOUT_MILLISECONDS = 30_000
 /** Supply a monotonic clock to the bounded context-warmup operations. */
 const CONTEXT_WARMUP_CLOCK = Object.freeze({ now: () => performance.now() })
 
+/** Inject only the process, filesystem, timing, and diagnostic ports warmup needs. */
+const CONTEXT_WARMUP_BOUNDARY = Object.freeze({
+  clock: CONTEXT_WARMUP_CLOCK,
+  runGit: (args, options) => spawnSync('git', args, options),
+  runMcp: (args, options) => spawnSync('mcp', args, options),
+  filesystem: Object.freeze({ realpath: realpathSync, stat: statSync }),
+  report: (message) => process.stderr.write(message),
+})
+
+/** Keep usage-log effects at the CLI boundary rather than inside parsing. */
+const REPORTED_USAGE_BOUNDARY = Object.freeze({
+  read: (path) => readFileSync(path, 'utf8'),
+  remove: (path) => rmSync(path, { force: true }),
+  report: (message) => process.stderr.write(message),
+})
+
 /** Bound Markdown indexing attempts even when every MCP call fails. */
 const MAX_MARKDOWN_WARMUP_ATTEMPTS = 20
 
@@ -50,7 +66,7 @@ const CONTEXT_WARMUP_COMPLETION = Object.freeze({
 })
 
 /** Fixed dimensions prevent warmup summaries from exposing unbounded categories. */
-const CONTEXT_WARMUP_FAILURE_CATEGORIES = Object.freeze(['timeout', 'spawn_error', 'nonzero_exit', 'deadline'])
+const CONTEXT_WARMUP_FAILURE_CATEGORIES = Object.freeze(['timeout', 'spawn_error', 'nonzero_exit', 'deadline', 'filesystem_error'])
 const CONTEXT_WARMUP_OPERATIONS = Object.freeze(['mcp_list_probe', 'codegraph_index_directory', 'codegraph_index_markdown'])
 /**
  * Clamp a per-call timeout to the same default and bounds the workflow applies.
@@ -148,30 +164,53 @@ const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.js
  * Read and consume the pi extension's JSON-lines usage log.
  *
  * @param {string} logPath - path supplied to the pi extension.
- * @returns {unknown[]} parsed records in order, omitting invalid JSON lines.
+ * @param {{ read: Function, remove: Function }} boundary - Narrow filesystem effects.
+ * @returns {{ lines: unknown[], readOutcome: string, parseOutcome: string, cleanupOutcome: string, invalidLines: number }} Explicit read, parse, and cleanup evidence.
  */
-function consumeReportedUsageLog(logPath) {
+function consumeReportedUsageLog(logPath, boundary) {
   let raw
   try {
-    raw = readFileSync(logPath, 'utf8')
-  } catch {
-    return []
+    raw = boundary.read(logPath)
+  } catch (error) {
+    return { lines: [], readOutcome: error?.code === 'ENOENT' ? 'absent' : 'failed', parseOutcome: 'not_attempted', cleanupOutcome: 'not_attempted', invalidLines: 0 }
   }
+  let cleanupOutcome = 'succeeded'
   try {
-    rmSync(logPath, { force: true })
+    boundary.remove(logPath)
   } catch {
-    // A leftover temp file is harmless.
+    cleanupOutcome = 'failed'
   }
-  return raw
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)]
-      } catch {
-        return []
-      }
-    })
+  return { ...parseReportedUsage(raw), readOutcome: 'succeeded', cleanupOutcome }
+}
+
+/** Parse usage records in order without imposing a schema on valid JSON. */
+function parseReportedUsage(raw) {
+  const lines = []
+  let invalidLines = 0
+  let parseOutcome = 'succeeded'
+  for (const line of raw.split('\n')) {
+    if (line.trim() === '') continue
+    try {
+      lines.push(JSON.parse(line))
+    } catch {
+      invalidLines += 1
+      parseOutcome = 'degraded'
+    }
+  }
+  return { lines, invalidLines, parseOutcome }
+}
+
+/** Expose advisory usage-log failures without disclosing paths or records. */
+function reportUsageLogOutcome(result, report) {
+  if (result.readOutcome !== 'failed' && result.cleanupOutcome !== 'failed' && result.invalidLines === 0) return
+  const event = {
+    event: 'reported_usage_log',
+    readOutcome: result.readOutcome,
+    parseOutcome: result.parseOutcome,
+    cleanupOutcome: result.cleanupOutcome,
+    invalidLines: result.invalidLines,
+  }
+  report(`dakar-review: usage log ${JSON.stringify(event)}\n`)
 }
 
 /**
@@ -222,7 +261,9 @@ function annotateReportedUsage(output, lines, totals) {
  * @returns {object} the same output, annotated when usage lines exist.
  */
 function attachReportedUsage(output) {
-  const lines = consumeReportedUsageLog(usageLogFile)
+  const result = consumeReportedUsageLog(usageLogFile, REPORTED_USAGE_BOUNDARY)
+  reportUsageLogOutcome(result, REPORTED_USAGE_BOUNDARY.report)
+  const { lines } = result
   if (lines.length === 0) return output
   if (typeof output !== 'object') return output
   if (output === null) return output
@@ -445,11 +486,12 @@ function readAgentInstructions(repoRoot, baseRef) {
  * a GitHub origin simply reviews without DeepWiki guidance.
  *
  * @param {string} repoRoot - absolute path to the repository root.
+ * @param {Function} runGit - Injected Git subprocess runner.
  * @returns {{ kind: 'slug', value: string } | { kind: 'unavailable' } | { kind: 'error', operation: string }}
  *   The resolved slug, ordinary absence, or a Git lookup failure.
  */
-function deriveRepoSlug(repoRoot) {
-  const result = spawnSync('git', ['-C', repoRoot, 'config', '--get', 'remote.origin.url'], {
+function deriveRepoSlug(repoRoot, runGit) {
+  const result = runGit(['-C', repoRoot, 'config', '--get', 'remote.origin.url'], {
     encoding: 'utf8',
     timeout: 10_000,
   })
@@ -465,12 +507,13 @@ function deriveRepoSlug(repoRoot) {
  *
  * @param {object} workflowArgs - Mutable workflow arguments assembled by the CLI.
  * @param {string} repoRoot - Absolute path to the repository root.
+ * @param {object} [boundary] - Injected Git query and diagnostic ports.
  * @returns {void}
  */
-function addContextGuidance(workflowArgs, repoRoot) {
-  const result = deriveRepoSlug(repoRoot)
+function addContextGuidance(workflowArgs, repoRoot, boundary = CONTEXT_WARMUP_BOUNDARY) {
+  const result = deriveRepoSlug(repoRoot, boundary.runGit)
   if (result.kind === 'error') {
-    process.stderr.write(`dakar-review: Git failed while ${result.operation}; DeepWiki context is unavailable.\n`)
+    boundary.report(`dakar-review: Git failed while ${result.operation}; DeepWiki context is unavailable.\n`)
   }
   workflowArgs.contextGuidance = contextToolsBlock(repoRoot, result.kind === 'slug' ? result.value : '')
 }
@@ -479,26 +522,21 @@ function addContextGuidance(workflowArgs, repoRoot) {
  * Determine whether the operator's MCP CLI is available for CodeGraph warmup.
  *
  * @param {number | null} timeout - Probe timeout, bounded by the shared deadline.
- * @param {{ now: () => number }} clock - Injected monotonic clock.
- * @param {object} failureCounts - Mutable bounded operation/category counters.
+ * @param {Function} runMcp - Injected MCP subprocess runner.
  * @returns {{ available: boolean, outcome: string, deadlineExhausted: boolean }}
  *   The probe result without exposing process output or repository data.
  */
-function isMcpCliAvailable(timeout, clock, failureCounts) {
-  const startedAt = clock.now()
+function isMcpCliAvailable(timeout, runMcp) {
   if (timeout === null) {
-    reportContextWarmupOperation({ operation: 'mcp_list_probe', outcome: 'deadline_exhausted', startedAt, failureCategory: 'deadline' }, { clock, failureCounts })
-    return { available: false, outcome: 'deadline_exhausted', deadlineExhausted: true }
+    return { available: false, outcome: 'deadline_exhausted', deadlineExhausted: true, failureCategory: 'deadline' }
   }
-  const probe = spawnSync('mcp', ['--list'], { encoding: 'utf8', timeout })
+  const probe = runMcp(['--list'], { encoding: 'utf8', timeout })
   if (!probe.error && probe.status === 0) {
-    reportContextWarmupOperation({ operation: 'mcp_list_probe', outcome: 'succeeded', startedAt }, { clock, failureCounts })
     return { available: true, outcome: 'succeeded', deadlineExhausted: false }
   }
   const deadlineExhausted = probe.error?.code === 'ETIMEDOUT'
   const outcome = deadlineExhausted ? 'timed_out' : 'failed'
-  reportContextWarmupOperation({ operation: 'mcp_list_probe', outcome, startedAt, failureCategory: warmupFailureCategory(probe.error) }, { clock, failureCounts })
-  return { available: false, outcome, deadlineExhausted }
+  return { available: false, outcome, deadlineExhausted, failureCategory: warmupFailureCategory(probe.error) }
 }
 
 /**
@@ -516,10 +554,10 @@ function warmupFailureCategory(error) {
  * Record one bounded warmup operation on stderr without paths or payloads.
  *
  * @param {{ operation: string, outcome: string, startedAt: number, failureCategory?: string }} operationEvent - Bounded operation evidence.
- * @param {{ clock: { now: () => number }, failureCounts: object }} context - Timing and aggregate failure evidence.
+ * @param {{ clock: { now: () => number }, failureCounts: object, report: Function }} context - Timing, failure evidence, and diagnostic port.
  * @returns {void}
  */
-function reportContextWarmupOperation({ operation, outcome, startedAt, failureCategory }, { clock, failureCounts }) {
+function reportContextWarmupOperation({ operation, outcome, startedAt, failureCategory }, { clock, failureCounts, report }) {
   const event = {
     event: 'context_warmup',
     type: 'operation',
@@ -531,7 +569,7 @@ function reportContextWarmupOperation({ operation, outcome, startedAt, failureCa
     event.failureCategory = failureCategory
     recordContextWarmupFailure(failureCounts, operation, failureCategory)
   }
-  process.stderr.write(`dakar-review: warmup ${JSON.stringify(event)}\n`)
+  report(`dakar-review: warmup ${JSON.stringify(event)}\n`)
 }
 
 /**
@@ -554,7 +592,7 @@ function warmupTimeout(deadline, requestedTimeout, clock) {
  * @param {string} tool - CodeGraph MCP tool name.
  * @param {object} payload - JSON-serializable tool payload.
  * @param {number} timeout - Maximum invocation time in milliseconds.
- * @param {{ deadline: number, clock: { now: () => number }, failureCounts: object }} context - Shared warmup budget and failure counters.
+ * @param {object} context - Shared budget, counters, and injected process/diagnostic ports.
  * @returns {{ succeeded: boolean, outcome: string, deadlineExhausted: boolean }}
  *   Whether the advisory invocation succeeded and consumed the deadline.
  */
@@ -566,12 +604,12 @@ function warmContextTool(tool, payload, timeout, context) {
     reportContextWarmupOperation({ operation: tool, outcome: 'deadline_exhausted', startedAt, failureCategory: 'deadline' }, context)
     return { succeeded: false, outcome: 'deadline_exhausted', deadlineExhausted: true }
   }
-  const result = spawnSync('mcp', ['codegraph', tool, JSON.stringify(payload)], {
+  const result = context.runMcp(['codegraph', tool, JSON.stringify(payload)], {
     encoding: 'utf8',
     timeout: boundedTimeout,
   })
   if (result.error || result.status !== 0) {
-    process.stderr.write(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.\n`)
+    context.report(`dakar-review: CodeGraph warmup call ${tool} failed; continuing without it.\n`)
     const deadlineExhausted = result.error?.code === 'ETIMEDOUT'
     const outcome = deadlineExhausted ? 'timed_out' : 'failed'
     reportContextWarmupOperation({ operation: tool, outcome, startedAt, failureCategory: warmupFailureCategory(result.error) }, context)
@@ -590,7 +628,7 @@ function warmContextTool(tool, payload, timeout, context) {
  * @param {string} repoRoot - Absolute path to the repository root.
  * @param {string} relPath - Repository-relative candidate Markdown path.
  * @param {Set<string>} seen - Absolute paths already indexed or attempted.
- * @param {{ deadline: number, clock: { now: () => number }, failureCounts: object }} context - Shared warmup budget and failure counters.
+ * @param {object} context - Shared budget, counters, and injected filesystem/process ports.
  * @returns {{ attempted: boolean, succeeded: boolean, deadlineExhausted: boolean }}
  *   Whether this candidate was attempted and its advisory indexing outcome.
  */
@@ -599,13 +637,44 @@ function indexMarkdownContextCandidate(repoRoot, relPath, seen, context) {
   if (warmupTimeout(deadline, 1, clock) === null) {
     return { attempted: false, succeeded: false, deadlineExhausted: true }
   }
-  const absolute = join(repoRoot, relPath)
-  if (seen.has(absolute) || !existsSync(absolute)) {
+  const candidatePath = resolve(repoRoot, relPath)
+  if (seen.has(candidatePath)) {
     return { attempted: false, succeeded: false, deadlineExhausted: false }
   }
-  seen.add(absolute)
-  const result = warmContextTool('codegraph_index_markdown', { path: absolute }, 120_000, context)
+  const startedAt = clock.now()
+  const markdown = repositoryMarkdownPath(repoRoot, relPath, context.filesystem)
+  if (markdown.kind === 'error') {
+    reportContextWarmupOperation({ operation: 'codegraph_index_markdown', outcome: 'failed', startedAt, failureCategory: 'filesystem_error' }, context)
+  }
+  if (markdown.kind !== 'present') return { attempted: false, succeeded: false, deadlineExhausted: false }
+  seen.add(candidatePath)
+  const result = warmContextTool('codegraph_index_markdown', { path: markdown.path }, 120_000, context)
   return { attempted: true, succeeded: result.succeeded, deadlineExhausted: result.deadlineExhausted }
+}
+
+/**
+ * Resolve an existing regular Markdown file without following it outside the repository.
+ *
+ * Canonical path validation keeps repository-controlled symlinks from making
+ * CodeGraph index content outside the reviewed checkout. Filesystem failures
+ * remain advisory skips, as missing context has never blocked a review.
+ *
+ * @param {string} repoRoot - Absolute path to the reviewed repository root.
+ * @param {string} relPath - Repository-relative candidate Markdown path.
+ * @param {{ realpath: Function, stat: Function }} filesystem - Narrow canonical-path queries.
+ * @returns {{ kind: 'present', path: string } | { kind: 'absent' | 'outside' | 'error' }} Canonical eligibility or an explicit advisory outcome.
+ */
+function repositoryMarkdownPath(repoRoot, relPath, filesystem) {
+  try {
+    const realRepoRoot = filesystem.realpath(repoRoot)
+    const markdownPath = filesystem.realpath(resolve(realRepoRoot, relPath))
+    const relativePath = relative(realRepoRoot, markdownPath)
+    if (!isRepositoryRelativePath(relativePath)) return { kind: 'outside' }
+    if (!filesystem.stat(markdownPath).isFile()) return { kind: 'absent' }
+    return { kind: 'present', path: markdownPath }
+  } catch (error) {
+    return { kind: error?.code === 'ENOENT' ? 'absent' : 'error' }
+  }
 }
 
 /**
@@ -637,7 +706,7 @@ function recordMarkdownWarmupOutcome(summary, result) {
  *
  * @param {string} repoRoot - Absolute path to the repository root.
  * @param {string[]} changedFiles - Repository-relative changed paths for this review.
- * @param {{ deadline: number, clock: { now: () => number }, failureCounts: object }} context - Shared warmup budget and failure counters.
+ * @param {object} context - Shared budget, counters, and injected boundary ports.
  * @returns {{ attempts: number, successes: number, deadlineExhausted: boolean }}
  *   Attempt and success counts plus whether the shared deadline stopped indexing.
  */
@@ -658,11 +727,13 @@ function warmMarkdownContext(repoRoot, changedFiles, context) {
  *
  * @param {{ outcome: string, deadlineExhausted: boolean }} directory - Directory index result.
  * @param {{ attempts: number, successes: number, deadlineExhausted: boolean }} markdown - Markdown index counts and deadline state.
+ * @param {object} failureCounts - Bounded operation/category failure counters.
  * @returns {'succeeded' | 'degraded' | 'timed_out'} Aggregate warmup outcome.
  */
-function contextWarmupOutcome(directory, markdown) {
+function contextWarmupOutcome(directory, markdown, failureCounts) {
   if (directory.deadlineExhausted || markdown.deadlineExhausted) return 'timed_out'
   if (directory.outcome !== 'succeeded' || markdown.successes < markdown.attempts) return 'degraded'
+  if (failureCounts.codegraph_index_markdown.filesystem_error > 0) return 'degraded'
   return 'succeeded'
 }
 
@@ -671,9 +742,10 @@ function contextWarmupOutcome(directory, markdown) {
  *
  * @param {object} summary - Bounded warmup statuses, counts, and skip reason.
  * @param {{ now: () => number }} clock - Injected monotonic clock.
+ * @param {Function} report - Injected stderr diagnostic port.
  * @returns {void}
  */
-function reportContextWarmupSummary(summary, clock) {
+function reportContextWarmupSummary(summary, clock, report) {
   const event = {
     event: 'context_warmup',
     type: 'summary',
@@ -687,17 +759,18 @@ function reportContextWarmupSummary(summary, clock) {
     failureCounts: summary.failureCounts,
   }
   if (summary.skipReason) event.skipReason = summary.skipReason
-  process.stderr.write(`dakar-review: warmup ${JSON.stringify(event)}\n`)
+  report(`dakar-review: warmup ${JSON.stringify(event)}\n`)
 }
 
 /**
  * Report that checkout validation prevented warmup without including checkout data.
  *
  * @param {'different_head' | 'dirty_checkout' | 'checkout_verification_failed'} skipReason - Bounded reason.
- * @param {{ now: () => number }} clock - Injected monotonic clock.
+ * @param {object} boundary - Injected monotonic clock and diagnostic port.
  * @returns {void}
  */
-function recordSkippedContextWarmup(skipReason, clock) {
+function recordSkippedContextWarmup(skipReason, boundary) {
+  const { clock, report } = boundary
   reportContextWarmupSummary({
     outcome: 'skipped',
     startedAt: clock.now(),
@@ -708,7 +781,7 @@ function recordSkippedContextWarmup(skipReason, clock) {
     deadlineExhausted: false,
     failureCounts: emptyContextWarmupFailureCounts(),
     skipReason,
-  }, clock)
+  }, clock, report)
 }
 
 /**
@@ -748,14 +821,15 @@ function recordContextWarmupFailure(counts, operation, category) {
  *
  * @param {string} repoRoot - absolute path to the repository root.
  * @param {string[]} changedFiles - repo-relative changed paths for this review.
- * @param {{ now: () => number }} [clock] - Injected monotonic clock for deadlines and durations.
+ * @param {object} [boundary] - Injected MCP runner, filesystem, monotonic clock, and reporter.
  * @returns {void}
  */
-function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) {
+function warmContextIndex(repoRoot, changedFiles, boundary = CONTEXT_WARMUP_BOUNDARY) {
+  const { clock, report, runMcp, filesystem } = boundary
   const startedAt = clock.now()
   const failureCounts = emptyContextWarmupFailureCounts()
   if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
-    process.stderr.write('dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n')
+    report('dakar-review: CodeGraph warmup skipped (DAKAR_SKIP_CONTEXT_WARMUP is set).\n')
     reportContextWarmupSummary({
       outcome: 'skipped',
       startedAt,
@@ -766,17 +840,18 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
       deadlineExhausted: false,
       failureCounts,
       skipReason: 'environment',
-    }, clock)
+    }, clock, report)
     return
   }
   const deadline = clock.now() + CONTEXT_WARMUP_TIMEOUT_MILLISECONDS
+  const probeStartedAt = clock.now()
   const probe = isMcpCliAvailable(
     warmupTimeout(deadline, CONTEXT_WARMUP_TIMEOUT_MILLISECONDS, clock),
-    clock,
-    failureCounts,
+    runMcp,
   )
+  reportContextWarmupOperation({ operation: 'mcp_list_probe', outcome: probe.outcome, startedAt: probeStartedAt, failureCategory: probe.failureCategory }, { clock, failureCounts, report })
   if (!probe.available) {
-    process.stderr.write('dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n')
+    report('dakar-review: mcp CLI unavailable; skipping CodeGraph warmup.\n')
     reportContextWarmupSummary({
       outcome: 'skipped',
       startedAt,
@@ -787,15 +862,15 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
       deadlineExhausted: probe.deadlineExhausted,
       failureCounts,
       skipReason: probe.deadlineExhausted ? 'deadline_exhausted' : 'mcp_unavailable',
-    }, clock)
+    }, clock, report)
     return
   }
-  process.stderr.write('dakar-review: warming CodeGraph index for the reviewed checkout.\n')
-  const context = { deadline, clock, failureCounts }
+  report('dakar-review: warming CodeGraph index for the reviewed checkout.\n')
+  const context = { deadline, clock, failureCounts, runMcp, filesystem, report }
   const directory = warmContextTool('codegraph_index_directory', { path: repoRoot }, 600_000, context)
   const markdown = warmMarkdownContext(repoRoot, changedFiles, context)
-  const outcome = contextWarmupOutcome(directory, markdown)
-  process.stderr.write(
+  const outcome = contextWarmupOutcome(directory, markdown, failureCounts)
+  report(
     `dakar-review: CodeGraph warmup ${CONTEXT_WARMUP_COMPLETION[outcome]} (${markdown.successes} markdown file(s) indexed).\n`,
   )
   reportContextWarmupSummary({
@@ -807,7 +882,7 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
     markdownSuccesses: markdown.successes,
     deadlineExhausted: outcome === 'timed_out',
     failureCounts,
-  }, clock)
+  }, clock, report)
 }
 
 /**
@@ -815,14 +890,15 @@ function warmContextIndex(repoRoot, changedFiles, clock = CONTEXT_WARMUP_CLOCK) 
  *
  * @param {string} repoRoot - Absolute path to the reviewed repository root.
  * @param {string} headCommit - Immutable commit selected for review.
+ * @param {Function} runGit - Injected Git subprocess runner.
  * @returns {{ kind: 'clean' | 'different-head' | 'dirty' } | { kind: 'error', operation: string }}
  *   Whether the checkout matches, is dirty, or could not be inspected.
  */
-function isCheckedOutReviewHead(repoRoot, headCommit) {
-  const head = spawnSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+function isCheckedOutReviewHead(repoRoot, headCommit, runGit) {
+  const head = runGit(['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
   if (head.error || head.status !== 0) return { kind: 'error', operation: 'reading HEAD' }
   if (head.stdout.trim() !== headCommit) return { kind: 'different-head' }
-  const status = spawnSync('git', ['-C', repoRoot, 'status', '--porcelain', '--untracked-files=all'], { encoding: 'utf8' })
+  const status = runGit(['-C', repoRoot, 'status', '--porcelain', '--untracked-files=all'], { encoding: 'utf8' })
   if (status.error || status.status !== 0) return { kind: 'error', operation: 'checking worktree status' }
   return status.stdout === '' ? { kind: 'clean' } : { kind: 'dirty' }
 }
@@ -835,29 +911,29 @@ function isCheckedOutReviewHead(repoRoot, headCommit) {
  *
  * @param {string} repoRoot - Absolute path to the reviewed repository root.
  * @param {object} prepared - Prepared review details, including head and changed files.
- * @param {{ now: () => number }} [clock] - Injected monotonic clock for warmup telemetry.
+ * @param {object} [boundary] - Injected warmup ports, including its monotonic clock.
  * @returns {void}
  */
-function warmReviewedContextIndex(repoRoot, prepared, clock = CONTEXT_WARMUP_CLOCK) {
+function warmReviewedContextIndex(repoRoot, prepared, boundary = CONTEXT_WARMUP_BOUNDARY) {
   const changedFiles = prepared.changedFiles || []
   if (process.env.DAKAR_SKIP_CONTEXT_WARMUP) {
-    warmContextIndex(repoRoot, changedFiles, clock)
+    warmContextIndex(repoRoot, changedFiles, boundary)
     return
   }
 
-  const checkout = isCheckedOutReviewHead(repoRoot, prepared.headCommit)
+  const checkout = isCheckedOutReviewHead(repoRoot, prepared.headCommit, boundary.runGit)
   if (checkout.kind === 'clean') {
-    warmContextIndex(repoRoot, changedFiles, clock)
+    warmContextIndex(repoRoot, changedFiles, boundary)
     return
   }
   if (checkout.kind === 'error') {
-    process.stderr.write(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.\n`)
-    recordSkippedContextWarmup('checkout_verification_failed', clock)
+    boundary.report(`dakar-review: could not verify the reviewed checkout while ${checkout.operation}; skipping CodeGraph warmup.\n`)
+    recordSkippedContextWarmup('checkout_verification_failed', boundary)
     return
   }
 
-  process.stderr.write('dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n')
-  recordSkippedContextWarmup(checkout.kind === 'dirty' ? 'dirty_checkout' : 'different_head', clock)
+  boundary.report('dakar-review: reviewed head is not checked out cleanly; skipping CodeGraph warmup.\n')
+  recordSkippedContextWarmup(checkout.kind === 'dirty' ? 'dirty_checkout' : 'different_head', boundary)
 }
 
 /**
@@ -1543,7 +1619,7 @@ function prepareLiveReview(options, repoRoot, workflowArgs, format) {
   if (!process.env.OPENAI_API_KEY) {
     process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
   }
-  warmReviewedContextIndex(repoRoot, workflowArgs.prepared, CONTEXT_WARMUP_CLOCK)
+  warmReviewedContextIndex(repoRoot, workflowArgs.prepared, CONTEXT_WARMUP_BOUNDARY)
   // Advisory guard: an outer wait shorter than the retry schedule's worst
   // case can kill a healthy run before the workflow's own deferral logic
   // fires. The knob bounds mirror resolveWorkflowConfig's defaults.

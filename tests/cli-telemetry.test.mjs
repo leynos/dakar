@@ -14,8 +14,9 @@ import { repoRoot, cliPath, spawnCli, setUpRecordRepo, writePreparedEchoOdw } fr
 
 process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
 
-test('a hung log follow still fetches and records the completed result', () => {
+test('a hung log follow still fetches and records the completed result', (t) => {
   const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const stateRoot = join(tempRoot, 'trusted-state')
   const fakeOdw = join(tempRoot, 'odw.mjs')
   // `odw run` emits a run id; `odw logs --follow` hangs forever; `odw result`
@@ -67,8 +68,9 @@ if (mode === 'run') {
   assert.equal(output.recorded.headCommit, head)
   assert.match(result.stderr, /log follow timed out after 1s; attempting one result fetch/u)
 })
-test('a failed grace fetch reports the result error in the log envelope', () => {
+test('a failed grace fetch reports the result error in the log envelope', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const fakeOdw = join(tempRoot, 'odw.mjs')
   writeFileSync(
     fakeOdw,
@@ -178,8 +180,9 @@ if (mode === 'result') { process.stderr.write('result fetch failed\\n'); process
   assert.match(completed.stderr, /"error":\s*"result fetch failed"/u)
 })
 
-test('an outer timeout below the retry worst case warns on stderr', () => {
+test('an outer timeout below the retry worst case warns on stderr', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const stateRoot = join(tempRoot, 'trusted-state')
   const fakeOdw = join(tempRoot, 'odw.mjs')
   writePreparedEchoOdw(fakeOdw)

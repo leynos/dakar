@@ -5,7 +5,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -219,6 +219,11 @@ test('CLI consumes usage logs and preserves record metrics across absent, empty,
       assert.equal(output.metrics.taskCount, 2, 'existing output metrics remain intact')
       const usageLogPath = readFileSync(logPathCapture, 'utf8')
       assert.equal(existsSync(usageLogPath), false, 'a successfully read usage log is removed')
+      if (scenario.content?.includes('not-json')) {
+        assert.match(completed.stderr, /"event":"reported_usage_log","readOutcome":"succeeded","parseOutcome":"degraded","cleanupOutcome":"succeeded","invalidLines":1/u,
+          'invalid JSON must be observable without changing valid usage records')
+        assert.equal(completed.stderr.includes(usageLogPath), false, 'usage diagnostics must not disclose the log path')
+      }
       if (scenario.records.length === 0) {
         assert.equal(output.metrics.reportedUsage, undefined, 'no valid records leave the result unannotated')
         assert.deepEqual(output.recordInput.metrics.reportedTokens, { input: 99 }, 'absent usage preserves prior token metrics')
@@ -233,6 +238,71 @@ test('CLI consumes usage logs and preserves record metrics across absent, empty,
       }
     })
   }
+})
+
+test('CLI reports unreadable usage logs and continues without removing them', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  const logPathCapture = join(tempRoot, 'log-path')
+  writePreparedEchoOdw(fakeOdw, {
+    bodyPrefix: `const { symlinkSync } = await import('node:fs')
+appendFileSync(${JSON.stringify(logPathCapture)}, process.env.DAKAR_USAGE_LOG)
+symlinkSync(process.env.DAKAR_USAGE_LOG, process.env.DAKAR_USAGE_LOG)`,
+  })
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'),
+    '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+  const usageLogPath = readFileSync(logPathCapture, 'utf8')
+  t.after(() => rmSync(usageLogPath, { force: true }))
+  assert.equal(completed.status, 0, completed.stderr || 'unreadable usage logs must not block review recording')
+  assert.equal(JSON.parse(completed.stdout).metrics.reportedUsage, undefined, 'unreadable logs must leave usage unannotated')
+  assert.match(completed.stderr, /"readOutcome":"failed","parseOutcome":"not_attempted","cleanupOutcome":"not_attempted","invalidLines":0/u,
+    'read failure must be observable and must not attempt cleanup')
+  assert.equal(completed.stderr.includes(usageLogPath), false, 'read failure diagnostics must not disclose log paths')
+  assert.equal(lstatSync(usageLogPath).isSymbolicLink(), true, 'a failed usage read must not remove the unreadable log')
+})
+
+test('CLI reports usage cleanup failure while retaining usage and recording the review', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  const logPathCapture = join(tempRoot, 'log-path')
+  const preload = join(tempRoot, 'usage-cleanup-failure.cjs')
+  // The CLI creates the usage path internally; its fake child captures the exact
+  // path so this isolated preload never intercepts any unrelated cleanup.
+  writeFileSync(preload, `const fs = require('node:fs')
+const { syncBuiltinESMExports } = require('node:module')
+const originalRemove = fs.rmSync
+fs.rmSync = function (path, options) {
+  let usagePath
+  try { usagePath = fs.readFileSync(${JSON.stringify(logPathCapture)}, 'utf8') } catch {}
+  if (path === usagePath) {
+    const error = new Error('fixture cleanup denied')
+    error.code = 'EACCES'
+    throw error
+  }
+  return originalRemove(path, options)
+}
+syncBuiltinESMExports()
+`)
+  writePreparedEchoOdw(fakeOdw, {
+    bodyPrefix: `appendFileSync(${JSON.stringify(logPathCapture)}, process.env.DAKAR_USAGE_LOG)
+appendFileSync(process.env.DAKAR_USAGE_LOG, JSON.stringify({ usage: { input: 5 } }) + '\\n')`,
+  })
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', join(tempRoot, 'state'),
+    '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
+  { NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require=${preload}` })
+  const usageLogPath = readFileSync(logPathCapture, 'utf8')
+  t.after(() => rmSync(usageLogPath, { force: true }))
+  assert.equal(completed.status, 0, completed.stderr || 'usage cleanup failure must remain advisory')
+  const output = JSON.parse(completed.stdout)
+  assert.deepEqual(output.metrics.reportedTokens, { input: 5, output: 0, cacheRead: 0, cacheWrite: 0 },
+    'successful usage reads must retain token totals when removal fails')
+  assert.equal(existsSync(output.stateFile), true, 'usage cleanup failure must not prevent review recording')
+  assert.equal(existsSync(usageLogPath), true, 'the failed cleanup must leave the usage file for fixture cleanup')
+  assert.match(completed.stderr, /"readOutcome":"succeeded","parseOutcome":"succeeded","cleanupOutcome":"failed","invalidLines":0/u,
+    'cleanup failure must be observable independently of successful read and parsing')
+  assert.equal(completed.stderr.includes(usageLogPath), false, 'cleanup diagnostics must not disclose the usage path')
 })
 
 test('CLI initializes absent record metrics before copying reported usage', (t) => {

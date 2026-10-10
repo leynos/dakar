@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
+import fc from 'fast-check'
 
 import {
   assembleSarif,
@@ -230,4 +231,31 @@ test('semantic results sort by candidate id stably and do not mutate input', () 
 
   assert.deepEqual(results.map((result) => result.message.text), ['Earlier id', 'First equal id', 'Second equal id'])
   assert.deepEqual(input, original, 'SARIF assembly does not mutate candidate input or its order')
+})
+
+test('semantic result sorting preserves input order for equal candidate ids', () => {
+  const candidateIdSuffixes = fc.tuple(fc.array(fc.string(), { maxLength: 30 }), fc.string())
+    .map(([suffixes, duplicate]) => [...suffixes, duplicate, duplicate])
+
+  fc.assert(fc.property(candidateIdSuffixes, (suffixes) => {
+    const candidates = suffixes.map((suffix, index) =>
+      assembledCandidate(`luna-flex-1:${suffix}`, { title: `candidate-${index}` }))
+    const input = { candidates, pricingTableVersion: 'v1' }
+    const original = structuredClone(input)
+    const results = assembledSemantic(input)
+    const resultIds = results.map((result) => result.fingerprints['dakar/candidateId'])
+
+    assert.deepEqual(input, original, 'assembly must leave the complete input unchanged')
+    assert.deepEqual(assembledSemantic(input), results, 'repeated assembly must produce deterministic results')
+    assert.deepEqual(resultIds, [...resultIds].sort(), 'candidate IDs must be in lexical order')
+    for (const candidateId of new Set(resultIds)) {
+      const inputTitles = candidates
+        .filter((candidate) => candidate.candidateId === candidateId)
+        .map((candidate) => candidate.title)
+      const sortedTitles = results
+        .filter((result) => result.fingerprints['dakar/candidateId'] === candidateId)
+        .map((result) => result.message.text)
+      assert.deepEqual(sortedTitles, inputTitles, 'equal candidate IDs must retain their original relative order')
+    }
+  }))
 })
