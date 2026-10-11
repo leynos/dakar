@@ -1,12 +1,16 @@
-/** @file Verify Dakar's canonical SARIF assembly and deterministic projections. */
+/**
+ * Verify canonical Dakar SARIF assembly and byte-stable evidence output.
+ *
+ * @module
+ */
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
+import fc from 'fast-check'
 
 import {
   assembleSarif,
-  projectDiscardedFromSarif,
-  projectFindingsFromSarif,
   renderSarifMarkdown,
 } from '../src/workflows/dakar-review/sarif.ts'
 
@@ -84,6 +88,18 @@ function fixture() {
   }
 }
 
+function assembledCandidate(candidateId, overrides = {}) {
+  return { ...fixture().candidates[0], candidateId, ...overrides }
+}
+
+function assembledSemantic(input) {
+  return assembleSarif(input).runs[0].results.filter((result) => result.properties.dakar.kind === 'semantic')
+}
+
+function semanticDigest(input) {
+  return createHash('sha256').update(JSON.stringify(assembleSarif(input))).digest('hex')
+}
+
 test('assembleSarif emits SARIF 2.1.0 with stable identity, provenance, and gate evidence', () => {
   const input = fixture()
   const original = structuredClone(input.candidates)
@@ -107,7 +123,6 @@ test('assembleSarif emits SARIF 2.1.0 with stable identity, provenance, and gate
   assert.equal(accepted.properties.dakar.disposition.status, 'accepted')
   assert.deepEqual(input.candidates, original, 'SARIF assembly must not mutate Luna evidence')
 })
-
 test('SARIF assembly and Markdown projection are byte-stable', () => {
   const input = fixture()
   const first = assembleSarif(input)
@@ -117,43 +132,139 @@ test('SARIF assembly and Markdown projection are byte-stable', () => {
   assert.equal(renderSarifMarkdown(first), renderSarifMarkdown(second))
 })
 
-test('compatibility findings and discards are deterministic SARIF projections', () => {
-  const sarif = assembleSarif(fixture())
-  const findings = projectFindingsFromSarif(sarif)
-  const discarded = projectDiscardedFromSarif(sarif)
+test('SARIF assembly retains pre-refactor serialised output for representative evidence', () => {
+  const base = fixture()
+  const acceptedWithDiscard = assembledCandidate('luna-flex-1:src/a.ts:8:accepted-with-discard', { line: 8 })
+  const evidence = {
+    ...base,
+    candidates: [base.candidates[1], acceptedWithDiscard, base.candidates[0]],
+    accepted: [base.accepted[0], { ...acceptedWithDiscard, severity: 'medium' }],
+    discarded: [...base.discarded, {
+      candidate: acceptedWithDiscard,
+      status: 'duplicate',
+      reason: 'Discard must not override accepted evidence.',
+      evidenceChecked: 'duplicate evidence',
+    }],
+  }
 
-  assert.deepEqual(findings, [{
-    severity: 'high',
-    path: 'src/a.ts',
-    line: 4,
-    title: 'Null guard is inverted',
-    detail: 'The success branch returns the failure value.',
-    evidence: 'The diff reverses the predicate.',
-    clusterId: 'cluster-null-guard',
-    sourceTasks: ['luna-flex-1'],
-  }])
-  assert.equal(discarded.length, 1)
-  assert.equal(discarded[0].candidate.candidateId, 'luna-flex-1:src/a.ts:9:style-only')
-  assert.equal(discarded[0].status, 'tool_false_positive')
-  assert.match(renderSarifMarkdown(sarif), /^## high: Null guard is inverted$/mu)
+  assert.equal(semanticDigest(base), 'f00fac48d1821fdd599cd8fb16937480ed8532c4d94a008df567e281d1aef773',
+    'the baseline semantic digest must preserve the pre-refactor SARIF result')
+  assert.equal(semanticDigest(evidence), 'af7a84e143abdbacf05b25459ad480410f268c6b30255788dbbb4394ac76c9bf',
+    'the digest must retain accepted evidence while excluding a concurrent discard')
 })
 
-test('SARIF projections preserve audited severity and distinguish advisory gates', () => {
-  const input = fixture()
-  input.accepted[0].severity = 'medium'
-  input.verdicts[0].status = 'severity_downgraded'
-  input.gates = [{
-    ...input.gates[0],
-    blocking: false,
-    status: 'failed',
-    exitCode: 1,
-  }]
+test('accepted semantic results use accepted severity and ignore a concurrent discard', () => {
+  const candidate = assembledCandidate('luna-flex-1:src/a.ts:4:accepted')
+  const accepted = { ...candidate, severity: 'medium' }
+  const discard = { candidate, status: 'duplicate', reason: 'discard reason', evidenceChecked: 'discard evidence' }
+  const [withoutVerdict] = assembledSemantic({ candidates: [candidate], accepted: [accepted], discarded: [discard], pricingTableVersion: 'v1' })
+  const [withVerdict] = assembledSemantic({
+    candidates: [candidate], accepted: [accepted], discarded: [discard],
+    verdicts: [{ candidateId: candidate.candidateId, status: 'severity_downgraded', reason: 'audit reason', evidenceChecked: 'audit evidence' }],
+    pricingTableVersion: 'v1',
+  })
 
-  const sarif = assembleSarif(input)
-  const semantic = sarif.runs[0].results.find((result) =>
-    result.fingerprints['dakar/candidateId'] === input.candidates[0].candidateId)
+  assert.equal(withoutVerdict.level, 'warning', 'accepted medium severity maps to a SARIF warning')
+  assert.deepEqual(withoutVerdict.properties.dakar.disposition, {
+    status: 'accepted', reason: '', evidenceChecked: '', acceptedSeverity: 'medium',
+  }, 'accepted evidence without a verdict retains its accepted disposition and severity')
+  assert.equal(withoutVerdict.properties.dakar.audit, null, 'accepted evidence without a verdict has no audit record')
+  assert.equal(withoutVerdict.properties.dakar.candidate.severity, 'high', 'candidate evidence retains its proposed severity')
+  assert.equal(Object.hasOwn(withoutVerdict, 'suppressions'), false, 'accepted evidence creates no suppression')
+  assert.deepEqual(withVerdict.properties.dakar.disposition, {
+    status: 'severity_downgraded', reason: 'audit reason', evidenceChecked: 'audit evidence', acceptedSeverity: 'medium',
+  }, 'accepted evidence keeps the verdict disposition and omits the concurrent discard')
+  assert.equal(Object.hasOwn(withVerdict, 'suppressions'), false, 'downgraded accepted evidence creates no suppression')
+})
 
-  assert.equal(semantic.level, 'warning')
-  assert.equal(projectFindingsFromSarif(sarif)[0].severity, 'medium')
-  assert.doesNotMatch(renderSarifMarkdown(sarif), /require remediation/u)
+test('discard fields independently override verdict fields with truthy fallbacks', () => {
+  const candidate = assembledCandidate('luna-flex-1:src/a.ts:4:discarded')
+  const verdict = { candidateId: candidate.candidateId, status: 'needs_human', reason: 'verdict reason', evidenceChecked: 'verdict evidence' }
+  const discard = { candidate, status: 'duplicate', reason: '', evidenceChecked: 'discard evidence' }
+  const [result] = assembledSemantic({ candidates: [candidate], discarded: [discard], verdicts: [verdict], pricingTableVersion: 'v1' })
+  const disposition = result.properties.dakar.disposition
+  assert.deepEqual(disposition, { status: 'duplicate', reason: 'verdict reason', evidenceChecked: 'discard evidence' },
+    'discard fields override matching verdict fields independently')
+  assert.deepEqual(result.suppressions, [{ kind: 'external', status: 'accepted', justification: 'verdict reason' }],
+    'a discarded result retains its audit reason as suppression justification')
+  assert.notStrictEqual(result.properties.dakar.audit, verdict, 'audit evidence is shallow-copied')
+  assert.deepEqual(result.properties.dakar.audit, verdict, 'audit evidence preserves the supplied verdict values')
+
+  const [fallback] = assembledSemantic({
+    candidates: [candidate],
+    discarded: [{ candidate, status: '', reason: '', evidenceChecked: '' }],
+    verdicts: [verdict], pricingTableVersion: 'v1',
+  })
+  assert.deepEqual(fallback.properties.dakar.disposition, {
+    status: 'needs_human', reason: 'verdict reason', evidenceChecked: 'verdict evidence',
+  }, 'empty discard values fall back to the verdict fields')
+  const [defaults] = assembledSemantic({ candidates: [candidate], pricingTableVersion: 'v1' })
+  assert.deepEqual(defaults.properties.dakar.disposition, { status: 'not_selected', reason: '', evidenceChecked: '' },
+    'missing verdict and discard evidence receives the not-selected defaults')
+  assert.equal(defaults.properties.dakar.audit, null, 'missing verdict evidence is serialized as null')
+  assert.equal(defaults.properties.dakar.cost, null, 'missing ledger evidence is serialized as null')
+  assert.deepEqual(defaults.suppressions, [{ kind: 'external', status: 'accepted', justification: '' }],
+    'the default not-selected result keeps the external suppression representation')
+})
+
+test('semantic provenance retains defaults and copies present ledger evidence', () => {
+  const candidate = assembledCandidate('luna-flex-1:src/a.ts:4:provenance')
+  const ledger = { ...fixture().ledger[0], lane: 'terra-flex', serviceTier: 'priority', reasoningEffort: 'high' }
+  const [withoutLedger] = assembledSemantic({ candidates: [candidate], pricingTableVersion: 'v1' })
+  const [withLedger] = assembledSemantic({ candidates: [candidate], ledger: [ledger], pricingTableVersion: 'v1' })
+
+  assert.deepEqual(withoutLedger.properties.dakar.provenance, {
+    taskId: candidate.taskId, taskKind: candidate.taskKind, model: candidate.sourceModel,
+    lane: 'luna-flex', serviceTier: 'flex', reasoningEffort: undefined,
+  }, 'provenance is complete even when optional reasoning effort is undefined')
+  assert.equal(Object.hasOwn(withoutLedger.properties.dakar.provenance, 'reasoningEffort'), true,
+    'the provenance schema retains the reasoningEffort key when undefined')
+  assert.equal(Object.hasOwn(withoutLedger.properties.dakar, 'clusterId'), true,
+    'the result schema retains the clusterId key when undefined')
+  assert.equal(withoutLedger.properties.dakar.clusterId, undefined, 'an unclustered candidate has no cluster id')
+  assert.equal(withLedger.properties.dakar.provenance.lane, 'terra-flex', 'ledger lane overrides candidate lane provenance')
+  assert.equal(withLedger.properties.dakar.provenance.serviceTier, 'priority', 'ledger service tier is preserved')
+  assert.equal(withLedger.properties.dakar.provenance.reasoningEffort, 'high', 'ledger reasoning effort is preserved')
+  assert.notStrictEqual(withLedger.properties.dakar.cost, ledger, 'ledger evidence is shallow-copied')
+  assert.deepEqual(withLedger.properties.dakar.cost, ledger, 'the copied cost evidence retains every ledger field')
+})
+
+test('semantic results sort by candidate id stably and do not mutate input', () => {
+  const first = assembledCandidate('luna-flex-1:z', { title: 'First equal id' })
+  const second = assembledCandidate('luna-flex-1:a', { title: 'Earlier id' })
+  const third = assembledCandidate('luna-flex-1:z', { title: 'Second equal id' })
+  const input = { candidates: [first, second, third], pricingTableVersion: 'v1' }
+  const original = structuredClone(input)
+  const results = assembledSemantic(input)
+
+  assert.deepEqual(results.map((result) => result.message.text), ['Earlier id', 'First equal id', 'Second equal id'],
+    'results sort by candidate id while preserving original order for ties')
+  assert.deepEqual(input, original, 'SARIF assembly does not mutate candidate input or its order')
+})
+
+test('semantic result sorting preserves input order for equal candidate ids', () => {
+  const candidateIdSuffixes = fc.tuple(fc.array(fc.string(), { maxLength: 30 }), fc.string())
+    .map(([suffixes, duplicate]) => [...suffixes, duplicate, duplicate])
+
+  fc.assert(fc.property(candidateIdSuffixes, (suffixes) => {
+    const candidates = suffixes.map((suffix, index) =>
+      assembledCandidate(`luna-flex-1:${suffix}`, { title: `candidate-${index}` }))
+    const input = { candidates, pricingTableVersion: 'v1' }
+    const original = structuredClone(input)
+    const results = assembledSemantic(input)
+    const resultIds = results.map((result) => result.fingerprints['dakar/candidateId'])
+
+    assert.deepEqual(input, original, 'assembly must leave the complete input unchanged')
+    assert.deepEqual(assembledSemantic(input), results, 'repeated assembly must produce deterministic results')
+    assert.deepEqual(resultIds, [...resultIds].sort(), 'candidate IDs must be in lexical order')
+    for (const candidateId of new Set(resultIds)) {
+      const inputTitles = candidates
+        .filter((candidate) => candidate.candidateId === candidateId)
+        .map((candidate) => candidate.title)
+      const sortedTitles = results
+        .filter((result) => result.fingerprints['dakar/candidateId'] === candidateId)
+        .map((result) => result.message.text)
+      assert.deepEqual(sortedTitles, inputTitles, 'equal candidate IDs must retain their original relative order')
+    }
+  }))
 })

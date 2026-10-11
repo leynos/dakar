@@ -87,11 +87,11 @@ test('buildFlexFinderPlan bounds packs, drops the review summary, and routes to 
   assert.equal(truncatedFiles.length, 0)
   assert.equal(packs.every((pack) => pack.files.length <= 5), true)
   assert.equal(packs.some((pack) => pack.kind === 'review-summary'), false)
-  assert.equal(packs.every((pack) => pack.adapter === 'pi-luna-flex'), true)
+  assert.equal(packs.every((pack) => pack.adapter === 'pi-luna-flex-high'), true)
   assert.equal(packs.every((pack) => pack.model === 'gpt-5.6-luna'), true)
   assert.equal(packs.every((pack) => pack.role === 'luna'), true)
   assert.equal(packs.every((pack) => pack.serviceTier === 'flex'), true)
-  assert.equal(packs.every((pack) => pack.reasoningEffort === 'low'), true)
+  assert.equal(packs.every((pack) => pack.reasoningEffort === 'high'), true)
   // Every changed file is covered by exactly one pack in the untruncated case.
   const covered = packs.flatMap((pack) => pack.files)
   assert.deepEqual([...covered].sort(), [...changedFiles].sort())

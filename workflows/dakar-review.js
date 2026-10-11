@@ -221,10 +221,16 @@ function modelForRole(role, reviewModels) {
 function isReasoning(value) {
   return value === "low" || value === "medium" || value === "high";
 }
+function lunaFlexLaneRole(reasoning) {
+  if (reasoning === "medium") return "luna-medium";
+  if (reasoning === "low") return "luna-low";
+  return "luna";
+}
 var FLEX_LANE_ROLES = Object.freeze({
-  luna: Object.freeze({ role: "luna", model: "gpt-5.6-luna", adapter: "pi-luna-flex", serviceTier: "flex", reasoning: "low" }),
+  luna: Object.freeze({ role: "luna", model: "gpt-5.6-luna", adapter: "pi-luna-flex-high", serviceTier: "flex", reasoning: "high" }),
   "luna-medium": Object.freeze({ role: "luna-medium", model: "gpt-5.6-luna", adapter: "pi-luna-flex-medium", serviceTier: "flex", reasoning: "medium" }),
-  terra: Object.freeze({ role: "terra", model: "gpt-5.6-terra", adapter: "pi-terra-flex", serviceTier: "flex", reasoning: "medium" })
+  "luna-low": Object.freeze({ role: "luna-low", model: "gpt-5.6-luna", adapter: "pi-luna-flex", serviceTier: "flex", reasoning: "low" }),
+  terra: Object.freeze({ role: "terra", model: "gpt-5.6-terra", adapter: "pi-terra-flex-high", serviceTier: "flex", reasoning: "high" })
 });
 function flexLaneRole(role) {
   const spec = FLEX_LANE_ROLES[role];
@@ -359,7 +365,9 @@ function resolveWorkflowConfig(value) {
     flexJitterSeconds: boundedInteger(args2.flexJitterSeconds, 10, 0, 60),
     flexMaxBackoffSeconds: positiveLimit(args2.flexMaxBackoffSeconds, 120, 900),
     headRef: nonBlankString(args2.head, "HEAD"),
-    lunaReasoning: args2.lunaReasoning === "medium" ? "medium" : "low",
+    // High by default since the 2026-08-13 Flex repricing made Luna five
+    // times cheaper; 'medium' and 'low' remain as de-escalation values.
+    lunaReasoning: isReasoning(args2.lunaReasoning) ? args2.lunaReasoning : "high",
     maxAuditCandidates: positiveLimit(args2.maxAuditCandidates, 30, 100),
     maxCandidates: positiveLimit(args2.maxCandidates, 30, 1e3),
     maxFindings: positiveLimit(args2.maxFindings, 20, 200),
@@ -371,6 +379,7 @@ function resolveWorkflowConfig(value) {
     // main.ts validates these fields fail-closed before any downstream use.
     prepared: isObject(args2.prepared) ? args2.prepared : void 0,
     repoRoot: nonBlankString(args2.repoRoot, "."),
+    contextGuidance: nonBlankString(args2.contextGuidance, ""),
     reviewPolicy: policy.policy,
     reviewModels,
     // Recorded in metrics and used (via the CLI) to gate the OPENAI_API_KEY
@@ -386,10 +395,13 @@ function resolveWorkflowConfig(value) {
     synthesisReasoning,
     taskKinds: Object.freeze(["docs", "config", "tests", "source", "review-summary"]),
     terraMaxInputTokens: boundedInteger(args2.terraMaxInputTokens, 48e3, 1, 1e6),
-    terraMaxOutputTokens: boundedInteger(args2.terraMaxOutputTokens, 2500, 1, 1e5),
+    // Reasoning tokens bill as output; the high-reasoning defaults need more
+    // output headroom than the low-reasoning bounds these replaced (2,500 and
+    // 750 respectively).
+    terraMaxOutputTokens: boundedInteger(args2.terraMaxOutputTokens, 5e3, 1, 1e5),
     transactionMaxFiles: positiveLimit(args2.transactionMaxFiles, 5, 20),
     transactionMaxInputTokens: boundedInteger(args2.transactionMaxInputTokens, 12e3, 1, 2e5),
-    transactionMaxOutputTokens: boundedInteger(args2.transactionMaxOutputTokens, 750, 1, 1e5),
+    transactionMaxOutputTokens: boundedInteger(args2.transactionMaxOutputTokens, 2e3, 1, 1e5),
     workflowVersion: "divide-and-conquer-v1"
   });
 }
@@ -414,35 +426,37 @@ function estimateWorstCaseUsd(table, call) {
   return uncachedInputUsd + cachedInputUsd + outputUsd;
 }
 var DEFAULT_PRICING_TABLE = {
-  version: "2026-07-18",
+  // Rates re-verified against the OpenAI pricing page on 2026-08-13: Luna
+  // Flex fell to a fifth of the 2026-07-18 rates and Terra Flex by a fifth.
+  version: "2026-08-13",
   // Deliberately conservative (haircut) GBP->USD conversion snapshot, chosen
   // below the prevailing spot rate so GBP budgets under-admit rather than
   // over-admit. Versioned data, revised with the rest of this table.
   usdPerGbp: 1.27,
   rates: {
     "gpt-5.6-luna:flex": {
-      inputUsdPerMTok: 0.5,
-      cachedInputUsdPerMTok: 0.05,
-      cacheWriteUsdPerMTok: 0.625,
-      outputUsdPerMTok: 3
+      inputUsdPerMTok: 0.1,
+      cachedInputUsdPerMTok: 0.01,
+      cacheWriteUsdPerMTok: 0.125,
+      outputUsdPerMTok: 0.6
     },
     "gpt-5.6-terra:flex": {
-      inputUsdPerMTok: 1.25,
-      cachedInputUsdPerMTok: 0.125,
-      cacheWriteUsdPerMTok: 1.5625,
-      outputUsdPerMTok: 7.5
-    },
-    "gpt-5.6-luna:standard": {
       inputUsdPerMTok: 1,
       cachedInputUsdPerMTok: 0.1,
       cacheWriteUsdPerMTok: 1.25,
       outputUsdPerMTok: 6
     },
+    "gpt-5.6-luna:standard": {
+      inputUsdPerMTok: 0.2,
+      cachedInputUsdPerMTok: 0.02,
+      cacheWriteUsdPerMTok: 0.25,
+      outputUsdPerMTok: 1.2
+    },
     "gpt-5.6-terra:standard": {
-      inputUsdPerMTok: 2.5,
-      cachedInputUsdPerMTok: 0.25,
-      cacheWriteUsdPerMTok: 3.125,
-      outputUsdPerMTok: 15
+      inputUsdPerMTok: 2,
+      cachedInputUsdPerMTok: 0.2,
+      cacheWriteUsdPerMTok: 2.5,
+      outputUsdPerMTok: 12
     }
   }
 };
@@ -528,7 +542,7 @@ function agentInstructionsBlock(context) {
     instructions.content
   ].filter(Boolean).join("\n");
 }
-function taskPrompt(task, prepared, context) {
+function taskPrompt(task, prepared, context, contextGuidance = "") {
   const files = task.files.join(", ") || "(no changed files)";
   const fileArgs = task.files.map(shellWord).join(" ");
   const scopedDiff = task.files.length > 0 ? [`git -C ${shellWord(context.repoRoot)} diff ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)} -- ${fileArgs}`] : [];
@@ -561,7 +575,9 @@ function taskPrompt(task, prepared, context) {
     "",
     "Suggested commands:",
     `git -C ${shellWord(context.repoRoot)} diff --stat ${shellWord(`${prepared.reviewBase}..${prepared.headCommit}`)}`,
-    ...scopedDiff
+    ...scopedDiff,
+    "",
+    contextGuidance
   ].join("\n");
 }
 function auditPrompt(candidates, prepared, context, remainingBudgetNote) {
@@ -688,68 +704,65 @@ function ledgerFor(candidate, ledger) {
   if (!("taskId" in candidate)) return void 0;
   return ledger.find((entry) => entry.callId === candidate.taskId);
 }
-function assembleSarif(input) {
-  const candidates = [...input.candidates || []];
-  const acceptedById = new Map(
-    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
-  );
-  const verdicts = [...input.verdicts || []];
-  const ledger = [...input.ledger || []];
-  const discardById = new Map(
-    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
-  );
-  const semanticResults = candidates.map((candidate) => {
-    const accepted = acceptedById.get(candidate.candidateId);
-    const discard = discardById.get(candidate.candidateId);
-    const verdict = verdictFor(candidate.candidateId, verdicts);
-    const sourceLedger = ledgerFor(candidate, ledger);
-    const disposition = accepted ? {
-      status: verdict?.status || "accepted",
-      reason: verdict?.reason || "",
-      evidenceChecked: verdict?.evidenceChecked || "",
-      acceptedSeverity: accepted.severity
-    } : {
-      status: discard?.status || verdict?.status || "not_selected",
-      reason: discard?.reason || verdict?.reason || "",
-      evidenceChecked: discard?.evidenceChecked || verdict?.evidenceChecked || ""
-    };
-    return {
-      ruleId: `dakar/semantic/${candidate.candidateId}`,
-      level: sarifLevel(accepted?.severity || candidate.severity),
-      message: { text: candidate.title },
-      locations: locationsFor(candidate),
-      fingerprints: {
-        "dakar/candidateId": candidate.candidateId,
-        "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
-      },
-      ...accepted ? {} : { suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }] },
-      properties: {
-        dakar: {
-          kind: "semantic",
-          candidate: candidateEvidence(candidate),
-          provenance: {
-            taskId: candidate.taskId,
-            taskKind: candidate.taskKind,
-            model: candidate.sourceModel,
-            lane: sourceLedger?.lane || "luna-flex",
-            serviceTier: sourceLedger?.serviceTier || "flex",
-            reasoningEffort: sourceLedger?.reasoningEffort
-          },
-          audit: verdict ? { ...verdict } : null,
-          disposition,
-          clusterId: verdict?.clusterId,
-          cost: sourceLedger ? { ...sourceLedger } : null,
-          pricingTableVersion: input.pricingTableVersion
-        }
+function verdictDisposition(verdict, fallbackStatus) {
+  return {
+    status: verdict?.status || fallbackStatus,
+    reason: verdict?.reason || "",
+    evidenceChecked: verdict?.evidenceChecked || ""
+  };
+}
+function discardDisposition(discard, disposition) {
+  return {
+    status: discard?.status || disposition.status,
+    reason: discard?.reason || disposition.reason,
+    evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked
+  };
+}
+function semanticDisposition(accepted, discard, verdict) {
+  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
+  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
+  return discardDisposition(discard, disposition);
+}
+function semanticProvenance(candidate, sourceLedger) {
+  return {
+    taskId: candidate.taskId,
+    taskKind: candidate.taskKind,
+    model: candidate.sourceModel,
+    lane: sourceLedger?.lane || "luna-flex",
+    serviceTier: sourceLedger?.serviceTier || "flex",
+    reasoningEffort: sourceLedger?.reasoningEffort
+  };
+}
+function semanticSarifResult(candidate, evidence, pricingTableVersion) {
+  const { accepted, discard, verdict, sourceLedger } = evidence;
+  const disposition = semanticDisposition(accepted, discard, verdict);
+  return {
+    ruleId: `dakar/semantic/${candidate.candidateId}`,
+    level: sarifLevel(accepted?.severity || candidate.severity),
+    message: { text: candidate.title },
+    locations: locationsFor(candidate),
+    fingerprints: {
+      "dakar/candidateId": candidate.candidateId,
+      "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
+    },
+    ...accepted ? {} : { suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }] },
+    properties: {
+      dakar: {
+        kind: "semantic",
+        candidate: candidateEvidence(candidate),
+        provenance: semanticProvenance(candidate, sourceLedger),
+        audit: verdict ? { ...verdict } : null,
+        disposition,
+        clusterId: verdict?.clusterId,
+        cost: sourceLedger ? { ...sourceLedger } : null,
+        pricingTableVersion
       }
-    };
-  }).sort((left, right) => {
-    const leftId = left.fingerprints["dakar/candidateId"];
-    const rightId = right.fingerprints["dakar/candidateId"];
-    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
-  });
+    }
+  };
+}
+function extraDiscardResults(input, candidates, verdicts) {
   const knownCandidateIds = new Set(candidates.map((candidate) => candidate.candidateId));
-  const extraDiscards = (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => ({
+  return (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => ({
     ruleId: `dakar/semantic/${item.candidate.candidateId || "unknown"}`,
     level: "note",
     message: { text: item.reason },
@@ -768,7 +781,9 @@ function assembleSarif(input) {
       }
     }
   }));
-  const gateResults = (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
+}
+function gateSarifResults(input) {
+  return (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
     ruleId: `dakar/gate/${gate.gateId}`,
     level: gate.blocking ? "error" : "warning",
     message: { text: `${gate.name} ${gate.status}: ${gate.command}` },
@@ -782,6 +797,40 @@ function assembleSarif(input) {
       }
     }
   }));
+}
+function gatesAllowExecution(gates) {
+  return gates.every((gate) => gate.status === "passed" || !gate.blocking);
+}
+function candidateInventory(candidates) {
+  return [...candidates || []];
+}
+function assembleSarif(input) {
+  const candidates = candidateInventory(input.candidates);
+  const acceptedById = new Map(
+    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
+  );
+  const verdicts = [...input.verdicts || []];
+  const ledger = [...input.ledger || []];
+  const discardById = new Map(
+    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
+  );
+  const semanticResults = candidates.map((candidate) => {
+    const accepted = acceptedById.get(candidate.candidateId);
+    const discard = discardById.get(candidate.candidateId);
+    const verdict = verdictFor(candidate.candidateId, verdicts);
+    const sourceLedger = ledgerFor(candidate, ledger);
+    return semanticSarifResult(
+      candidate,
+      { accepted, discard, verdict, sourceLedger },
+      input.pricingTableVersion
+    );
+  }).sort((left, right) => {
+    const leftId = left.fingerprints["dakar/candidateId"];
+    const rightId = right.fingerprints["dakar/candidateId"];
+    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
+  });
+  const extraDiscards = extraDiscardResults(input, candidates, verdicts);
+  const gateResults = gateSarifResults(input);
   const results = [...gateResults, ...semanticResults, ...extraDiscards];
   const ruleIds = [...new Set(results.map((result) => result.ruleId))].sort();
   const gates = (input.gates || []).map((gate) => ({ ...gate }));
@@ -797,7 +846,7 @@ function assembleSarif(input) {
         }
       },
       invocations: [{
-        executionSuccessful: gates.every((gate) => gate.status === "passed" || !gate.blocking),
+        executionSuccessful: gatesAllowExecution(gates),
         properties: { dakar: { gates } }
       }],
       results,
@@ -817,42 +866,51 @@ function dakarProperties(result) {
   const dakar = properties.dakar;
   return dakar && typeof dakar === "object" ? dakar : {};
 }
-function projectFindingsFromSarif(sarif) {
+function projectSemanticResults(sarif, project) {
   const [run] = sarif.runs;
   if (!run) return [];
   return run.results.flatMap((result) => {
     const dakar = dakarProperties(result);
     if (dakar.kind !== "semantic") return [];
-    const disposition = dakar.disposition;
-    if (!["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
-    const candidate = dakar.candidate;
-    const audit = dakar.audit;
-    return [{
-      severity: disposition.acceptedSeverity || candidate.severity,
-      path: candidate.path,
-      line: Number(candidate.line) > 0 ? candidate.line : void 0,
-      title: candidate.title,
-      detail: candidate.detail || "",
-      evidence: candidate.evidence || "",
-      clusterId: audit?.clusterId || void 0,
-      sourceTasks: [candidate.taskId]
-    }];
+    return project(dakar);
   });
 }
+function compatibilityFinding(dakar) {
+  const disposition = dakar.disposition;
+  const candidate = dakar.candidate;
+  const audit = dakar.audit;
+  return {
+    severity: disposition.acceptedSeverity || candidate.severity,
+    path: candidate.path,
+    line: Number(candidate.line) > 0 ? candidate.line : void 0,
+    title: candidate.title,
+    detail: candidate.detail || "",
+    evidence: candidate.evidence || "",
+    clusterId: audit?.clusterId || void 0,
+    sourceTasks: [candidate.taskId]
+  };
+}
+function projectFindingsFromSarif(sarif) {
+  return projectSemanticResults(sarif, (dakar) => {
+    const disposition = dakar.disposition;
+    if (!["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
+    return [compatibilityFinding(dakar)];
+  });
+}
+function compatibilityDiscard(dakar) {
+  const disposition = dakar.disposition;
+  return {
+    candidate: dakar.candidate,
+    status: String(disposition?.status || ""),
+    reason: String(disposition?.reason || ""),
+    evidenceChecked: String(disposition?.evidenceChecked || "")
+  };
+}
 function projectDiscardedFromSarif(sarif) {
-  const [run] = sarif.runs;
-  if (!run) return [];
-  return run.results.flatMap((result) => {
-    const dakar = dakarProperties(result);
-    if (dakar.kind !== "semantic") return [];
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition;
     if (["accepted", "severity_downgraded"].includes(String(disposition?.status))) return [];
-    return [{
-      candidate: dakar.candidate,
-      status: String(disposition?.status || ""),
-      reason: String(disposition?.reason || ""),
-      evidenceChecked: String(disposition?.evidenceChecked || "")
-    }];
+    return [compatibilityDiscard(dakar)];
   });
 }
 function renderSarifMarkdown(sarif) {
@@ -1093,43 +1151,48 @@ async function callWithFlexRetry(retryConfig, callId, invoke, retryAdmission) {
   }
   return { ok: false, attempts: retryConfig.flexAttempts, error: lastError };
 }
-async function workflowMain() {
+function resolvedReviewSettings() {
   const config = resolveWorkflowConfig(args);
-  const {
-    adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS,
-    agentInstructions: AGENT_INSTRUCTIONS,
-    baseRef: BASE_REF,
-    budgetGbp: BUDGET_GBP,
-    configArg: CONFIG_ARG,
-    dryRun: DRY_RUN,
-    flexAttempts: FLEX_ATTEMPTS,
-    flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
-    flexJitterSeconds: FLEX_JITTER_SECONDS,
-    flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
-    headRef: HEAD_REF,
-    lunaReasoning: LUNA_REASONING,
-    perCallTimeoutSeconds: PER_CALL_TIMEOUT_SECONDS,
-    policyValid: POLICY_VALID,
-    maxAuditCandidates: MAX_AUDIT_CANDIDATES,
-    maxCandidates: MAX_CANDIDATES,
-    maxFindings: MAX_FINDINGS,
-    maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
-    maxTasks: MAX_TASKS,
-    prepared: PREPARED,
-    repoRoot: REPO_ROOT,
-    reviewPolicy: REVIEW_POLICY,
-    reviewModels: REVIEW_MODELS,
-    routingPolicy: ROUTING_POLICY,
-    synthesisAdapter: SYNTHESIS_ADAPTER,
-    synthesisModelName: SYNTHESIS_MODEL_NAME,
-    taskKinds: TASK_KINDS,
-    terraMaxInputTokens: TERRA_MAX_INPUT_TOKENS,
-    terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
-    transactionMaxFiles: TRANSACTION_MAX_FILES,
-    transactionMaxInputTokens: TRANSACTION_MAX_INPUT_TOKENS,
-    transactionMaxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS,
-    workflowVersion: WORKFLOW_VERSION
-  } = config;
+  return {
+    ADAPTER_OVERHEAD_TOKENS: config.adapterOverheadTokens,
+    AGENT_INSTRUCTIONS: config.agentInstructions,
+    BASE_REF: config.baseRef,
+    BUDGET_GBP: config.budgetGbp,
+    CONFIG_ARG: config.configArg,
+    CONTEXT_GUIDANCE: config.contextGuidance,
+    DRY_RUN: config.dryRun,
+    FLEX_ATTEMPTS: config.flexAttempts,
+    FLEX_INITIAL_BACKOFF_SECONDS: config.flexInitialBackoffSeconds,
+    FLEX_JITTER_SECONDS: config.flexJitterSeconds,
+    FLEX_MAX_BACKOFF_SECONDS: config.flexMaxBackoffSeconds,
+    HEAD_REF: config.headRef,
+    LUNA_REASONING: config.lunaReasoning,
+    PER_CALL_TIMEOUT_SECONDS: config.perCallTimeoutSeconds,
+    POLICY_VALID: config.policyValid,
+    MAX_AUDIT_CANDIDATES: config.maxAuditCandidates,
+    MAX_CANDIDATES: config.maxCandidates,
+    MAX_FINDINGS: config.maxFindings,
+    MAX_LUNA_FLEX_CALLS: config.maxLunaFlexCalls,
+    MAX_TASKS: config.maxTasks,
+    PREPARED: config.prepared,
+    REPO_ROOT: config.repoRoot,
+    REVIEW_POLICY: config.reviewPolicy,
+    REVIEW_MODELS: config.reviewModels,
+    ROUTING_POLICY: config.routingPolicy,
+    SYNTHESIS_ADAPTER: config.synthesisAdapter,
+    SYNTHESIS_MODEL_NAME: config.synthesisModelName,
+    TASK_KINDS: config.taskKinds,
+    TERRA_MAX_INPUT_TOKENS: config.terraMaxInputTokens,
+    TERRA_MAX_OUTPUT_TOKENS: config.terraMaxOutputTokens,
+    TRANSACTION_MAX_FILES: config.transactionMaxFiles,
+    TRANSACTION_MAX_INPUT_TOKENS: config.transactionMaxInputTokens,
+    TRANSACTION_MAX_OUTPUT_TOKENS: config.transactionMaxOutputTokens,
+    WORKFLOW_VERSION: config.workflowVersion
+  };
+}
+function createWorkflowContext() {
+  const settings = resolvedReviewSettings();
+  const { ADAPTER_OVERHEAD_TOKENS, AGENT_INSTRUCTIONS, BUDGET_GBP, CONFIG_ARG, CONTEXT_GUIDANCE, FLEX_ATTEMPTS, FLEX_INITIAL_BACKOFF_SECONDS, FLEX_JITTER_SECONDS, FLEX_MAX_BACKOFF_SECONDS, LUNA_REASONING, PER_CALL_TIMEOUT_SECONDS, MAX_FINDINGS, MAX_TASKS, REPO_ROOT, REVIEW_POLICY, REVIEW_MODELS, TERRA_MAX_INPUT_TOKENS, TERRA_MAX_OUTPUT_TOKENS } = settings;
   const TASK_GRAPH_CONFIG = { maxFindings: MAX_FINDINGS, maxTasks: MAX_TASKS, reviewModels: REVIEW_MODELS };
   const RETRY_CONFIG = Object.freeze({
     flexAttempts: FLEX_ATTEMPTS,
@@ -1139,7 +1202,8 @@ async function workflowMain() {
   });
   const WORST_CASE_REVIEW_SECONDS = worstCaseReviewSeconds(RETRY_CONFIG, PER_CALL_TIMEOUT_SECONDS);
   const PRICING_TABLE = DEFAULT_PRICING_TABLE;
-  const LUNA_LANE = flexLaneRole(LUNA_REASONING === "medium" ? "luna-medium" : "luna");
+  const LUNA_ROLE = lunaFlexLaneRole(LUNA_REASONING);
+  const LUNA_LANE = flexLaneRole(LUNA_ROLE);
   const TERRA_LANE = flexLaneRole("terra");
   const BUDGET_USD = BUDGET_GBP * PRICING_TABLE.usdPerGbp;
   const RESERVED_AUDIT_USD = estimateWorstCaseUsd(PRICING_TABLE, {
@@ -1149,7 +1213,7 @@ async function workflowMain() {
     cachedInputTokens: 0,
     maxOutputTokens: TERRA_MAX_OUTPUT_TOKENS
   });
-  const FLEX_LANES = Object.freeze({ luna: flexLaneRole("luna"), "luna-medium": flexLaneRole("luna-medium"), terra: TERRA_LANE });
+  const FLEX_LANES = Object.freeze({ luna: flexLaneRole("luna"), "luna-medium": flexLaneRole("luna-medium"), "luna-low": flexLaneRole("luna-low"), terra: TERRA_LANE });
   const CODE_RABBIT_CONFIG = CONFIG_ARG || "auto";
   const promptContext = Object.freeze({
     agentInstructions: AGENT_INSTRUCTIONS,
@@ -1157,97 +1221,105 @@ async function workflowMain() {
     policyPath: CODE_RABBIT_CONFIG,
     repoRoot: REPO_ROOT
   });
+  const FINDER_CONTEXT_GUIDANCE = CONTEXT_GUIDANCE;
   const REMAINING_BUDGET_NOTE = "Remaining budget: this issue-set audit is the only remaining model call for this review; you are not rewarded for issue volume.";
-  if (!POLICY_VALID) {
-    return {
-      ok: false,
-      stage: "config",
-      error: "normalized review policy failed workflow-boundary validation",
-      config: CODE_RABBIT_CONFIG
-    };
-  }
-  if (DRY_RUN) {
-    return {
-      ok: true,
-      dryRun: true,
-      workflowVersion: WORKFLOW_VERSION,
-      config: CODE_RABBIT_CONFIG,
-      repoRoot: REPO_ROOT,
-      base: BASE_REF,
-      head: HEAD_REF,
-      models: REVIEW_MODELS.map(modelName),
-      synthesisModel: SYNTHESIS_MODEL_NAME,
-      synthesisAdapter: SYNTHESIS_ADAPTER,
-      routingPolicy: ROUTING_POLICY,
-      policy: REVIEW_POLICY,
-      taskKinds: TASK_KINDS,
-      limits: {
-        maxTasks: MAX_TASKS,
-        maxCandidates: MAX_CANDIDATES,
-        maxFindings: MAX_FINDINGS,
-        maxAuditCandidates: MAX_AUDIT_CANDIDATES
-      },
-      // ADR 002 Flex route: report the host-selected lanes, the hard budget, the
-      // reserved Terra audit worst case, and the additional admission knobs.
-      lanes: FLEX_LANES,
-      budgetGbp: BUDGET_GBP,
-      budgetUsd: BUDGET_USD,
-      pricingTableVersion: PRICING_TABLE.version,
-      reservedAuditUsd: RESERVED_AUDIT_USD,
-      // Admission reserves only ONE audit attempt's worst case; this chain-level
-      // figure surfaces the audit's full retry cost to operators without
-      // reserving it against the budget.
-      reservedAuditChainUsd: RESERVED_AUDIT_USD * FLEX_ATTEMPTS,
-      flexLimits: {
-        maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
-        transactionMaxFiles: TRANSACTION_MAX_FILES,
-        transactionMaxInputTokens: TRANSACTION_MAX_INPUT_TOKENS,
-        transactionMaxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS,
-        terraMaxInputTokens: TERRA_MAX_INPUT_TOKENS,
-        terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
-        adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS
-      },
-      // ADR 002 Flex retry schedule and the worst-case wall clock it implies; a
-      // test asserts the default budget fits the harness's outer --timeout.
-      flexRetry: {
-        flexAttempts: FLEX_ATTEMPTS,
-        flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
-        flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
-        flexJitterSeconds: FLEX_JITTER_SECONDS,
-        perCallTimeoutSeconds: PER_CALL_TIMEOUT_SECONDS
-      },
-      worstCaseReviewSeconds: WORST_CASE_REVIEW_SECONDS,
-      defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
-      candidateSchema: CANDIDATE_SCHEMA,
-      verdictSchema: VERDICT_SCHEMA,
-      auditSchema: AUDIT_SCHEMA,
-      agentInstructionsIncluded: Boolean(AGENT_INSTRUCTIONS && AGENT_INSTRUCTIONS.content)
-    };
-  }
-  const prepared = PREPARED || {};
-  if (prepared.ok === false || typeof prepared.headCommit !== "string" || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.headCommit) || typeof prepared.reviewBase !== "string" || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.reviewBase) || typeof prepared.stateFile !== "string" || prepared.stateFile.length === 0 || !Number.isInteger(prepared.commitCount) || Number(prepared.commitCount) < 0 || !Array.isArray(prepared.changedFiles)) {
-    return {
-      ok: false,
-      stage: "prepare",
-      error: "prepare step did not return the required review range fields",
-      config: CODE_RABBIT_CONFIG,
-      prepared
-    };
-  }
-  if (prepared.alreadyReviewed || prepared.commitCount === 0) {
-    return {
-      ok: true,
-      skipped: true,
-      reason: "No unreviewed commits remain for this branch.",
-      config: CODE_RABBIT_CONFIG,
-      stateFile: prepared.stateFile,
-      headCommit: prepared.headCommit
-    };
-  }
-  const deterministicGates = prepared.deterministicGates || [];
+  return {
+    ...settings,
+    TASK_GRAPH_CONFIG,
+    RETRY_CONFIG,
+    WORST_CASE_REVIEW_SECONDS,
+    PRICING_TABLE,
+    LUNA_ROLE,
+    LUNA_LANE,
+    TERRA_LANE,
+    BUDGET_USD,
+    RESERVED_AUDIT_USD,
+    FLEX_LANES,
+    CODE_RABBIT_CONFIG,
+    FINDER_CONTEXT_GUIDANCE,
+    REMAINING_BUDGET_NOTE,
+    promptContext
+  };
+}
+function dryRunResult(context) {
+  const { ADAPTER_OVERHEAD_TOKENS, AGENT_INSTRUCTIONS, BASE_REF, BUDGET_GBP, FLEX_ATTEMPTS, FLEX_INITIAL_BACKOFF_SECONDS, FLEX_JITTER_SECONDS, FLEX_MAX_BACKOFF_SECONDS, HEAD_REF, PER_CALL_TIMEOUT_SECONDS, MAX_AUDIT_CANDIDATES, MAX_CANDIDATES, MAX_FINDINGS, MAX_LUNA_FLEX_CALLS, MAX_TASKS, REPO_ROOT, REVIEW_POLICY, REVIEW_MODELS, ROUTING_POLICY, SYNTHESIS_ADAPTER, SYNTHESIS_MODEL_NAME, TASK_KINDS, TERRA_MAX_INPUT_TOKENS, TERRA_MAX_OUTPUT_TOKENS, TRANSACTION_MAX_FILES, TRANSACTION_MAX_INPUT_TOKENS, TRANSACTION_MAX_OUTPUT_TOKENS, WORKFLOW_VERSION, TASK_GRAPH_CONFIG, WORST_CASE_REVIEW_SECONDS, PRICING_TABLE, BUDGET_USD, RESERVED_AUDIT_USD, FLEX_LANES, CODE_RABBIT_CONFIG } = context;
+  return {
+    ok: true,
+    dryRun: true,
+    workflowVersion: WORKFLOW_VERSION,
+    config: CODE_RABBIT_CONFIG,
+    repoRoot: REPO_ROOT,
+    base: BASE_REF,
+    head: HEAD_REF,
+    models: REVIEW_MODELS.map(modelName),
+    synthesisModel: SYNTHESIS_MODEL_NAME,
+    synthesisAdapter: SYNTHESIS_ADAPTER,
+    routingPolicy: ROUTING_POLICY,
+    policy: REVIEW_POLICY,
+    taskKinds: TASK_KINDS,
+    limits: {
+      maxTasks: MAX_TASKS,
+      maxCandidates: MAX_CANDIDATES,
+      maxFindings: MAX_FINDINGS,
+      maxAuditCandidates: MAX_AUDIT_CANDIDATES
+    },
+    // ADR 002 Flex route: report the host-selected lanes, the hard budget, the
+    // reserved Terra audit worst case, and the additional admission knobs.
+    lanes: FLEX_LANES,
+    budgetGbp: BUDGET_GBP,
+    budgetUsd: BUDGET_USD,
+    pricingTableVersion: PRICING_TABLE.version,
+    reservedAuditUsd: RESERVED_AUDIT_USD,
+    // Admission reserves only ONE audit attempt's worst case; this chain-level
+    // figure surfaces the audit's full retry cost to operators without
+    // reserving it against the budget.
+    reservedAuditChainUsd: RESERVED_AUDIT_USD * FLEX_ATTEMPTS,
+    flexLimits: {
+      maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
+      transactionMaxFiles: TRANSACTION_MAX_FILES,
+      transactionMaxInputTokens: TRANSACTION_MAX_INPUT_TOKENS,
+      transactionMaxOutputTokens: TRANSACTION_MAX_OUTPUT_TOKENS,
+      terraMaxInputTokens: TERRA_MAX_INPUT_TOKENS,
+      terraMaxOutputTokens: TERRA_MAX_OUTPUT_TOKENS,
+      adapterOverheadTokens: ADAPTER_OVERHEAD_TOKENS
+    },
+    // ADR 002 Flex retry schedule and the worst-case wall clock it implies; a
+    // test asserts the default budget fits the harness's outer --timeout.
+    flexRetry: {
+      flexAttempts: FLEX_ATTEMPTS,
+      flexInitialBackoffSeconds: FLEX_INITIAL_BACKOFF_SECONDS,
+      flexMaxBackoffSeconds: FLEX_MAX_BACKOFF_SECONDS,
+      flexJitterSeconds: FLEX_JITTER_SECONDS,
+      perCallTimeoutSeconds: PER_CALL_TIMEOUT_SECONDS
+    },
+    worstCaseReviewSeconds: WORST_CASE_REVIEW_SECONDS,
+    defaultTaskGraph: defaultTaskGraph(TASK_GRAPH_CONFIG),
+    candidateSchema: CANDIDATE_SCHEMA,
+    verdictSchema: VERDICT_SCHEMA,
+    auditSchema: AUDIT_SCHEMA,
+    agentInstructionsIncluded: Boolean(AGENT_INSTRUCTIONS && AGENT_INSTRUCTIONS.content)
+  };
+}
+function preparedIdentityValid(prepared) {
+  if (prepared.ok === false) return false;
+  if (typeof prepared.headCommit !== "string") return false;
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.headCommit)) return false;
+  if (typeof prepared.reviewBase !== "string") return false;
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.reviewBase)) return false;
+  if (typeof prepared.stateFile !== "string") return false;
+  return prepared.stateFile.length !== 0;
+}
+function preparedRangeValid(prepared) {
+  if (!preparedIdentityValid(prepared)) return false;
+  if (!Number.isInteger(prepared.commitCount)) return false;
+  if (Number(prepared.commitCount) < 0) return false;
+  return Array.isArray(prepared.changedFiles);
+}
+function blockingGateResult(context, prepared, deterministicGates) {
+  const { ROUTING_POLICY, PRICING_TABLE, BUDGET_USD, CODE_RABBIT_CONFIG } = context;
   const blockingGateFailures = deterministicGates.filter((gate) => gate.blocking && gate.status !== "passed");
   if (blockingGateFailures.length > 0) {
-    const sarif2 = assembleSarif({
+    const sarif = assembleSarif({
       gates: deterministicGates,
       pricingTableVersion: PRICING_TABLE.version
     });
@@ -1257,10 +1329,10 @@ async function workflowMain() {
       error: `${blockingGateFailures.length} blocking deterministic gate${blockingGateFailures.length === 1 ? "" : "s"} failed`,
       config: CODE_RABBIT_CONFIG,
       prepared,
-      sarif: sarif2,
-      findings: projectFindingsFromSarif(sarif2),
-      discarded: projectDiscardedFromSarif(sarif2),
-      reportMarkdown: renderSarifMarkdown(sarif2),
+      sarif,
+      findings: projectFindingsFromSarif(sarif),
+      discarded: projectDiscardedFromSarif(sarif),
+      reportMarkdown: renderSarifMarkdown(sarif),
       metrics: {
         routingPolicy: ROUTING_POLICY,
         ledger: [],
@@ -1274,7 +1346,10 @@ async function workflowMain() {
       }
     };
   }
-  const ledger = [];
+  return null;
+}
+function auditReserveFailure(context, prepared) {
+  const { ROUTING_POLICY, PRICING_TABLE, BUDGET_USD, RESERVED_AUDIT_USD, CODE_RABBIT_CONFIG } = context;
   if (RESERVED_AUDIT_USD > BUDGET_USD) {
     return {
       ok: false,
@@ -1291,6 +1366,10 @@ async function workflowMain() {
       }
     };
   }
+  return null;
+}
+function planFinderPacks(context, prepared) {
+  const { MAX_FINDINGS, MAX_LUNA_FLEX_CALLS, MAX_TASKS, TRANSACTION_MAX_FILES, LUNA_ROLE, CODE_RABBIT_CONFIG } = context;
   phase("Plan");
   let packs;
   let truncatedFiles;
@@ -1299,26 +1378,33 @@ async function workflowMain() {
       maxLunaFlexCalls: MAX_LUNA_FLEX_CALLS,
       maxTasks: MAX_TASKS,
       transactionMaxFiles: TRANSACTION_MAX_FILES,
-      lunaRole: LUNA_LANE.role === "luna-medium" ? "luna-medium" : "luna",
+      lunaRole: LUNA_ROLE,
       maxFindings: MAX_FINDINGS
     });
     packs = plan.packs;
     truncatedFiles = plan.truncatedFiles;
   } catch (error) {
     return {
-      ok: false,
-      stage: "plan",
-      error: error instanceof Error ? error.message : String(error),
-      config: CODE_RABBIT_CONFIG,
-      prepared
+      terminal: {
+        ok: false,
+        stage: "plan",
+        error: error instanceof Error ? error.message : String(error),
+        config: CODE_RABBIT_CONFIG,
+        prepared
+      }
     };
   }
   const taskGraph = packs;
+  return { packs, truncatedFiles, taskGraph, terminal: void 0 };
+}
+function admitFinderPacks(context, prepared, packs) {
+  const { ADAPTER_OVERHEAD_TOKENS, TRANSACTION_MAX_INPUT_TOKENS, TRANSACTION_MAX_OUTPUT_TOKENS, PRICING_TABLE, LUNA_LANE, BUDGET_USD, RESERVED_AUDIT_USD, FINDER_CONTEXT_GUIDANCE, promptContext } = context;
+  const ledger = [];
   const admissionState = { budgetUsd: BUDGET_USD, reservedAuditUsd: RESERVED_AUDIT_USD, spentUsd: 0 };
   const admissionRefusals = [];
   const admittedPacks = [];
   for (const pack of packs) {
-    const promptChars = taskPrompt(pack, prepared, promptContext).length;
+    const promptChars = taskPrompt(pack, prepared, promptContext, FINDER_CONTEXT_GUIDANCE).length;
     const inputTokens = Math.min(Math.ceil(promptChars / 4), TRANSACTION_MAX_INPUT_TOKENS) + ADAPTER_OVERHEAD_TOKENS;
     const worstCaseUsd = estimateWorstCaseUsd(PRICING_TABLE, {
       model: LUNA_LANE.model,
@@ -1346,6 +1432,11 @@ async function workflowMain() {
     });
     admittedPacks.push(pack);
   }
+  return { admissionState, admissionRefusals, admittedPacks, ledger };
+}
+async function dispatchFinderPacks(context, prepared, state) {
+  const { REPO_ROOT, RETRY_CONFIG, FINDER_CONTEXT_GUIDANCE, promptContext } = context;
+  const { admittedPacks, ledger, admissionState } = state;
   phase("Review");
   const reviewOutcomes = await parallel(
     admittedPacks.map((task) => async () => {
@@ -1358,7 +1449,7 @@ async function workflowMain() {
         outcome: await callWithFlexRetry(
           RETRY_CONFIG,
           `${REPO_ROOT}:${prepared.headCommit}:${task.taskId}`,
-          () => agent(taskPrompt(task, prepared, promptContext), {
+          () => agent(taskPrompt(task, prepared, promptContext, FINDER_CONTEXT_GUIDANCE), {
             label: task.taskId,
             phase: "Review",
             adapter: task.adapter,
@@ -1373,35 +1464,54 @@ async function workflowMain() {
       };
     })
   );
-  const lunaDowngrades = [];
-  const taskResults = [];
+  return reviewOutcomes;
+}
+function hasFlexValue(outcome) {
+  if (!outcome.ok) return false;
+  if (outcome.value === null) return false;
+  return outcome.value !== void 0;
+}
+function collectFinderOutcome(entry, state) {
+  const { ledger, taskResults, lunaDowngrades } = state;
+  const { task, outcome } = entry;
+  const ledgerEntry = ledger.find((item) => item.callId === task.taskId);
+  if (ledgerEntry) ledgerEntry.attempts = outcome.attempts;
+  if (hasFlexValue(outcome)) {
+    taskResults.push({ task, result: outcome.value });
+  } else {
+    lunaDowngrades.push({
+      taskId: task.taskId,
+      reason: outcome.retryRefusedByBudget ? "Finder pack's flex retry refused by the remaining budget; downgraded to partial coverage." : "Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.",
+      attempts: outcome.attempts
+    });
+  }
+}
+function recordAbortedFinder(index, state) {
+  const { admittedPacks, ledger, lunaDowngrades } = state;
+  const abortedTask = admittedPacks[index];
+  if (abortedTask) {
+    lunaDowngrades.push({
+      taskId: abortedTask.taskId,
+      reason: "Finder pack was aborted by the runtime after a terminal agent failure; downgraded to partial coverage.",
+      attempts: ledger.find((item) => item.callId === abortedTask.taskId)?.attempts ?? 1
+    });
+  }
+}
+function collectFinderResults(admission, reviewOutcomes) {
+  const state = { ...admission, lunaDowngrades: [], taskResults: [] };
   for (let index = 0; index < reviewOutcomes.length; index += 1) {
     const entry = reviewOutcomes[index];
     if (entry === null || entry === void 0) {
-      const abortedTask = admittedPacks[index];
-      if (abortedTask) {
-        lunaDowngrades.push({
-          taskId: abortedTask.taskId,
-          reason: "Finder pack was aborted by the runtime after a terminal agent failure; downgraded to partial coverage.",
-          attempts: ledger.find((item) => item.callId === abortedTask.taskId)?.attempts ?? 1
-        });
-      }
+      recordAbortedFinder(index, state);
       continue;
     }
-    const { task, outcome } = entry;
-    const ledgerEntry = ledger.find((item) => item.callId === task.taskId);
-    if (ledgerEntry) ledgerEntry.attempts = outcome.attempts;
-    if (outcome.ok && outcome.value !== null && outcome.value !== void 0) {
-      taskResults.push({ task, result: outcome.value });
-    } else {
-      lunaDowngrades.push({
-        taskId: task.taskId,
-        reason: outcome.retryRefusedByBudget ? "Finder pack's flex retry refused by the remaining budget; downgraded to partial coverage." : "Finder pack exhausted its Flex retry attempts; downgraded to partial coverage.",
-        attempts: outcome.attempts
-      });
-    }
+    collectFinderOutcome(entry, state);
   }
-  const failedTaskIds = lunaDowngrades.map((downgrade) => downgrade.taskId);
+  return { ...state, failedTaskIds: state.lunaDowngrades.map((downgrade) => downgrade.taskId) };
+}
+function zeroFinderCoverageResult(context, prepared, state, packs) {
+  const { ROUTING_POLICY, WORKFLOW_VERSION, CODE_RABBIT_CONFIG } = context;
+  const { taskResults, lunaDowngrades, admissionRefusals, failedTaskIds, ledger, admissionState } = state;
   if (packs.length > 0 && taskResults.length === 0) {
     return {
       ok: false,
@@ -1425,35 +1535,80 @@ async function workflowMain() {
       }
     };
   }
-  const candidates = normalizeCandidates(taskResults, prepared.changedFiles, MAX_CANDIDATES);
+  return null;
+}
+function prepareAuditCandidates(context, prepared, state) {
+  const { MAX_AUDIT_CANDIDATES, MAX_CANDIDATES } = context;
+  const { taskResults } = state;
+  const candidates = normalizeCandidates(taskResults, prepared.changedFiles || [], MAX_CANDIDATES);
   const auditCandidatePool = [
     ...new Map(candidatesForVerification(candidates).map((candidate) => [candidate.candidateId, candidate])).values()
   ];
   const { auditCandidates, overCap } = compactForAudit(auditCandidatePool, MAX_AUDIT_CANDIDATES);
+  return { candidates, auditCandidatePool, auditCandidates, overCap };
+}
+function auditAdmissionFailure(context, prepared, state, reason) {
+  const { ROUTING_POLICY, PRICING_TABLE, BUDGET_USD, RESERVED_AUDIT_USD, CODE_RABBIT_CONFIG } = context;
+  const { taskGraph, admissionRefusals, admissionState, ledger } = state;
+  return {
+    ok: false,
+    stage: "admission",
+    error: reason,
+    config: CODE_RABBIT_CONFIG,
+    prepared,
+    taskGraph,
+    admissionRefusals,
+    metrics: {
+      routingPolicy: ROUTING_POLICY,
+      budgetUsd: BUDGET_USD,
+      reservedAuditUsd: RESERVED_AUDIT_USD,
+      spentUsd: admissionState.spentUsd,
+      pricingTableVersion: PRICING_TABLE.version,
+      ledger,
+      ledgerTotalEstimatedUsd: ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0),
+      admissionRefusalCount: admissionRefusals.length
+    }
+  };
+}
+function deferredAuditResult(context, prepared, state, auditOutcome) {
+  const { ROUTING_POLICY, PRICING_TABLE, BUDGET_USD, RESERVED_AUDIT_USD, CODE_RABBIT_CONFIG } = context;
+  const { auditCandidates, lunaDowngrades, admissionRefusals, admissionState, ledger } = state;
+  return {
+    ok: false,
+    stage: "deferred",
+    deferred: true,
+    reason: auditOutcome.retryRefusedByBudget ? "flex retry refused by the remaining budget for the required audit" : "flex capacity exhausted for the required audit",
+    attempts: auditOutcome.attempts,
+    config: CODE_RABBIT_CONFIG,
+    headCommit: prepared.headCommit,
+    reviewBase: prepared.reviewBase,
+    commitCount: prepared.commitCount,
+    changedFiles: prepared.changedFiles,
+    candidates: auditCandidates,
+    lunaDowngrades,
+    admissionRefusals,
+    metrics: {
+      routingPolicy: ROUTING_POLICY,
+      budgetUsd: BUDGET_USD,
+      reservedAuditUsd: RESERVED_AUDIT_USD,
+      spentUsd: admissionState.spentUsd,
+      pricingTableVersion: PRICING_TABLE.version,
+      ledger,
+      ledgerTotalEstimatedUsd: ledger.reduce((sum, item) => sum + item.estimatedWorstCaseUsd, 0),
+      lunaDowngradeCount: lunaDowngrades.length,
+      admissionRefusalCount: admissionRefusals.length
+    }
+  };
+}
+async function executeRequiredAudit(context, prepared, state) {
+  const { REPO_ROOT, RETRY_CONFIG, PRICING_TABLE, TERRA_LANE, RESERVED_AUDIT_USD, REMAINING_BUDGET_NOTE, promptContext } = context;
+  const { auditCandidates, admissionState, ledger } = state;
   phase("Audit");
   let auditResult = { verdicts: [] };
   if (auditCandidates.length > 0) {
     const auditDecision = admit(admissionState, RESERVED_AUDIT_USD, "terra-audit");
     if (!auditDecision.admitted) {
-      return {
-        ok: false,
-        stage: "admission",
-        error: auditDecision.reason,
-        config: CODE_RABBIT_CONFIG,
-        prepared,
-        taskGraph,
-        admissionRefusals,
-        metrics: {
-          routingPolicy: ROUTING_POLICY,
-          budgetUsd: BUDGET_USD,
-          reservedAuditUsd: RESERVED_AUDIT_USD,
-          spentUsd: admissionState.spentUsd,
-          pricingTableVersion: PRICING_TABLE.version,
-          ledger,
-          ledgerTotalEstimatedUsd: ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0),
-          admissionRefusalCount: admissionRefusals.length
-        }
-      };
+      return { terminal: auditAdmissionFailure(context, prepared, state, auditDecision.reason) };
     }
     admissionState.spentUsd += RESERVED_AUDIT_USD;
     const auditLedgerEntry = {
@@ -1481,37 +1636,31 @@ async function workflowMain() {
       { state: admissionState, worstCaseUsd: RESERVED_AUDIT_USD, kind: "terra-audit", ledgerEntry: auditLedgerEntry }
     );
     auditLedgerEntry.attempts = auditOutcome.attempts;
-    if (!auditOutcome.ok || auditOutcome.value === null || auditOutcome.value === void 0) {
-      return {
-        ok: false,
-        stage: "deferred",
-        deferred: true,
-        reason: auditOutcome.retryRefusedByBudget ? "flex retry refused by the remaining budget for the required audit" : "flex capacity exhausted for the required audit",
-        attempts: auditOutcome.attempts,
-        config: CODE_RABBIT_CONFIG,
-        headCommit: prepared.headCommit,
-        reviewBase: prepared.reviewBase,
-        commitCount: prepared.commitCount,
-        changedFiles: prepared.changedFiles,
-        candidates: auditCandidates,
-        lunaDowngrades,
-        admissionRefusals,
-        metrics: {
-          routingPolicy: ROUTING_POLICY,
-          budgetUsd: BUDGET_USD,
-          reservedAuditUsd: RESERVED_AUDIT_USD,
-          spentUsd: admissionState.spentUsd,
-          pricingTableVersion: PRICING_TABLE.version,
-          ledger,
-          ledgerTotalEstimatedUsd: ledger.reduce((sum, item) => sum + item.estimatedWorstCaseUsd, 0),
-          lunaDowngradeCount: lunaDowngrades.length,
-          admissionRefusalCount: admissionRefusals.length
-        }
-      };
+    if (!hasFlexValue(auditOutcome)) {
+      return { terminal: deferredAuditResult(context, prepared, state, auditOutcome) };
     }
     auditResult = auditOutcome.value;
   }
-  const rawVerdicts = auditResult && Array.isArray(auditResult.verdicts) ? auditResult.verdicts : [];
+  return { auditResult, terminal: void 0 };
+}
+function auditVerdictValid(scheduledCandidate, verdict) {
+  if (typeof verdict.reason !== "string") return false;
+  if (verdict.reason.trim() === "") return false;
+  if (typeof verdict.evidenceChecked !== "string") return false;
+  if (verdict.evidenceChecked.trim() === "") return false;
+  if (verdict.status !== "severity_downgraded") return true;
+  if (typeof verdict.acceptedSeverity !== "string") return false;
+  return auditSeverityLowered(scheduledCandidate, verdict.acceptedSeverity);
+}
+function auditSeverityLowered(scheduledCandidate, acceptedSeverity) {
+  if ((SEVERITY_RANK[acceptedSeverity] ?? -1) <= (SEVERITY_RANK[scheduledCandidate.severity || ""] ?? 4)) return false;
+  return true;
+}
+function rawAuditVerdicts(auditResult) {
+  return auditResult && Array.isArray(auditResult.verdicts) ? auditResult.verdicts : [];
+}
+function reconcileAuditVerdicts(auditResult, auditCandidates) {
+  const rawVerdicts = rawAuditVerdicts(auditResult);
   const auditById = new Map(auditCandidates.map((candidate) => [candidate.candidateId, candidate]));
   const chosenVerdicts = /* @__PURE__ */ new Map();
   let unknownAuditVerdictCount = 0;
@@ -1529,36 +1678,48 @@ async function workflowMain() {
     chosenVerdicts.set(candidateId, verdict);
   }
   const boundVerdicts = auditCandidates.map((candidate) => ({ scheduledCandidate: candidate, verdict: chosenVerdicts.get(candidate.candidateId) })).filter((pair) => pair.verdict !== void 0);
-  const auditComplete = boundVerdicts.length === auditCandidates.length && boundVerdicts.every(({ scheduledCandidate, verdict }) => {
-    if (typeof verdict.reason !== "string" || verdict.reason.trim() === "" || typeof verdict.evidenceChecked !== "string" || verdict.evidenceChecked.trim() === "") return false;
-    if (verdict.status === "severity_downgraded") {
-      if (typeof verdict.acceptedSeverity !== "string") return false;
-      if ((SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) <= (SEVERITY_RANK[scheduledCandidate.severity || ""] ?? 4)) return false;
+  const auditComplete = boundVerdicts.length === auditCandidates.length && boundVerdicts.every(({ scheduledCandidate, verdict }) => auditVerdictValid(scheduledCandidate, verdict));
+  return { rawVerdicts, boundVerdicts, unknownAuditVerdictCount, duplicateAuditVerdictCount, auditComplete };
+}
+function incompleteAuditResult(context, prepared, state) {
+  const { ROUTING_POLICY, CODE_RABBIT_CONFIG } = context;
+  const { taskGraph, auditCandidates, rawVerdicts, admissionRefusals, overCap, unknownAuditVerdictCount, duplicateAuditVerdictCount, ledger } = state;
+  return {
+    ok: false,
+    stage: "audit",
+    error: "audit did not return a verdict for every candidate",
+    config: CODE_RABBIT_CONFIG,
+    prepared,
+    taskGraph,
+    candidates: auditCandidates,
+    verdicts: rawVerdicts,
+    admissionRefusals,
+    metrics: {
+      auditCandidateCount: auditCandidates.length,
+      overAuditCapCount: overCap.length,
+      unknownAuditVerdictCount,
+      duplicateAuditVerdictCount,
+      routingPolicy: ROUTING_POLICY,
+      ledger,
+      ledgerTotalEstimatedUsd: ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0)
     }
-    return true;
-  });
-  if (!auditComplete) {
-    return {
-      ok: false,
-      stage: "audit",
-      error: "audit did not return a verdict for every candidate",
-      config: CODE_RABBIT_CONFIG,
-      prepared,
-      taskGraph,
-      candidates: auditCandidates,
-      verdicts: rawVerdicts,
-      admissionRefusals,
-      metrics: {
-        auditCandidateCount: auditCandidates.length,
-        overAuditCapCount: overCap.length,
-        unknownAuditVerdictCount,
-        duplicateAuditVerdictCount,
-        routingPolicy: ROUTING_POLICY,
-        ledger,
-        ledgerTotalEstimatedUsd: ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0)
-      }
-    };
+  };
+}
+function recordedReviewModels(taskResults, ledger) {
+  const completedCallIds = new Set(taskResults.map(({ task }) => task.taskId));
+  const recordedModels = [];
+  const seenRecordedModels = /* @__PURE__ */ new Set();
+  for (const entry of ledger) {
+    if (entry.callId !== "audit" && !completedCallIds.has(entry.callId)) continue;
+    if (seenRecordedModels.has(entry.model)) continue;
+    seenRecordedModels.add(entry.model);
+    recordedModels.push(entry.model);
   }
+  return recordedModels;
+}
+function canonicalReviewEvidence(context, prepared, state) {
+  const { MAX_FINDINGS, PRICING_TABLE } = context;
+  const { boundVerdicts, candidates, auditCandidatePool, overCap, rawVerdicts, ledger, deterministicGates } = state;
   const verdicts = boundVerdicts.map(({ verdict }) => verdict);
   const reconciledAccepted = acceptedFromVerdicts(boundVerdicts);
   const accepted = reconciledAccepted.slice(0, MAX_FINDINGS);
@@ -1590,6 +1751,12 @@ async function workflowMain() {
   const authoritativeSummary = authoritativeFindings.length === 0 ? "No blocking findings were accepted." : `${authoritativeFindings.length} confirmed finding${authoritativeFindings.length === 1 ? "" : "s"} require changes.`;
   const authoritativeReport = renderSarifMarkdown(sarif);
   const finalVerdict = authoritativeFindings.length > 0 ? "changes-requested" : "pass";
+  return { verdicts, accepted, sarif, authoritativeFindings, discarded, authoritativeSummary, authoritativeReport, finalVerdict };
+}
+function completedReviewMetrics(context, prepared, state, evidence) {
+  const { REVIEW_POLICY, ROUTING_POLICY, WORKFLOW_VERSION, PRICING_TABLE, BUDGET_USD, RESERVED_AUDIT_USD } = context;
+  const { candidates, auditCandidates, overCap, ledger, taskGraph, admittedPacks, taskResults, failedTaskIds, lunaDowngrades, unknownAuditVerdictCount, duplicateAuditVerdictCount, admissionState, admissionRefusals, truncatedFiles } = state;
+  const { finalVerdict, accepted, discarded } = evidence;
   const ledgerTotalEstimatedUsd = ledger.reduce((sum, entry) => sum + entry.estimatedWorstCaseUsd, 0);
   const metrics = {
     workflowVersion: WORKFLOW_VERSION,
@@ -1631,16 +1798,18 @@ async function workflowMain() {
     diffStat: prepared.diffStat,
     warnings: prepared.warnings || []
   };
-  const completedCallIds = new Set(taskResults.map(({ task }) => task.taskId));
-  const recordedModels = [];
-  const seenRecordedModels = /* @__PURE__ */ new Set();
-  for (const entry of ledger) {
-    if (entry.callId !== "audit" && !completedCallIds.has(entry.callId)) continue;
-    if (seenRecordedModels.has(entry.model)) continue;
-    seenRecordedModels.add(entry.model);
-    recordedModels.push(entry.model);
-  }
-  const coverageComplete = truncatedFiles.length === 0 && admissionRefusals.length === 0 && lunaDowngrades.length === 0;
+  return metrics;
+}
+function completeFinderCoverage(state) {
+  if (state.truncatedFiles.length !== 0) return false;
+  if (state.admissionRefusals.length !== 0) return false;
+  return state.lunaDowngrades.length === 0;
+}
+function completedRecording(prepared, state, evidence, metrics) {
+  const { ledger, taskResults, lunaDowngrades, admissionRefusals, truncatedFiles } = state;
+  const { authoritativeFindings, authoritativeSummary } = evidence;
+  const recordedModels = recordedReviewModels(taskResults, ledger);
+  const coverageComplete = completeFinderCoverage(state);
   const recordInput = coverageComplete ? {
     reviewId: `head-${prepared.headCommit}`,
     baseCommit: prepared.reviewBase,
@@ -1658,6 +1827,15 @@ async function workflowMain() {
     admissionRefusalCount: admissionRefusals.length,
     lunaDowngradeCount: lunaDowngrades.length
   };
+  return { recordInput, recordWithheld };
+}
+function completedReviewResult(context, prepared, state) {
+  const { REVIEW_POLICY, WORKFLOW_VERSION, CODE_RABBIT_CONFIG } = context;
+  const { candidates, taskGraph, taskResults, lunaDowngrades, admissionRefusals } = state;
+  const evidence = canonicalReviewEvidence(context, prepared, state);
+  const { verdicts, sarif, authoritativeFindings, discarded, authoritativeSummary, authoritativeReport, finalVerdict } = evidence;
+  const metrics = completedReviewMetrics(context, prepared, state, evidence);
+  const { recordInput, recordWithheld } = completedRecording(prepared, state, evidence, metrics);
   return {
     ok: true,
     workflowVersion: WORKFLOW_VERSION,
@@ -1683,6 +1861,70 @@ async function workflowMain() {
     ...recordInput ? { recordInput } : {},
     ...recordWithheld ? { recordWithheld } : {}
   };
+}
+function preparedReviewTerminal(context, prepared) {
+  const { CODE_RABBIT_CONFIG } = context;
+  if (!preparedRangeValid(prepared)) {
+    return {
+      ok: false,
+      stage: "prepare",
+      error: "prepare step did not return the required review range fields",
+      config: CODE_RABBIT_CONFIG,
+      prepared
+    };
+  }
+  if (prepared.alreadyReviewed || prepared.commitCount === 0) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "No unreviewed commits remain for this branch.",
+      config: CODE_RABBIT_CONFIG,
+      stateFile: prepared.stateFile,
+      headCommit: prepared.headCommit
+    };
+  }
+  const deterministicGates = prepared.deterministicGates || [];
+  const gateFailure = blockingGateResult(context, prepared, deterministicGates);
+  if (gateFailure) return gateFailure;
+  return { prepared, deterministicGates };
+}
+async function liveReviewResult(context, prepared, deterministicGates) {
+  const plan = planFinderPacks(context, prepared);
+  if (plan.terminal) return plan.terminal;
+  const { packs, truncatedFiles, taskGraph } = plan;
+  const admission = admitFinderPacks(context, prepared, packs);
+  const reviewOutcomes = await dispatchFinderPacks(context, prepared, admission);
+  const review = collectFinderResults(admission, reviewOutcomes);
+  const coverageFailure = zeroFinderCoverageResult(context, prepared, review, packs);
+  if (coverageFailure) return coverageFailure;
+  const auditCandidates = prepareAuditCandidates(context, prepared, review);
+  const auditState = { ...review, ...auditCandidates, taskGraph };
+  const audit = await executeRequiredAudit(context, prepared, auditState);
+  if (audit.terminal) return audit.terminal;
+  const reconciliation = reconcileAuditVerdicts(audit.auditResult, auditCandidates.auditCandidates);
+  const completion = { ...auditState, ...reconciliation, truncatedFiles, deterministicGates };
+  if (!reconciliation.auditComplete) return incompleteAuditResult(context, prepared, completion);
+  return completedReviewResult(context, prepared, completion);
+}
+async function workflowMain() {
+  const context = createWorkflowContext();
+  const { POLICY_VALID, CODE_RABBIT_CONFIG, DRY_RUN, PREPARED } = context;
+  if (!POLICY_VALID) {
+    return {
+      ok: false,
+      stage: "config",
+      error: "normalized review policy failed workflow-boundary validation",
+      config: CODE_RABBIT_CONFIG
+    };
+  }
+  if (DRY_RUN) return dryRunResult(context);
+  const prepared = PREPARED || {};
+  const range = preparedReviewTerminal(context, prepared);
+  if (!("deterministicGates" in range)) return range;
+  if (range.deterministicGates === void 0) return range;
+  const reserveFailure = auditReserveFailure(context, prepared);
+  if (reserveFailure) return reserveFailure;
+  return liveReviewResult(context, prepared, range.deterministicGates);
 }
 
 // --- Entry (generated footer) --------------------------------------------

@@ -7,6 +7,8 @@ review workflows Date: 2026-07-14 Companion documents:
 [`docs/design/initial-workflow.md`](design/initial-workflow.md), and
 [`docs/roadmap.md`](roadmap.md) Accepted decision record:
 [`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md)
+and
+[`docs/adr-002-deterministic-tiered-review-cost.md`](adr-002-deterministic-tiered-review-cost.md)
 
 ## 1. Problem
 
@@ -133,11 +135,39 @@ directly rather than only recovering after a failure.
 The CLI also owns the model-call timeout boundary. The packaged
 `odw.config.json` remains unchanged on disk; for each CLI-started run,
 `scripts/odw-config.mjs::deriveOdwConfig()` copies it and stamps the clamped
-`--per-call-timeout` value onto only the three pi Flex adapters. The CLI passes
-that same value into the workflow configuration, keeping ODW's adapter timeout
-aligned with the deterministic retry and worst-case wall-clock calculation.
-Direct ODW invocation bypasses this host derivation and must provide an
-equivalent adapter timeout itself.
+`--per-call-timeout` value onto every pi Flex adapter. The CLI passes that same
+value into the workflow configuration, keeping ODW's adapter timeout aligned
+with the deterministic retry and worst-case wall-clock calculation. Direct ODW
+invocation bypasses this host derivation and must provide an equivalent adapter
+timeout itself.
+
+The CLI also owns optional MCP context preparation. After trusted range
+preparation and deterministic gates, and before `odw run`, `warmContextIndex()`
+probes the `mcp` CLI, indexes the reviewed checkout in CodeGraph, and indexes a
+bounded set of existing Markdown context files. This warmup runs only when the
+immutable reviewed head is currently checked out cleanly; otherwise it skips
+with a warning on stderr. All warmup calls share a single 30-second deadline;
+each MCP process receives only the remaining time. Warmup remains advisory:
+`DAKAR_SKIP_CONTEXT_WARMUP`, an unavailable CLI, indexing failure, or deadline
+exhaustion leaves the review running and reports the condition on stderr.
+Structured stderr operation spans and the final summary include durations,
+trace and parent identifiers, outcomes, and bounded failure categories. The CLI
+passes W3C `TRACEPARENT` context to MCP calls and the ODW child process, so
+downstream calls can correlate when they inherit that environment. It links the
+ODW run ID to the trace on stderr. Finder prompts use the best-effort CodeGraph
+context when available and fall back to git and direct inspection when the
+index is incomplete or unavailable; direct ODW callers do not receive the CLI's
+warmup automatically.
+
+The CLI adapter derives an optional `owner/name` repository identity from the
+reviewed checkout's GitHub `origin` remote and uses it to render optional
+context guidance. MCP command construction, JSON payload serialization, shell
+quoting, and file-URI formatting belong at this host boundary, not in the
+workflow domain. The workflow receives only the translated, optional
+`contextGuidance` string; it does not depend on GitHub identity or MCP
+transport details. DeepWiki guidance is included only when a repository
+identity is available. DeepWiki is supplementary and may be stale, so it is not
+evidence about the current head.
 
 ODW still receives one workflow file, but that runtime constraint does not
 require one source file. ADR 001 establishes typed source modules under

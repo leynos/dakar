@@ -7,6 +7,8 @@ record remains at
 [`docs/design/initial-workflow.md`](design/initial-workflow.md), the accepted
 compilation boundary is recorded in
 [`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md),
+the deterministic and Flex routing decision is recorded in
+[`docs/adr-002-deterministic-tiered-review-cost.md`](adr-002-deterministic-tiered-review-cost.md),
 and delivery plans live under [`docs/execplans/`](execplans/).
 
 ## 1. Local validation
@@ -24,11 +26,25 @@ diagrams.
 Use focused commands while iterating:
 
 ```bash
-node --test tests/cli.test.mjs
+npm run test:cli
 node --test tests/review-state.test.mjs
 node --test tests/workflow-dry-run.test.mjs
 npm run odw:dry-run
 ```
+
+The CLI suite groups review, recording, preparation, context-warmup, and
+telemetry cases in `tests/cli.test.mjs`, `tests/cli-recording.test.mjs`,
+`tests/cli-preparation.test.mjs`, `tests/cli-context-warmup.test.mjs`,
+`tests/cli-context-warmup-boundaries.test.mjs`, and
+`tests/cli-telemetry.test.mjs`. The boundary suite uses an injected clock to
+verify the cumulative timeout without wall-clock sleeps. Shared CLI subprocess
+and repository-fixture helpers live in `tests/cli-test-support.mjs`;
+`npm run test:cli` also runs the bundle and installer tests.
+
+The `make lint` gate runs `npm run lint:complexity`, which uses pinned Biome
+1.9.4 to enforce a maximum cognitive complexity of 9 on the authored CLI
+(`bin/dakar-review.mjs`) and SARIF (`src/workflows/dakar-review/sarif.ts`)
+sources. Generated bundles are excluded.
 
 Do not use `node --check workflows/dakar-review.js` as a workflow syntax gate.
 ODW files permit top-level `return`, which ordinary Node syntax checking
@@ -92,7 +108,7 @@ The source tree has these responsibilities:
   Schemas, including `AUDIT_SCHEMA` and the ledger, admission-refusal, and
   Luna-downgrade shapes;
 - `config.ts` and `model-routing.ts`: argument defaults, the Flex lane roles
-  (`luna`, `luna-medium`, `terra`), and adapter/model selection;
+  (`luna`, `luna-medium`, `luna-low`, `terra`), and adapter/model selection;
 - `pricing.ts`: the versioned pricing table and `estimateWorstCaseUsd()`,
   which prices uncached input at the cache-write band (ADR 002's worst case);
 - `admission.ts`: the reserve-first budget controller (`admit()`) that
@@ -142,6 +158,27 @@ only shell-word quoting interface. Runtime JSON Schemas are exported from
 These modules are pure; `main.ts` alone calls the ambient ODW primitives, the
 `sleep()` retry helper, and owns phase sequencing.
 
+The live Flex lane registry is `model-routing.ts::FLEX_LANE_ROLES`. The
+`isReasoning()` guard accepts `low`, `medium`, or `high` values;
+`lunaFlexLaneRole()` maps the validated Luna setting to `luna`, `luna-medium`,
+or `luna-low`; and `flexLaneRole()` resolves that role to its frozen model,
+adapter, service-tier, and reasoning specification. `workflowMain()` selects
+the Luna role before dispatch, `buildFlexFinderPlan()` applies it to every
+finder pack, and the Terra audit uses the host-selected `terra` role. The
+current registry is:
+
+| Role          | Model           | Adapter               | Reasoning | Use                  |
+| ------------- | --------------- | --------------------- | --------- | -------------------- |
+| `luna`        | `gpt-5.6-luna`  | `pi-luna-flex-high`   | high      | Default finder lane  |
+| `luna-medium` | `gpt-5.6-luna`  | `pi-luna-flex-medium` | medium    | Finder de-escalation |
+| `luna-low`    | `gpt-5.6-luna`  | `pi-luna-flex`        | low       | Finder de-escalation |
+| `terra`       | `gpt-5.6-terra` | `pi-terra-flex-high`  | high      | Issue-set audit      |
+
+The host owns this selection; prompts cannot promote an agent to another model
+or service tier. `modelForRole()` and `adapterForReasoning()` remain available
+for the legacy task graph and synthesis configuration, but the live
+`deterministic-flex-v1` route uses the Flex registry above.
+
 Document each module with a top-of-file `/** … @module */` block, and document
 exported functions plus non-obvious trust, loader, and state boundaries with
 JSDoc. The generated `workflows/dakar-review.js` artefact and ambient
@@ -182,13 +219,16 @@ an agent to inspect diffs should use `git -C <repoRoot>` rather than plain
 
 ## 3. CLI conventions
 
-`bin/dakar-review.mjs` is the installable command exposed by `package.json`.
+`package.json` exposes `bin/dakar-review.bundle.mjs` as the installable
+`dakar-review` command. The bundle is generated from `bin/dakar-review.mjs`; do
+not edit it by hand. After changing the CLI source, run `npm run cli:build`,
+and use `npm run cli:freshness` to verify that the committed bundle is current.
 `install.sh` is the canonical installation method. Before asking Bun to install
 Dakar from the absolute checkout path, it installs the locked dependencies into
 that checkout. This is required because Bun links a local package's executable
 back to its source, from which Node cannot resolve Bun's separate global
 dependency tree. Keep the clean-checkout installation test in
-`tests/cli.test.mjs` representative of this layout. The installer owns an
+`tests/install.test.mjs` representative of this layout. The installer owns an
 `.dakar-install.lock` directory under Bun's configured global installation root
 and acquires it before `npm ci`; the lock remains held through
 `bun remove -g dakar` and `bun install -g "$script_dir"` so concurrent runs
@@ -221,14 +261,45 @@ The packaged `odw.config.json` is an immutable installation input, not the
 configuration passed directly to a CLI-started run. Before spawning ODW, the
 CLI calls `deriveOdwConfig()` from `scripts/odw-config.mjs`, clamps
 `--per-call-timeout` to the workflow's supported bounds, stamps that timeout
-onto the three pi Flex adapters, and writes a temporary per-run config. The
-workflow receives the same clamped value in its arguments so adapter-level
-termination and retry budgeting cannot disagree. Direct ODW users remain
-responsible for supplying equivalent adapter timeouts in their own config.
+onto every pi Flex adapter, and writes a temporary per-run config. The workflow
+receives the same clamped value in its arguments so adapter-level termination
+and retry budgeting cannot disagree. Direct ODW users remain responsible for
+supplying equivalent adapter timeouts in their own config.
 
 When the reviewed repository has a root `AGENTS.md`, the CLI should pass its
 content as `agentInstructions`. Keep this as context for review agents, not as
 an override for Dakar's schema, output, or safety rules.
+
+### MCP context and repository identity
+
+For a live review, after trusted range preparation and deterministic gates,
+`prepareLiveReview()` calls `warmReviewedContextIndex()` before `launchOdw()`
+can dispatch a finder. That helper verifies the checkout and delegates eligible
+warmups to `warmContextIndex()`, which probes the `mcp` CLI, indexes the
+reviewed checkout with CodeGraph, and then indexes at most 20 existing Markdown
+context files: the root `AGENTS.md`, `README.md`, and changed Markdown files.
+It runs only when the immutable reviewed head is currently checked out cleanly;
+otherwise it skips with a warning on stderr. All warmup calls share a 30-second
+deadline. It is advisory: `DAKAR_SKIP_CONTEXT_WARMUP` skips it, an unavailable
+CLI, indexing failure, or deadline exhaustion writes a warning to stderr, and
+the review continues with the prompt's git/direct-inspection fallback. Each
+warmup operation emits a bounded span with trace ID, span ID, parent ID,
+duration, outcome, and fixed failure category. The summary carries the root
+span and bounded failure counts. The CLI passes W3C `TRACEPARENT` context to
+MCP calls and the ODW child process, so downstream calls can correlate when
+they inherit that environment. It links the ODW run ID to the trace on stderr.
+These diagnostics avoid repository paths and MCP payloads and do not change
+final result or review-history schemas. The ODW workflow does not own this
+warmup, so direct ODW invocations do not receive this host-side preflight
+automatically.
+
+The CLI resolves a GitHub `owner/name` from the reviewed checkout's `origin`
+and constructs optional context guidance at its host-side adapter boundary.
+Only that translated guidance crosses into the workflow; repository identity
+and MCP command details are not workflow arguments. Without a matching GitHub
+origin, the guidance marks DeepWiki as unavailable. DeepWiki is supplementary,
+potentially stale context, never evidence for the current diff; CodeGraph, git,
+and command output remain untrusted prompt data.
 
 `scripts/review-config.mjs` owns CodeRabbit configuration resolution. The CLI
 is now the sole caller: it resolves configuration and prepares the review range
@@ -271,19 +342,19 @@ all progress, run ids, and log-follow warnings on standard error so standard
 output remains reserved for JSON or Markdown result data.
 
 A CLI test that exercises a review must run against its own fixture repository,
-never the checkout under test. `setUpRecordRepo` in `tests/cli.test.mjs` builds
-one: a base commit, a second commit ahead of it, and the base revision to pass
-as `--base`. Pointed at its own checkout the CLI resolves the review base to
-the current head, finds no unreviewed commits, and short-circuits with
-`skipped: true` before ODW is ever spawned, so the case passes or fails
-according to what the developer happens to have committed. Set
-`XDG_CONFIG_HOME` to an empty temporary directory in the same breath, or the
-run reads the developer's own `dakar/config.yaml`.
+never the checkout under test. `setUpRecordRepo` in
+`tests/cli-test-support.mjs` builds one: a base commit, a second commit ahead
+of it, and the base revision to pass as `--base`. Pointed at its own checkout,
+the CLI resolves the review base to the current head, finds no unreviewed
+commits, and short-circuits with `skipped: true` before ODW is ever spawned, so
+the case passes or fails according to what the developer happens to have
+committed. Set `XDG_CONFIG_HOME` to an empty temporary directory in the same
+breath, or the run reads the developer's own `dakar/config.yaml`.
 
 When changing CLI arguments or output, update these places together:
 
 - `bin/dakar-review.mjs`;
-- `tests/cli.test.mjs`;
+- the relevant module under `tests/cli*.test.mjs`;
 - `docs/users-guide.md`;
 - the workflow contract section in `docs/dakar-review-design.md` when the
   underlying ODW result changes.
@@ -321,14 +392,14 @@ planning to build bounded Flex evidence packs, not per-kind model routing.
 (`source`, `tests`, `config`, `docs`, in that fixed order for determinism),
 chunks each group into homogeneous packs of at most `transactionMaxFiles`
 files, and caps the total at `maxLunaFlexCalls` packs. Every admitted pack is
-dispatched to the same Luna Flex lane (`gpt-5.6-luna`, low reasoning by default;
-`luna-medium`, medium reasoning, for the pre-registered escalation); there is
-no per-kind model assignment on this route. Files beyond the pack cap are
-recorded as `truncatedFiles` rather than silently dropped. Deterministic host
-code (`candidates.ts::compactForAudit()`) then deduplicates, severity-orders,
-and caps the resulting candidates at `maxAuditCandidates` before the single
-Terra Flex audit call (`gpt-5.6-terra`, medium reasoning) returns one verdict
-per candidate.
+dispatched to the same host-selected Luna Flex lane (`gpt-5.6-luna`, high
+reasoning by default; `luna-medium` and `luna-low` are pre-registered
+de-escalation roles); there is no per-kind model assignment on this route.
+Files beyond the pack cap are recorded as `truncatedFiles` rather than silently
+dropped. Deterministic host code (`candidates.ts::compactForAudit()`) then
+deduplicates, severity-orders, and caps the resulting candidates at
+`maxAuditCandidates` before the single Terra Flex audit call (`gpt-5.6-terra`,
+high reasoning) returns one verdict per candidate.
 
 After reconciliation, `assembleSarif()` copies immutable Luna evidence and
 attaches Terra decisions by stable candidate identifier. It also records gate
@@ -354,13 +425,16 @@ to a costlier model or service tier, so lane choice never appears in a prompt.
   `apiKey: "$OPENAI_API_KEY"`), declaring `gpt-5.6-luna` and `gpt-5.6-terra`. A
   model missing from the selected provider's catalogue makes pi hang rather
   than fail, so the pinned provider and declared models are load-bearing.
-- `odw.config.json`'s `pi-luna-flex`, `pi-luna-flex-medium`, and
-  `pi-terra-flex` adapters invoke `pi -p --no-session --provider openai-flex`
-  with the lane's `--model` and `--thinking` pinned and `{prompt}` on stdin.
-  The committed configuration deliberately omits a `-e` flag for the extension:
-  a relative `-e` path resolves against the invoking process's working
-  directory rather than the package root, so it would break under any other
-  cwd; auto-load from `PI_CODING_AGENT_DIR` is the portable path.
+- `odw.config.json`'s live `pi-luna-flex-high`, `pi-luna-flex-medium`,
+  `pi-luna-flex`, and `pi-terra-flex-high` adapters invoke
+  `pi -p --no-session --provider openai-flex` with the lane's `--model` and
+  `--thinking` pinned and `{prompt}` on stdin. The packaged `pi-terra-flex`
+  adapter remains for legacy/reference compatibility; the live route selects
+  `pi-terra-flex-high`. The committed configuration deliberately omits a `-e`
+  flag for the extension: a relative `-e` path resolves against the invoking
+  process's working directory rather than the package root, so it would break
+  under any other cwd; auto-load from `PI_CODING_AGENT_DIR` is the portable
+  path.
 - The CLI sets `PI_CODING_AGENT_DIR` to `adapters/pi/` (and
   `PI_SKIP_VERSION_CHECK=1`) so pi resolves its provider catalogue and
   extensions from Dakar's own config directory rather than any ambient pi
