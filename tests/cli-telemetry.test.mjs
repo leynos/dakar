@@ -4,21 +4,19 @@
  * @module
  */
 
-import { spawnSync } from 'node:child_process'
 import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { repoRoot, cliPath, spawnCli, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
-
-process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
+import { repoRoot, cliPath, spawnCli, spawnCliSync as spawnSync, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
 
 test('a hung log follow still fetches and records the completed result', (t) => {
   const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
   t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const stateRoot = join(tempRoot, 'trusted-state')
   const fakeOdw = join(tempRoot, 'odw.mjs')
+  const traceCapture = join(tempRoot, 'traceparent')
   // `odw run` emits a run id; `odw logs --follow` hangs forever; `odw result`
   // returns a completed, recordable review. A follow timeout must not abandon
   // the billed result: the CLI fetches and records it in the grace window.
@@ -29,6 +27,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 const values = process.argv.slice(2)
 const mode = values[0]
 if (mode === 'run') {
+  writeFileSync(process.env.DAKAR_TRACE_CAPTURE, process.env.TRACEPARENT)
   const input = JSON.parse(values[values.indexOf('--args') + 1])
   writeFileSync(process.env.DAKAR_FAKE_PREPARED, JSON.stringify(input.prepared))
   process.stdout.write('started run 20260719-000000-abcdef\\n')
@@ -59,7 +58,7 @@ if (mode === 'run') {
     [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
      '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'],
     { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, DAKAR_FAKE_PREPARED: join(tempRoot, 'prepared.json') } },
+      env: { ...process.env, DAKAR_FAKE_PREPARED: join(tempRoot, 'prepared.json'), DAKAR_TRACE_CAPTURE: traceCapture } },
   )
   assert.equal(result.status, 0, result.stderr)
   const output = JSON.parse(result.stdout)
@@ -67,6 +66,12 @@ if (mode === 'run') {
   assert.equal(output.recorded.ok, true, 'the completed result must be recorded despite the hung follow')
   assert.equal(output.recorded.headCommit, head)
   assert.match(result.stderr, /log follow timed out after 1s; attempting one result fetch/u)
+  const traceLinkLine = result.stderr.split('\n').find((line) => line.includes('"event":"dakar_trace_link"'))
+  const traceLink = JSON.parse(traceLinkLine)
+  const [version, traceId] = readFileSync(traceCapture, 'utf8').trim().split('-')
+  assert.equal(version, '00', 'the ODW subprocess receives W3C trace context')
+  assert.equal(traceId, traceLink.traceId, 'the ODW run ID is linked to the propagated trace')
+  assert.match(traceLink.runId, /^20260719-000000-/u, 'the trace link identifies the launched ODW run')
 })
 test('a failed grace fetch reports the result error in the log envelope', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()

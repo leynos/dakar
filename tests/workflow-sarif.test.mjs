@@ -147,8 +147,10 @@ test('SARIF assembly retains pre-refactor serialised output for representative e
     }],
   }
 
-  assert.equal(semanticDigest(base), 'f00fac48d1821fdd599cd8fb16937480ed8532c4d94a008df567e281d1aef773')
-  assert.equal(semanticDigest(evidence), 'af7a84e143abdbacf05b25459ad480410f268c6b30255788dbbb4394ac76c9bf')
+  assert.equal(semanticDigest(base), 'f00fac48d1821fdd599cd8fb16937480ed8532c4d94a008df567e281d1aef773',
+    'the baseline semantic digest must preserve the pre-refactor SARIF result')
+  assert.equal(semanticDigest(evidence), 'af7a84e143abdbacf05b25459ad480410f268c6b30255788dbbb4394ac76c9bf',
+    'the digest must retain accepted evidence while excluding a concurrent discard')
 })
 
 test('accepted semantic results use accepted severity and ignore a concurrent discard', () => {
@@ -162,17 +164,17 @@ test('accepted semantic results use accepted severity and ignore a concurrent di
     pricingTableVersion: 'v1',
   })
 
-  assert.equal(withoutVerdict.level, 'warning')
+  assert.equal(withoutVerdict.level, 'warning', 'accepted medium severity maps to a SARIF warning')
   assert.deepEqual(withoutVerdict.properties.dakar.disposition, {
     status: 'accepted', reason: '', evidenceChecked: '', acceptedSeverity: 'medium',
   })
-  assert.equal(withoutVerdict.properties.dakar.audit, null)
+  assert.equal(withoutVerdict.properties.dakar.audit, null, 'accepted evidence without a verdict has no audit record')
   assert.equal(withoutVerdict.properties.dakar.candidate.severity, 'high', 'candidate evidence retains its proposed severity')
-  assert.equal(Object.hasOwn(withoutVerdict, 'suppressions'), false)
+  assert.equal(Object.hasOwn(withoutVerdict, 'suppressions'), false, 'accepted evidence creates no suppression')
   assert.deepEqual(withVerdict.properties.dakar.disposition, {
     status: 'severity_downgraded', reason: 'audit reason', evidenceChecked: 'audit evidence', acceptedSeverity: 'medium',
   })
-  assert.equal(Object.hasOwn(withVerdict, 'suppressions'), false)
+  assert.equal(Object.hasOwn(withVerdict, 'suppressions'), false, 'downgraded accepted evidence creates no suppression')
 })
 
 test('discard fields independently override verdict fields with truthy fallbacks', () => {
@@ -181,10 +183,12 @@ test('discard fields independently override verdict fields with truthy fallbacks
   const discard = { candidate, status: 'duplicate', reason: '', evidenceChecked: 'discard evidence' }
   const [result] = assembledSemantic({ candidates: [candidate], discarded: [discard], verdicts: [verdict], pricingTableVersion: 'v1' })
   const disposition = result.properties.dakar.disposition
-  assert.deepEqual(disposition, { status: 'duplicate', reason: 'verdict reason', evidenceChecked: 'discard evidence' })
-  assert.deepEqual(result.suppressions, [{ kind: 'external', status: 'accepted', justification: 'verdict reason' }])
+  assert.deepEqual(disposition, { status: 'duplicate', reason: 'verdict reason', evidenceChecked: 'discard evidence' },
+    'discard fields override matching verdict fields independently')
+  assert.deepEqual(result.suppressions, [{ kind: 'external', status: 'accepted', justification: 'verdict reason' }],
+    'a discarded result retains its audit reason as suppression justification')
   assert.notStrictEqual(result.properties.dakar.audit, verdict, 'audit evidence is shallow-copied')
-  assert.deepEqual(result.properties.dakar.audit, verdict)
+  assert.deepEqual(result.properties.dakar.audit, verdict, 'audit evidence preserves the supplied verdict values')
 
   const [fallback] = assembledSemantic({
     candidates: [candidate],
@@ -193,12 +197,14 @@ test('discard fields independently override verdict fields with truthy fallbacks
   })
   assert.deepEqual(fallback.properties.dakar.disposition, {
     status: 'needs_human', reason: 'verdict reason', evidenceChecked: 'verdict evidence',
-  })
+  }, 'empty discard values fall back to the verdict fields')
   const [defaults] = assembledSemantic({ candidates: [candidate], pricingTableVersion: 'v1' })
-  assert.deepEqual(defaults.properties.dakar.disposition, { status: 'not_selected', reason: '', evidenceChecked: '' })
-  assert.equal(defaults.properties.dakar.audit, null)
-  assert.equal(defaults.properties.dakar.cost, null)
-  assert.deepEqual(defaults.suppressions, [{ kind: 'external', status: 'accepted', justification: '' }])
+  assert.deepEqual(defaults.properties.dakar.disposition, { status: 'not_selected', reason: '', evidenceChecked: '' },
+    'missing verdict and discard evidence receives the not-selected defaults')
+  assert.equal(defaults.properties.dakar.audit, null, 'missing verdict evidence is serialized as null')
+  assert.equal(defaults.properties.dakar.cost, null, 'missing ledger evidence is serialized as null')
+  assert.deepEqual(defaults.suppressions, [{ kind: 'external', status: 'accepted', justification: '' }],
+    'the default not-selected result keeps the external suppression representation')
 })
 
 test('semantic provenance retains defaults and copies present ledger evidence', () => {
@@ -210,15 +216,17 @@ test('semantic provenance retains defaults and copies present ledger evidence', 
   assert.deepEqual(withoutLedger.properties.dakar.provenance, {
     taskId: candidate.taskId, taskKind: candidate.taskKind, model: candidate.sourceModel,
     lane: 'luna-flex', serviceTier: 'flex', reasoningEffort: undefined,
-  })
-  assert.equal(Object.hasOwn(withoutLedger.properties.dakar.provenance, 'reasoningEffort'), true)
-  assert.equal(Object.hasOwn(withoutLedger.properties.dakar, 'clusterId'), true)
-  assert.equal(withoutLedger.properties.dakar.clusterId, undefined)
-  assert.equal(withLedger.properties.dakar.provenance.lane, 'terra-flex')
-  assert.equal(withLedger.properties.dakar.provenance.serviceTier, 'priority')
-  assert.equal(withLedger.properties.dakar.provenance.reasoningEffort, 'high')
+  }, 'provenance is complete even when optional reasoning effort is undefined')
+  assert.equal(Object.hasOwn(withoutLedger.properties.dakar.provenance, 'reasoningEffort'), true,
+    'the provenance schema retains the reasoningEffort key when undefined')
+  assert.equal(Object.hasOwn(withoutLedger.properties.dakar, 'clusterId'), true,
+    'the result schema retains the clusterId key when undefined')
+  assert.equal(withoutLedger.properties.dakar.clusterId, undefined, 'an unclustered candidate has no cluster id')
+  assert.equal(withLedger.properties.dakar.provenance.lane, 'terra-flex', 'ledger lane overrides candidate lane provenance')
+  assert.equal(withLedger.properties.dakar.provenance.serviceTier, 'priority', 'ledger service tier is preserved')
+  assert.equal(withLedger.properties.dakar.provenance.reasoningEffort, 'high', 'ledger reasoning effort is preserved')
   assert.notStrictEqual(withLedger.properties.dakar.cost, ledger, 'ledger evidence is shallow-copied')
-  assert.deepEqual(withLedger.properties.dakar.cost, ledger)
+  assert.deepEqual(withLedger.properties.dakar.cost, ledger, 'the copied cost evidence retains every ledger field')
 })
 
 test('semantic results sort by candidate id stably and do not mutate input', () => {
@@ -229,7 +237,8 @@ test('semantic results sort by candidate id stably and do not mutate input', () 
   const original = structuredClone(input)
   const results = assembledSemantic(input)
 
-  assert.deepEqual(results.map((result) => result.message.text), ['Earlier id', 'First equal id', 'Second equal id'])
+  assert.deepEqual(results.map((result) => result.message.text), ['Earlier id', 'First equal id', 'Second equal id'],
+    'results sort by candidate id while preserving original order for ties')
   assert.deepEqual(input, original, 'SARIF assembly does not mutate candidate input or its order')
 })
 

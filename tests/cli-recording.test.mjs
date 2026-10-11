@@ -4,19 +4,18 @@
  * @module
  */
 
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { repoRoot, cliPath, runCli, spawnCli, setUpCaptureRepo, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
+import { repoRoot, cliPath, runCli, spawnCli, spawnCliSync as spawnSync, setUpCaptureRepo, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
 
-process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
-
-test('CLI records a successful workflow result via appendReview through the trusted state root', () => {
+test('CLI records a successful workflow result via appendReview through the trusted state root', (t) => {
   const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const fakeOdw = join(tempRoot, 'odw.mjs')
   // A successful workflow result no longer records itself; it emits recordInput
   // echoing the prepared snapshot, and the CLI records it, deriving the state
@@ -51,8 +50,9 @@ test('CLI records a successful workflow result via appendReview through the trus
   assert.equal(result.recorded.recoveredBy, undefined)
 })
 
-test('CLI fails closed with a record stage when a successful result lacks recordInput', () => {
+test('CLI fails closed with a record stage when a successful result lacks recordInput', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const stateRoot = join(tempRoot, 'trusted-state')
   const fakeOdw = join(tempRoot, 'odw.mjs')
   // An ok result with no recordInput must never be treated as a complete review;
@@ -80,8 +80,9 @@ process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], r
   assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
 })
 
-test('CLI refuses to record when recordInput contradicts the prepared snapshot', () => {
+test('CLI refuses to record when recordInput contradicts the prepared snapshot', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const stateRoot = join(tempRoot, 'trusted-state')
   const fakeOdw = join(tempRoot, 'odw.mjs')
   // recordInput carries a valid-shaped but different headCommit; the CLI must
@@ -158,8 +159,9 @@ test('CLI refuses malformed, incomplete, and reordered changed-file snapshots', 
   }
 })
 
-test('CLI attaches reported usage before recording so reviews.toml carries the tokens', () => {
+test('CLI attaches reported usage before recording so reviews.toml carries the tokens', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const stateRoot = join(tempRoot, 'trusted-state')
   const fakeOdw = join(tempRoot, 'odw.mjs')
   // The fake writes two usage lines to the CLI-provided DAKAR_USAGE_LOG before
@@ -359,9 +361,11 @@ process.stdout.write(JSON.stringify({ ok: true, dryRun: true, receivedArgv: proc
   assert.equal(argv[timeoutIndex + 1], '3600', 'the default wait timeout exceeds worstCaseReviewSeconds')
 })
 
-test('CLI warns about a missing OPENAI_API_KEY even for an unknown routing policy', () => {
+test('CLI warns about a missing OPENAI_API_KEY even for an unknown routing policy', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
+  t.after(() => rmSync(xdgConfig, { recursive: true, force: true }))
   const fakeOdw = join(tempRoot, 'odw.mjs')
   // An unknown routing policy clamps to deterministic-flex-v1, which still needs
   // the pi Flex key, so the missing-key warning must not be suppressed.
@@ -400,36 +404,10 @@ test('CLI fails closed with a record stage when appendReview rejects the review'
   const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-record-failure-xdg-'))
   t.after(() => rmSync(xdgConfig, { recursive: true, force: true }))
   const fakeOdw = join(tempRoot, 'odw')
-  // recordInput carries an invalid headCommit so appendReview throws; the CLI
+  // recordInput carries a malformed findingsTotal so appendReview throws; the CLI
   // must surface stage: 'record', keep recordInput for manual retry, and exit
   // non-zero without claiming a recorded entry.
-  const fakeResult = {
-    ok: true,
-    verdict: 'pass',
-    reviewBase: 'a'.repeat(40),
-    headCommit: 'b'.repeat(40),
-    commitCount: 1,
-    changedFiles: ['src/example.js'],
-    findings: [],
-    reportMarkdown: '# Dakar review\n\nNo blocking findings were accepted.',
-    metrics: {},
-    recordInput: {
-      reviewId: 'head-bbbb',
-      baseCommit: 'a'.repeat(40),
-      headCommit: 'not-a-real-commit',
-      commitCount: 1,
-      changedFiles: ['src/example.js'],
-      models: ['gpt-5.5/high'],
-      findingsTotal: 0,
-      summary: 'No blocking findings were accepted.',
-      metrics: { taskCount: 2 },
-    },
-  }
-  writeFileSync(
-    fakeOdw,
-    `#!/bin/sh\nprintf 'running fake-run ...\\n%s\\n' '${JSON.stringify(fakeResult).replace(/'/g, "'\"'\"'")}'\n`,
-  )
-  chmodSync(fakeOdw, 0o755)
+  writePreparedEchoOdw(fakeOdw, { recordInputOverride: "{ findingsTotal: 'not-an-integer' }" })
 
   const result = spawnSync(
     process.execPath,
@@ -460,7 +438,8 @@ test('CLI fails closed with a record stage when appendReview rejects the review'
   assert.equal(output.stage, 'record')
   assert.equal(output.recorded.ok, false)
   assert.ok(output.recordInput, 'recordInput is preserved for manual retry')
-  assert.equal(output.recordInput.headCommit, 'not-a-real-commit')
+  assert.match(output.error, /findingsTotal/u, 'the error must come from appendReview field validation')
+  assert.equal(output.recordInput.findingsTotal, 'not-an-integer', 'the rejected record input remains available for diagnosis')
 })
 
 test('CLI leaves reviews.toml untouched and exits non-zero for a deferred result', (t) => {

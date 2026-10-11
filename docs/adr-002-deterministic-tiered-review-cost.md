@@ -25,11 +25,16 @@ enforced; only its default value changes. Invalid `budgetGbp` values or values
 below 0.01 fall back to 0.15; valid 0.05 remains 0.05, and values above 10
 clamp to 10.
 
-Amended (2026-08-13): the implemented route defaults both Flex lanes to high
-reasoning through host-selected pi adapters. The CLI also performs advisory
-CodeGraph warmup before finder dispatch and passes an origin-derived GitHub
-`owner/name` slug to prompts for optional DeepWiki context; neither facility
-changes the deterministic evidence or model-selection boundary.
+Amended (2026-10-11): the accepted defaults and adapter mapping recorded below
+remain as the historical decision. The live `deterministic-flex-v1` route now
+uses high reasoning for both Luna and Terra, with the medium and low Luna
+adapters available as host-selected de-escalation roles. This supersedes the
+original Luna low/Terra medium defaults, the high-reasoning escalation rule,
+and the original three-adapter mapping; the deterministic evidence and budget
+admission boundaries remain unchanged. The CLI also performs advisory,
+review-head-checked CodeGraph warmup and propagates trace context into MCP and
+ODW subprocesses. See `docs/developers-guide.md` and
+`docs/dakar-review-design.md` for the current implementation contract.
 
 ## Date
 
@@ -198,27 +203,6 @@ This mirrors the `df12-build` policy of running host gates before scarce
 reviewer agents and avoiding reviewer spend when cheaper evidence already
 blocks the work.[^1]
 
-### MCP context and repository-identity boundary
-
-MCP context preparation remains host-owned. After trusted range preparation and
-deterministic gates, the CLI's `warmContextIndex()` probes the `mcp` CLI,
-indexes the reviewed checkout and a bounded set of existing Markdown context
-files in CodeGraph, then starts ODW. It runs only when the immutable reviewed
-head is currently checked out cleanly; otherwise it skips with a stderr
-warning. All warmup calls share a 30-second deadline. The operation is
-advisory: an operator may set `DAKAR_SKIP_CONTEXT_WARMUP`, and an unavailable
-CLI or failed indexing call only produces a stderr warning. Direct ODW callers
-do not receive this CLI preflight automatically.
-
-While assembling workflow arguments, the CLI resolves repository identity from
-a GitHub `origin` remote and constructs optional context guidance at its
-host-side adapter boundary. MCP command construction and payload serialization
-remain outside the workflow domain; only the translated `contextGuidance`
-string crosses into the workflow. When no usable GitHub identity is available,
-the guidance marks DeepWiki as unavailable. DeepWiki is supplementary,
-potentially stale repository context and is never a substitute for current-head
-evidence.
-
 ## Luna Flex transactional boundary
 
 Use `gpt-5.6-luna` with `service_tier = "flex"` for non-deterministic work that
@@ -237,10 +221,10 @@ Default transaction limits are configuration, not prompt suggestions:
 {
   "lunaModel": "gpt-5.6-luna",
   "lunaServiceTier": "flex",
-  "lunaReasoningEffort": "high",
+  "lunaReasoningEffort": "low",
   "transactionMaxFiles": 5,
   "transactionMaxInputTokens": 12000,
-  "transactionMaxOutputTokens": 2000,
+  "transactionMaxOutputTokens": 750,
   "maxLunaFlexCalls": 4
 }
 ```
@@ -297,18 +281,17 @@ Default Terra limits are:
 {
   "terraModel": "gpt-5.6-terra",
   "terraServiceTier": "flex",
-  "terraReasoningEffort": "high",
+  "terraReasoningEffort": "medium",
   "terraMaxInputTokens": 48000,
-  "terraMaxOutputTokens": 5000,
+  "terraMaxOutputTokens": 2500,
   "maxTerraFlexCalls": 1,
   "maxTerraFlexCallsLargeReview": 2
 }
 ```
 
-High reasoning is the current default for both registered live Flex lanes.
-`luna-medium` and `luna-low` are host-selected Luna de-escalation roles, not
-agent-requested promotions or fallback choices. Any lane change remains subject
-to the same admission budget and worst-case output estimate.
+High reasoning is an escalation, not the default. It requires unresolved
+high-impact evidence, a recorded escalation reason, and enough remaining budget
+under the worst-case output estimate.
 
 ## Codex CLI adapter contract
 
@@ -329,21 +312,15 @@ to the same admission budget and worst-case output estimate.
 > ExecPlan, milestones M0 and M4, for evidence and the adapter
 > specification.
 
-The ODW configuration defines the live pi adapters, each pinning its lane's
-model and reasoning effort:
+The ODW configuration defines three pi adapters, each pinning its lane's model
+and reasoning effort:
 
-- `pi-luna-flex-high` — `gpt-5.6-luna` at high reasoning, the default finder
+- `pi-luna-flex` — `gpt-5.6-luna` at low reasoning, the default finder
   lane;
 - `pi-luna-flex-medium` — `gpt-5.6-luna` at medium reasoning, the
-  pre-registered finder de-escalation lane; and
-- `pi-luna-flex` — `gpt-5.6-luna` at low reasoning, a pre-registered finder
-  de-escalation lane; and
-- `pi-terra-flex-high` — `gpt-5.6-terra` at high reasoning, the issue-set
+  pre-registered finder escalation lane; and
+- `pi-terra-flex` — `gpt-5.6-terra` at medium reasoning, the issue-set
   audit lane.
-
-`pi-terra-flex` remains in the packaged configuration for legacy/reference
-compatibility; the live `deterministic-flex-v1` route selects
-`pi-terra-flex-high`.
 
 Each adapter runs pi in print mode (`pi -p --no-session`) against the
 Dakar-owned `openai-flex` provider catalogue (`adapters/pi/models.json`), with

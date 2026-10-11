@@ -5,14 +5,12 @@
  */
 
 import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { repoRoot, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
-
-process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
+import { repoRoot, setUpRecordRepo, spawnCliSync as spawnSync, writePreparedEchoOdw } from './cli-test-support.mjs'
 
 test('the shipped CLI bundle forwards prepared workflow arguments and records the result', (t) => {
   const { tempRoot, targetRepo, base, head } = setUpRecordRepo()

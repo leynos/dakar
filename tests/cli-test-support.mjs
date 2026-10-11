@@ -15,7 +15,6 @@ export const repoRoot = resolve(new URL('..', import.meta.url).pathname)
 /** Authored CLI entry point. */
 export const cliPath = join(repoRoot, 'bin', 'dakar-review.mjs')
 const CONTEXT_WARMUP_EVENT_PREFIX = 'dakar-review: warmup '
-process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
 
 /** Parse bounded structured warmup events from the CLI's stderr channel. */
 export function contextWarmupEvents(stderr) {
@@ -29,7 +28,7 @@ export function contextWarmupEvents(stderr) {
 export function runCli(args, options = {}) {
   return execFileSync(process.execPath, [cliPath, ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ...options.env },
+    env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '1', ...options.env },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -42,6 +41,55 @@ export function spawnCli(args, env = {}) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, DAKAR_SKIP_CONTEXT_WARMUP: '1', ...env },
+  })
+}
+
+/** Spawns a fixture process with warmup disabled unless a test opts in. */
+export function spawnCliSync(command, args, options = {}) {
+  const env = { ...process.env, ...options.env }
+  if (options.env?.DAKAR_SKIP_CONTEXT_WARMUP !== '') env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
+  return spawnSync(command, args, { ...options, env })
+}
+
+/** Creates a committed fixture repository and returns its initial commit. */
+export function initFixtureRepo(targetRepo, files) {
+  mkdirSync(targetRepo, { recursive: true })
+  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
+  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
+  for (const [path, contents] of Object.entries(files)) writeFileSync(join(targetRepo, path), contents)
+  execFileSync('git', ['-C', targetRepo, 'add', '.'])
+  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base fixture'])
+  return execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+}
+
+/** Writes an executable fake MCP CLI into a fixture-specific bin directory. */
+export function writeFakeMcp(mcpDir, source) {
+  mkdirSync(mcpDir, { recursive: true })
+  const path = join(mcpDir, 'mcp')
+  writeFileSync(path, source)
+  chmodSync(path, 0o755)
+  return path
+}
+
+/** Writes an executable fake ODW command. */
+export function writeFakeOdw(path, source) {
+  writeFileSync(path, source)
+  chmodSync(path, 0o755)
+  return path
+}
+
+/** Runs a live CLI fixture with its MCP executable and per-process environment. */
+export function runCliWithMcp({ targetRepo, base, mcpDir, mcpLog, fakeOdw, runsRoot, stateRoot, head, env = {} }) {
+  const args = ['--repo-root', targetRepo, '--base', base]
+  if (head) args.push('--head', head)
+  if (stateRoot) args.push('--state-root', stateRoot)
+  args.push('--odw-bin', fakeOdw, '--runs-root', runsRoot)
+  return spawnCli(args, {
+    ...env,
+    DAKAR_SKIP_CONTEXT_WARMUP: '',
+    DAKAR_MCP_LOG: mcpLog,
+    PATH: `${mcpDir}:${process.env.PATH}`,
   })
 }
 

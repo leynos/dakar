@@ -34,10 +34,12 @@ npm run odw:dry-run
 
 The CLI suite groups review, recording, preparation, context-warmup, and
 telemetry cases in `tests/cli.test.mjs`, `tests/cli-recording.test.mjs`,
-`tests/cli-preparation.test.mjs`, `tests/cli-context-warmup.test.mjs`, and
-`tests/cli-telemetry.test.mjs`. Shared CLI subprocess and repository-fixture
-helpers live in `tests/cli-test-support.mjs`; `npm run test:cli` also runs the
-bundle and installer tests.
+`tests/cli-preparation.test.mjs`, `tests/cli-context-warmup.test.mjs`,
+`tests/cli-context-warmup-boundaries.test.mjs`, and
+`tests/cli-telemetry.test.mjs`. The boundary suite uses an injected clock to
+verify the cumulative timeout without wall-clock sleeps. Shared CLI subprocess
+and repository-fixture helpers live in `tests/cli-test-support.mjs`;
+`npm run test:cli` also runs the bundle and installer tests.
 
 The `make lint` gate runs `npm run lint:complexity`, which uses pinned Biome
 1.9.4 to enforce a maximum cognitive complexity of 9 on the authored CLI
@@ -279,10 +281,17 @@ context files: the root `AGENTS.md`, `README.md`, and changed Markdown files.
 It runs only when the immutable reviewed head is currently checked out cleanly;
 otherwise it skips with a warning on stderr. All warmup calls share a 30-second
 deadline. It is advisory: `DAKAR_SKIP_CONTEXT_WARMUP` skips it, an unavailable
-CLI or failed indexing call writes a warning to stderr, and the review
-continues with the prompt's git/direct-inspection fallback. The ODW workflow
-does not own this warmup, so direct ODW invocations do not receive this
-host-side preflight automatically.
+CLI, indexing failure, or deadline exhaustion writes a warning to stderr, and
+the review continues with the prompt's git/direct-inspection fallback. Each
+warmup operation emits a bounded span with trace ID, span ID, parent ID,
+duration, outcome, and fixed failure category. The summary carries the root
+span and bounded failure counts. The CLI passes W3C `TRACEPARENT` context to
+MCP calls and the ODW child process, so downstream calls can correlate when
+they inherit that environment. It links the ODW run ID to the trace on stderr.
+These diagnostics avoid repository paths and MCP payloads and do not change
+final result or review-history schemas. The ODW workflow does not own this
+warmup, so direct ODW invocations do not receive this host-side preflight
+automatically.
 
 The CLI resolves a GitHub `owner/name` from the reviewed checkout's `origin`
 and constructs optional context guidance at its host-side adapter boundary.

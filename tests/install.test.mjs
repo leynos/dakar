@@ -15,10 +15,6 @@ import assert from 'node:assert/strict'
 
 const repoRoot = resolve(new URL('..', import.meta.url).pathname)
 const installPath = join(repoRoot, 'install.sh')
-// Installation tests do not invoke the review CLI, but keep the inherited
-// environment safe if an installed executable delegates to it unexpectedly.
-process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
-
 /** Resolves a real fixture utility before a child process receives a restricted PATH. */
 function resolvePathUtility(command, searchPath = process.env.PATH ?? '') {
   const executable = searchPath.split(delimiter).map((directory) => join(directory || '.', command)).find((candidate) => {

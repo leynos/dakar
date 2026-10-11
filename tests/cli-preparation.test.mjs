@@ -4,16 +4,14 @@
  * @module
  */
 
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { repoRoot, cliPath, runCli, spawnCli, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
-
-process.env.DAKAR_SKIP_CONTEXT_WARMUP = '1'
+import { repoRoot, cliPath, runCli, spawnCli, spawnCliSync as spawnSync, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
 
 test('CLI skips the review without invoking ODW when nothing is unreviewed', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-skip-'))
