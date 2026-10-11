@@ -167,13 +167,13 @@ test('accepted semantic results use accepted severity and ignore a concurrent di
   assert.equal(withoutVerdict.level, 'warning', 'accepted medium severity maps to a SARIF warning')
   assert.deepEqual(withoutVerdict.properties.dakar.disposition, {
     status: 'accepted', reason: '', evidenceChecked: '', acceptedSeverity: 'medium',
-  })
+  }, 'accepted evidence without a verdict retains its accepted disposition and severity')
   assert.equal(withoutVerdict.properties.dakar.audit, null, 'accepted evidence without a verdict has no audit record')
   assert.equal(withoutVerdict.properties.dakar.candidate.severity, 'high', 'candidate evidence retains its proposed severity')
   assert.equal(Object.hasOwn(withoutVerdict, 'suppressions'), false, 'accepted evidence creates no suppression')
   assert.deepEqual(withVerdict.properties.dakar.disposition, {
     status: 'severity_downgraded', reason: 'audit reason', evidenceChecked: 'audit evidence', acceptedSeverity: 'medium',
-  })
+  }, 'accepted evidence keeps the verdict disposition and omits the concurrent discard')
   assert.equal(Object.hasOwn(withVerdict, 'suppressions'), false, 'downgraded accepted evidence creates no suppression')
 })
 
