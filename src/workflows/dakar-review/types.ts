@@ -98,7 +98,10 @@ export interface WorkflowArgs {
   flexMaxBackoffSeconds?: unknown
   /** Raw head ref argument, before falling back to `HEAD` when blank. */
   head?: string
-  /** Raw Luna finder reasoning level; only `medium` overrides the `low` default. */
+  /**
+   * Raw Luna finder reasoning level; accepts `low`, `medium`, and `high`.
+   * Missing or invalid values fall back to `high`.
+   */
   lunaReasoning?: unknown
   /** Raw audit-candidate cap; validated and clamped by `positiveLimit` before use. */
   maxAuditCandidates?: unknown
@@ -120,6 +123,8 @@ export interface WorkflowArgs {
   prepared?: PreparedReview
   /** Raw repository root argument, before falling back to `.` when blank. */
   repoRoot?: string
+  /** Optional host-translated, domain-neutral context guidance for finder prompts. */
+  contextGuidance?: string
   /** Raw live routing policy identifier; constrained to a known value before use. */
   routingPolicy?: unknown
   /** Raw XDG state root argument used to locate review-history state. */

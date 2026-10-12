@@ -25,6 +25,17 @@ enforced; only its default value changes. Invalid `budgetGbp` values or values
 below 0.01 fall back to 0.15; valid 0.05 remains 0.05, and values above 10
 clamp to 10.
 
+Amended (2026-10-11): the accepted defaults and adapter mapping recorded below
+remain as the historical decision. The live `deterministic-flex-v1` route now
+uses high reasoning for both Luna and Terra, with the medium and low Luna
+adapters available as host-selected de-escalation roles. This supersedes the
+original Luna low/Terra medium defaults, the high-reasoning escalation rule,
+and the original three-adapter mapping; the deterministic evidence and budget
+admission boundaries remain unchanged. The CLI also performs advisory,
+review-head-checked CodeGraph warmup and propagates trace context into MCP and
+ODW subprocesses. See `docs/developers-guide.md` and
+`docs/dakar-review-design.md` for the current implementation contract.
+
 ## Date
 
 2026-07-18.

@@ -1,182 +1,17 @@
 /**
- * @file Verify the installable Dakar review CLI contract.
+ * Verifies CLI parsing, configuration, and trusted instructions.
  *
- * The tests cover argument help, dry-run JSON output, telemetry channel
- * separation, configuration resolution, review-history recovery, and local Bun
- * installation behaviour.
+ * @module
  */
 
-import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { once } from 'node:events'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname)
-const cliPath = join(repoRoot, 'bin', 'dakar-review.mjs')
-const installPath = join(repoRoot, 'install.sh')
-
-/** Copies the checkout's installation inputs without its dependencies. */
-function makeCleanInstallFixture(t) {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), 'dakar-install-fixture-'))
-  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }))
-  const fixture = join(fixtureRoot, 'dakar')
-  const excluded = new Set([join(repoRoot, '.git'), join(repoRoot, 'node_modules')])
-  cpSync(repoRoot, fixture, {
-    recursive: true,
-    filter: (source) => !excluded.has(source),
-  })
-  return fixture
-}
-
-/** Waits for a test fixture signal without depending on process scheduling. */
-async function waitFor(condition, description) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (condition()) {
-      return
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  assert.fail(`timed out waiting for ${description}`)
-}
-
-/** Waits for a test fixture path without depending on process scheduling. */
-async function waitForPath(path, description) {
-  await waitFor(() => existsSync(path), description)
-}
-
-/** Returns the eventual exit status of a spawned installation process. */
-async function waitForExit(child) {
-  const [code, signal] = await once(child, 'exit')
-  return { code, signal }
-}
-
-/** Starts an installer and retains its stderr for assertions. */
-function startInstaller(installFixture, env, detached = false) {
-  const child = spawn('/bin/sh', [join(installFixture, 'install.sh')], {
-    cwd: installFixture,
-    detached,
-    env,
-  })
-  let stderr = ''
-  child.stderr.setEncoding('utf8')
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk
-  })
-  return { child, exit: waitForExit(child), stderr: () => stderr }
-}
-
-/** Reads the serialized installer-operation trace maintained by the fake tools. */
-function readInstallerEvents(eventLog) {
-  if (!existsSync(eventLog)) {
-    return []
-  }
-  return readFileSync(eventLog, 'utf8').trim().split('\n').filter(Boolean)
-}
-
-/** Creates two clean checkouts and deterministic fake installer dependencies. */
-function makeInstallerHarness(t) {
-  const firstFixture = makeCleanInstallFixture(t)
-  const secondFixture = makeCleanInstallFixture(t)
-  const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
-  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
-  t.after(() => rmSync(toolDir, { recursive: true, force: true }))
-  t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
-  mkdirSync(join(bunInstall, 'install'), { recursive: true })
-
-  const blocked = join(toolDir, 'operation-blocked')
-  const eventLog = join(toolDir, 'events')
-  const lockDir = join(bunInstall, 'install', '.dakar-install.lock')
-  const lockWaiter = join(toolDir, 'lock-waiter')
-  const release = join(toolDir, 'release')
-
-  writeFileSync(
-    join(toolDir, 'mkdir'),
-    `#!/bin/sh
-if [ "$1" = "$DAKAR_TEST_LOCK_DIR" ] && [ -d "$1" ]; then
-  : > "$DAKAR_TEST_LOCK_WAITER"
-fi
-exec /usr/bin/mkdir "$@"
-`,
-  )
-  writeFileSync(
-    join(toolDir, 'npm'),
-    `#!/bin/sh
-printf '%s\\n' "$DAKAR_TEST_INSTALLER:npm" >> "$DAKAR_TEST_EVENTS"
-if [ "$DAKAR_TEST_NPM_EXIT_CODE" != 0 ]; then
-  exit "$DAKAR_TEST_NPM_EXIT_CODE"
-fi
-`,
-  )
-  writeFileSync(
-    join(toolDir, 'bun'),
-    `#!/bin/sh
-case "$1:$2:$3" in
-  pm:cache:) printf '%s\\n' "$BUN_INSTALL/install/cache" ;;
-  remove:-g:dakar) operation=remove ;;
-  install:-g:*) operation=install ;;
-  *) exit 0 ;;
-esac
-
-if [ -n "$operation" ]; then
-  printf '%s\\n' "$DAKAR_TEST_INSTALLER:$operation" >> "$DAKAR_TEST_EVENTS"
-  if [ "$DAKAR_TEST_INSTALLER" = first ] && [ "$DAKAR_TEST_BLOCK_OPERATION" = "$operation" ]; then
-    : > "$DAKAR_TEST_BLOCKED"
-    while [ ! -e "$DAKAR_TEST_RELEASE" ]; do
-      sleep 0.01
-    done
-  fi
-fi
-`,
-  )
-  for (const command of ['node', 'odw']) {
-    writeFileSync(join(toolDir, command), '#!/bin/sh\nexit 0\n')
-  }
-  for (const command of ['bun', 'mkdir', 'node', 'npm', 'odw']) {
-    chmodSync(join(toolDir, command), 0o755)
-  }
-
-  const baseEnv = {
-    ...process.env,
-    BUN_INSTALL: bunInstall,
-    DAKAR_TEST_BLOCKED: blocked,
-    DAKAR_TEST_EVENTS: eventLog,
-    DAKAR_TEST_LOCK_DIR: lockDir,
-    DAKAR_TEST_LOCK_WAITER: lockWaiter,
-    DAKAR_TEST_RELEASE: release,
-    PATH: `${toolDir}:${process.env.PATH}`,
-  }
-
-  return {
-    blocked,
-    events: () => readInstallerEvents(eventLog),
-    firstFixture,
-    lockDir,
-    lockWaiter,
-    release,
-    secondFixture,
-    env(installer, overrides = {}) {
-      return {
-        ...baseEnv,
-        DAKAR_TEST_BLOCK_OPERATION: 'none',
-        DAKAR_TEST_INSTALLER: installer,
-        DAKAR_TEST_NPM_EXIT_CODE: '0',
-        ...overrides,
-      }
-    },
-  }
-}
-
-function runCli(args, options = {}) {
-  return execFileSync(process.execPath, [cliPath, ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ...options.env },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-}
+import { repoRoot, cliPath, runCli, spawnCli, spawnCliSync as spawnSync, loadCliArgumentParser, setUpCaptureRepo, setUpAgentInstructionRepo } from './cli-test-support.mjs'
 
 test('CLI help documents review invocation', () => {
   const output = runCli(['--help'])
@@ -185,6 +20,9 @@ test('CLI help documents review invocation', () => {
   assert.match(output, /--repo-root <path>/u)
   assert.match(output, /--format <json\|markdown>/u)
   assert.match(output, /--telemetry/u)
+  assert.match(output, /--transaction-max-output-tokens <n> Finder output-token estimate \(default: 2000\)/u, 'help must state the default finder output estimate')
+  assert.match(output, /--terra-max-output-tokens <n>\s+Audit output-token estimate \(default: 5000\)/u, 'help must state the default audit output estimate')
+  assert.match(output, /--luna-reasoning <low\|medium\|high> Luna finder reasoning effort \(default: high\)/u, 'help must state the high Luna reasoning default')
 })
 
 // The review-tuning flags forward directly to the WorkflowArgs keys resolved by
@@ -224,122 +62,10 @@ const REVIEW_TUNING_FLAGS = [
   { flag: '--per-call-timeout', key: 'perCallTimeoutSeconds', value: '600', expected: 600, numeric: true },
 ]
 
-// Builds a committed repository plus a fake ODW binary that echoes the workflow
-// `--args` object as `receivedArgs`, so tests can inspect the CLI passthrough.
-function setUpArgsCaptureRepo() {
-  const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-tuning-repo-'))
-  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
-  const fakeOdw = join(targetRepo, 'capture-odw.mjs')
-  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
-  writeFileSync(fakeOdw, `#!/usr/bin/env node
-const values = process.argv.slice(2)
-const input = JSON.parse(values[values.indexOf('--args') + 1])
-process.stdout.write(JSON.stringify({ ok: true, receivedArgs: input }))
-`)
-  chmodSync(fakeOdw, 0o755)
-  return { targetRepo, runsRoot, xdgConfig, fakeOdw }
-}
-
-// Builds a committed repository plus a fake ODW binary that echoes the `--config`
-// path it was handed and that file's parsed contents, so tests can prove the CLI
-// hands ODW a derived config carrying the per-call timeout rather than the
-// packaged path.
-function setUpConfigCaptureRepo() {
-  const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-config-repo-'))
-  const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
-  const fakeOdw = join(targetRepo, 'capture-config-odw.mjs')
-  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
-  writeFileSync(fakeOdw, `#!/usr/bin/env node
-import { readFileSync } from 'node:fs'
-const values = process.argv.slice(2)
-const configPath = values[values.indexOf('--config') + 1]
-const config = JSON.parse(readFileSync(configPath, 'utf8'))
-process.stdout.write(JSON.stringify({ ok: true, configPath, config }))
-`)
-  chmodSync(fakeOdw, 0o755)
-  return { targetRepo, runsRoot, xdgConfig, fakeOdw }
-}
-
-// Builds a committed repository with a base commit and a distinct head commit so
-// the host-side prepare step yields a non-skip review range whose headCommit,
-// reviewBase, commitCount, and changedFiles a faithful fake ODW can echo back.
-function setUpRecordRepo() {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-record-'))
-  const targetRepo = join(tempRoot, 'repo')
-  mkdirSync(targetRepo, { recursive: true })
-  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
-  writeFileSync(join(targetRepo, 'a.txt'), 'a\n')
-  execFileSync('git', ['-C', targetRepo, 'add', 'a.txt'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'base'])
-  const base = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
-  writeFileSync(join(targetRepo, 'b.txt'), 'b\n')
-  execFileSync('git', ['-C', targetRepo, 'add', 'b.txt'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'head'])
-  const head = execFileSync('git', ['-C', targetRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
-  return { tempRoot, targetRepo, base, head }
-}
-
-// A faithful fake ODW that echoes the prepared snapshot into both the result and
-// recordInput, as the real workflow does. `recordInputOverride` is spread onto
-// recordInput last (so a test can tamper with a single field), and `bodyPrefix`
-// is inlined before the result is emitted (so a fake can append DAKAR_USAGE_LOG
-// lines first).
-function writePreparedEchoOdw(path, { recordInputOverride = '{}', bodyPrefix = '' } = {}) {
-  writeFileSync(
-    path,
-    `#!/usr/bin/env node
-import { appendFileSync } from 'node:fs'
-const values = process.argv.slice(2)
-const input = JSON.parse(values[values.indexOf('--args') + 1])
-const prepared = input.prepared
-${bodyPrefix}
-const result = {
-  ok: true,
-  verdict: 'pass',
-  reviewBase: prepared.reviewBase,
-  headCommit: prepared.headCommit,
-  commitCount: prepared.commitCount,
-  changedFiles: prepared.changedFiles,
-  findings: [],
-  sarif: {
-    version: '2.1.0',
-    runs: [{ properties: { dakar: { pricingTableVersion: '2026-07-18' } } }],
-  },
-  reportMarkdown: '# Dakar review\\n\\nNo blocking findings were accepted.',
-  metrics: { taskCount: 2 },
-  recordInput: {
-    reviewId: 'head-' + prepared.headCommit,
-    baseCommit: prepared.reviewBase,
-    headCommit: prepared.headCommit,
-    commitCount: prepared.commitCount,
-    changedFiles: prepared.changedFiles,
-    models: ['gpt-5.5/high'],
-    findingsTotal: 0,
-    summary: 'No blocking findings were accepted.',
-    metrics: { taskCount: 2 },
-    ...${recordInputOverride},
-  },
-}
-process.stdout.write(JSON.stringify(result))
-`,
-  )
-  chmodSync(path, 0o755)
-}
-
 test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout', () => {
-  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpConfigCaptureRepo()
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('config')
   const packagedConfig = join(repoRoot, 'odw.config.json')
-  const piAdapters = ['pi-luna-flex', 'pi-luna-flex-medium', 'pi-terra-flex']
+  const piAdapters = ['pi-luna-flex', 'pi-luna-flex-medium', 'pi-luna-flex-high', 'pi-terra-flex', 'pi-terra-flex-high']
   const runOnce = (extraArgs) =>
     JSON.parse(
       runCli(
@@ -381,7 +107,7 @@ test('CLI passes a derived ODW config that stamps the pi Flex per-call timeout',
 
 for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
   test(`CLI forwards ${flag} to the ${key} workflow argument`, () => {
-    const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpArgsCaptureRepo()
+    const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('args')
     const output = runCli(
       [
         '--dry-run',
@@ -405,8 +131,71 @@ for (const { flag, key, value, expected } of REVIEW_TUNING_FLAGS) {
   })
 }
 
+test('CLI translates GitHub origin context and reports DeepWiki unavailable without a slug', () => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('args')
+  const args = [
+    '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw,
+  ]
+
+  const withoutOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
+  assert.equal(Object.hasOwn(withoutOrigin.receivedArgs, 'repoSlug'), false, 'GitHub identity must not cross into workflow arguments')
+  assert.match(withoutOrigin.receivedArgs.contextGuidance, /DeepWiki: unavailable for this repository/u, 'guidance must explain missing DeepWiki identity')
+
+  execFileSync('git', ['-C', targetRepo, 'remote', 'add', 'origin', 'git@github.com:owner/repository.git'])
+  const withOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
+  assert.equal(Object.hasOwn(withOrigin.receivedArgs, 'repoSlug'), false, 'the workflow contract must stay vendor-neutral')
+  assert.match(withOrigin.receivedArgs.contextGuidance, /owner\/repository/u, 'host-rendered guidance must use the resolved repository identity')
+  assert.match(withOrigin.receivedArgs.contextGuidance, /mcp deepwiki ask_question/u, 'a GitHub origin enables repository-scoped DeepWiki guidance')
+  execFileSync('git', ['-C', targetRepo, 'remote', 'set-url', 'origin', 'https://github.com/owner/repository.git'])
+  const withHttpsOrigin = JSON.parse(runCli(args, { env: { XDG_CONFIG_HOME: xdgConfig } }))
+  assert.equal(withHttpsOrigin.receivedArgs.contextGuidance, withOrigin.receivedArgs.contextGuidance, 'HTTPS and SSH origins must render identical repository context')
+})
+
+test('CLI warns when Git cannot resolve an existing origin URL', () => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('args')
+  const wrapperDir = mkdtempSync(join(tmpdir(), 'dakar-git-wrapper-'))
+  const fakeGit = join(wrapperDir, 'git')
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+  execFileSync('git', ['-C', targetRepo, 'remote', 'add', 'origin', 'git@github.com:owner/repository.git'])
+  writeFileSync(
+    fakeGit,
+    `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
+const args = process.argv.slice(2)
+  if (args[0] === '-C' && args[1] === ${JSON.stringify(targetRepo)} && args[2] === 'config' && args[3] === '--get' && args[4] === 'remote.origin.url') {
+  process.stderr.write('simulated origin URL lookup failure\\n')
+  process.exitCode = 128
+} else {
+  const result = spawnSync(${JSON.stringify(realGit)}, args, { encoding: 'utf8' })
+  process.stdout.write(result.stdout || '')
+  process.stderr.write(result.stderr || '')
+  process.exitCode = result.status ?? 1
+}
+`,
+  )
+  chmodSync(fakeGit, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig, PATH: `${wrapperDir}:${process.env.PATH}` },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  const output = JSON.parse(result.stdout)
+  assert.equal(Object.hasOwn(output.receivedArgs, 'repoSlug'), false, 'a failed origin lookup must not pass GitHub identity to the workflow')
+  assert.match(output.receivedArgs.contextGuidance, /DeepWiki: unavailable for this repository/u, 'failed identity lookup must use unavailable DeepWiki guidance')
+  assert.match(result.stderr, /Git failed while reading the origin URL; DeepWiki context is unavailable/u,
+    'a failed origin lookup must emit the existing DeepWiki-unavailable diagnostic')
+})
+
 test('CLI passes normalized policy rather than YAML-only prompt context', () => {
-  const { targetRepo, runsRoot, fakeOdw } = setUpArgsCaptureRepo()
+  const { targetRepo, runsRoot, fakeOdw } = setUpCaptureRepo('args')
   const config = join(targetRepo, 'policy.yaml')
   writeFileSync(config, `
 language: en-GB
@@ -477,6 +266,66 @@ test('CLI rejects a non-numeric value for a numeric review-tuning flag', () => {
   assert.equal(result.status, 1)
   assert.equal(error.stage, 'cli')
   assert.match(error.error, /--budget-gbp must be a number/u)
+})
+
+test('CLI parser preserves empty, inline, repeated, and negative option values', (t) => {
+  const { targetRepo, runsRoot, xdgConfig, fakeOdw } = setUpCaptureRepo('args')
+  t.after(() => {
+    rmSync(targetRepo, { recursive: true, force: true })
+    rmSync(runsRoot, { recursive: true, force: true })
+    rmSync(xdgConfig, { recursive: true, force: true })
+  })
+  const baseArgs = ['--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw]
+  const parsed = JSON.parse(runCli([
+    '--dry-run', ...baseArgs,
+    '--budget-gbp', '-1.25',
+    '--routing-policy', 'first-value',
+    '--routing-policy=retained=after=the-first-equals',
+    '--luna-reasoning=',
+    '--max-tasks', '7',
+  ], { env: { XDG_CONFIG_HOME: xdgConfig } })).receivedArgs
+
+  assert.deepEqual(loadCliArgumentParser()([]), {}, 'empty parser input yields a plain empty object')
+  assert.equal(parsed.dryRun, true, 'an inline empty string does not consume the following option token')
+  assert.equal(parsed.budgetGbp, -1.25, 'negative finite numeric values remain valid')
+  assert.equal(parsed.routingPolicy, 'retained=after=the-first-equals', 'inline values preserve text after the first equals')
+  assert.equal(parsed.lunaReasoning, '', 'an empty inline string remains a present value')
+  assert.equal(parsed.maxTasks, 7, 'separate option values are consumed and converted')
+
+  const emptyNumber = JSON.parse(runCli([
+    '--dry-run', ...baseArgs, '--budget-gbp=', '--max-tasks=3',
+  ], { env: { XDG_CONFIG_HOME: xdgConfig } })).receivedArgs
+  assert.equal(emptyNumber.budgetGbp, 0, 'Number("") behaviour is preserved for an empty numeric value')
+  assert.equal(emptyNumber.maxTasks, 3, 'inline values leave subsequent option tokens unconsumed')
+})
+
+test('CLI parser reports structured errors with existing precedence', async (t) => {
+  const cases = [
+    { name: 'empty option-like argument is positional', args: ['unexpected'], error: 'unexpected positional argument: unexpected' },
+    { name: 'unknown option', args: ['--not-real'], error: 'unknown option: --not-real' },
+    { name: 'unknown option is rejected before its value', args: ['--not-real=--value'], error: 'unknown option: --not-real' },
+    { name: 'missing trailing value', args: ['--luna-reasoning'], error: '--luna-reasoning requires a value' },
+    { name: 'next option is not consumed as a value', args: ['--budget-gbp', '--help'], error: '--budget-gbp requires a value' },
+    { name: 'next unknown option is not parsed before missing-value rejection', args: ['--budget-gbp', '--not-real'], error: '--budget-gbp requires a value' },
+    { name: 'inline option-like value', args: ['--luna-reasoning=--help'], error: '--luna-reasoning requires a value' },
+    { name: 'boolean inline value', args: ['--dry-run=true'], error: '--dry-run does not take a value' },
+    { name: 'empty boolean inline value', args: ['--dry-run='], error: '--dry-run does not take a value' },
+    { name: 'non-finite number', args: ['--budget-gbp', 'Infinity'], error: '--budget-gbp must be a number' },
+    { name: 'arguments after help are still validated', args: ['--help', '--not-real'], error: 'unknown option: --not-real' },
+    { name: 'arguments after version are still validated', args: ['--version', '--not-real'], error: 'unknown option: --not-real' },
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      const result = spawnCli(scenario.args)
+      const error = JSON.parse(result.stderr)
+
+      assert.equal(result.status, 1, 'invalid parser input exits with status 1')
+      assert.equal(result.stdout, '', 'parser errors reserve stdout for no result')
+      assert.equal(error.stage, 'cli', 'parser failures use the structured CLI error envelope')
+      assert.equal(error.error, scenario.error, 'the exact parser diagnostic and error order are preserved')
+    })
+  }
 })
 
 test('CLI help documents the review-tuning flags', () => {
@@ -644,6 +493,84 @@ process.stdout.write(JSON.stringify({ ok: true, agentInstructions: input.agentIn
   assert.doesNotMatch(result.agentInstructions.content, /Mutable marker/u)
 })
 
+test('CLI omits agentInstructions when the trusted commit has no AGENTS.md', (t) => {
+  const { targetRepo, fakeOdw, runsRoot } = setUpAgentInstructionRepo(t)
+  const result = JSON.parse(runCli([
+    '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+    '--timeout', '20', '--odw-bin', fakeOdw,
+  ]))
+
+  assert.equal(result.ok, true)
+  assert.equal('agentInstructions' in result.receivedArgs, false, 'absent trusted instructions are omitted from workflow args')
+})
+
+test('CLI applies the trusted AGENTS.md truncation limit exactly', (t) => {
+  for (const [label, length, truncated] of [
+    ['at the limit', 24_000, false],
+    ['above the limit', 24_001, true],
+  ]) {
+    const { targetRepo, fakeOdw, runsRoot } = setUpAgentInstructionRepo(t, 'x'.repeat(length))
+    const result = JSON.parse(runCli([
+      '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+      '--timeout', '20', '--odw-bin', fakeOdw,
+    ]))
+
+    assert.equal(result.ok, true, `the CLI completes with AGENTS.md content ${label}`)
+    assert.equal(result.receivedArgs.agentInstructions.content.length, 24_000, `content ${label} has the trusted limit`)
+    assert.equal(result.receivedArgs.agentInstructions.truncated, truncated, `the truncation flag is correct for content ${label}`)
+  }
+})
+
+test('CLI preserves trusted-instruction Git failure diagnostics', async (t) => {
+  for (const operation of ['ls-tree', 'show']) {
+    for (const emptyStderr of [false, true]) {
+      await t.test(`${operation} failure${emptyStderr ? ' with empty stderr' : ''}`, (subtest) => {
+        const { targetRepo, fakeOdw, runsRoot, tempRoot } = setUpAgentInstructionRepo(subtest, 'trusted instructions\n')
+        const toolDir = join(tempRoot, 'git-bin')
+        mkdirSync(toolDir)
+        writeFileSync(join(toolDir, 'git'), `#!/bin/sh
+operation=
+for arg in "$@"; do
+  case "$arg" in ls-tree|show) operation="$arg" ;; esac
+done
+if [ "$operation" = "$DAKAR_TEST_FAIL_GIT_OPERATION" ]; then
+  if [ "$DAKAR_TEST_EMPTY_GIT_STDERR" != 1 ]; then
+    printf 'injected %s failure\\n' "$operation" >&2
+  fi
+  exit 17
+fi
+exec "$DAKAR_TEST_REAL_GIT" "$@"
+`)
+        chmodSync(join(toolDir, 'git'), 0o755)
+        const result = spawnSync(process.execPath, [
+          cliPath, '--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot,
+          '--timeout', '20', '--odw-bin', fakeOdw,
+        ], {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            DAKAR_SKIP_CONTEXT_WARMUP: '1',
+            DAKAR_TEST_FAIL_GIT_OPERATION: operation,
+            DAKAR_TEST_EMPTY_GIT_STDERR: emptyStderr ? '1' : '0',
+            DAKAR_TEST_REAL_GIT: '/usr/bin/git',
+            PATH: `${toolDir}:${process.env.PATH}`,
+          },
+        })
+        const error = JSON.parse(result.stderr).error
+        const command = operation === 'ls-tree' ? 'inspect' : 'read'
+        const fallback = operation === 'ls-tree' ? 'git ls-tree failed' : 'git show failed'
+
+        assert.equal(result.status, 1, 'a trusted instruction Git failure exits non-zero')
+        assert.equal(result.stdout, '', 'a trusted instruction Git failure keeps stdout empty')
+        assert.match(error, new RegExp(`^cannot ${command} [0-9a-f]{40}:AGENTS\\.md:`, 'u'), 'the existing operation diagnostic prefix is retained')
+        assert.ok(error.endsWith(emptyStderr ? fallback : `injected ${operation} failure`), 'stderr or the command fallback is preserved')
+      })
+    }
+  }
+})
+
 test('CLI sets PI_CODING_AGENT_DIR and PI_SKIP_VERSION_CHECK on the ODW spawn', () => {
   const targetRepo = mkdtempSync(join(tmpdir(), 'dakar-pi-env-repo-'))
   const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-runs-'))
@@ -763,941 +690,4 @@ test('CLI surfaces git failures while loading trusted instructions', () => {
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
   assert.match(JSON.parse(result.stderr).error, /not a git repository/u)
-})
-
-test('CLI records a successful workflow result via appendReview through the trusted state root', () => {
-  const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  // A successful workflow result no longer records itself; it emits recordInput
-  // echoing the prepared snapshot, and the CLI records it, deriving the state
-  // path from the trusted repo-root/state-root, never a workflow-supplied path.
-  writePreparedEchoOdw(fakeOdw)
-
-  const output = runCli([
-    '--repo-root',
-    targetRepo,
-    '--base',
-    base,
-    '--state-root',
-    join(tempRoot, 'trusted-state'),
-    '--odw-bin',
-    fakeOdw,
-    '--runs-root',
-    join(tempRoot, 'runs'),
-  ])
-  const result = JSON.parse(output)
-  const stateText = readFileSync(result.stateFile, 'utf8')
-
-  assert.equal(result.ok, true)
-  assert.equal(result.recorded.ok, true)
-  assert.equal(result.recorded.recordedBy, 'dakar-review')
-  // The CLI derives the path from the trusted roots.
-  assert.ok(result.stateFile.startsWith(`${join(tempRoot, 'trusted-state')}/`))
-  // The recorded head is the prepared head, validated against the snapshot.
-  assert.ok(stateText.includes(`head_commit = "${head}"`))
-  assert.match(stateText, /taskCount/u)
-  // The retired recovery marker must not reappear on the primary path.
-  assert.doesNotMatch(stateText, /recordRecoveredByCli/u)
-  assert.equal(result.recorded.recoveredBy, undefined)
-})
-
-test('CLI fails closed with a record stage when a successful result lacks recordInput', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const stateRoot = join(tempRoot, 'trusted-state')
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  // An ok result with no recordInput must never be treated as a complete review;
-  // the CLI refuses to record and exits non-zero.
-  writeFileSync(
-    fakeOdw,
-    `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], reportMarkdown: 'x', metrics: {} }))
-`,
-  )
-  chmodSync(fakeOdw, 0o755)
-
-  const result = spawnSync(
-    process.execPath,
-    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-  const output = JSON.parse(result.stdout)
-
-  assert.equal(result.status, 1)
-  assert.equal(output.ok, false)
-  assert.equal(output.stage, 'record')
-  assert.match(output.error, /lacked recordInput/u)
-  assert.equal(output.recorded.ok, false)
-  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
-})
-
-test('CLI refuses to record when recordInput contradicts the prepared snapshot', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const stateRoot = join(tempRoot, 'trusted-state')
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  // recordInput carries a valid-shaped but different headCommit; the CLI must
-  // refuse to record it, keep recordInput for retry, and append nothing.
-  writePreparedEchoOdw(fakeOdw, { recordInputOverride: `{ headCommit: 'c'.repeat(40) }` })
-
-  const result = spawnSync(
-    process.execPath,
-    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-  const output = JSON.parse(result.stdout)
-
-  assert.equal(result.status, 1)
-  assert.equal(output.ok, false)
-  assert.equal(output.stage, 'record')
-  assert.match(output.error, /headCommit/u)
-  assert.ok(output.recordInput, 'recordInput is preserved for manual retry')
-  assert.equal(output.recordInput.headCommit, 'c'.repeat(40))
-  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
-})
-
-test('CLI attaches reported usage before recording so reviews.toml carries the tokens', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const stateRoot = join(tempRoot, 'trusted-state')
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  // The fake writes two usage lines to the CLI-provided DAKAR_USAGE_LOG before
-  // emitting its result; the CLI must attach them before recording so the tokens
-  // land in the persisted metrics_json, not just the printed result.
-  writePreparedEchoOdw(fakeOdw, {
-    bodyPrefix: `const usageLog = process.env.DAKAR_USAGE_LOG
-appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-luna', usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 12000 } }) + '\\n')
-appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-terra', usage: { input: 40000, output: 2000, cacheRead: 8000, cacheWrite: 0 } }) + '\\n')`,
-  })
-
-  const output = JSON.parse(
-    runCli(['--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')]),
-  )
-
-  assert.equal(output.ok, true)
-  assert.equal(Array.isArray(output.metrics.reportedUsage), true)
-  assert.equal(output.metrics.reportedUsage.length, 2)
-  assert.deepEqual(output.metrics.reportedTokens, { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 })
-  assert.equal(output.sarif.runs[0].properties.dakar.reportedUsage.length, 2)
-  assert.deepEqual(
-    output.sarif.runs[0].properties.dakar.reportedTokens,
-    { input: 41000, output: 2500, cacheRead: 8000, cacheWrite: 12000 },
-  )
-  const stateText = readFileSync(output.stateFile, 'utf8')
-  assert.match(stateText, /reportedTokens/u)
-  assert.match(stateText, /41000/u)
-})
-
-test('CLI defaults the ODW wait timeout to 3600 seconds when --timeout is omitted', () => {
-  const { targetRepo, runsRoot, xdgConfig } = setUpArgsCaptureRepo()
-  const fakeOdw = join(targetRepo, 'argv-odw.mjs')
-  writeFileSync(
-    fakeOdw,
-    `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ ok: true, dryRun: true, receivedArgv: process.argv.slice(2) }))
-`,
-  )
-  chmodSync(fakeOdw, 0o755)
-
-  const result = JSON.parse(
-    runCli(['--dry-run', '--repo-root', targetRepo, '--base', 'HEAD', '--runs-root', runsRoot, '--odw-bin', fakeOdw], {
-      env: { XDG_CONFIG_HOME: xdgConfig },
-    }),
-  )
-  const argv = result.receivedArgv
-  const timeoutIndex = argv.indexOf('--timeout')
-
-  assert.notEqual(timeoutIndex, -1, 'the ODW run carries a --timeout flag')
-  assert.equal(argv[timeoutIndex + 1], '3600', 'the default wait timeout exceeds worstCaseReviewSeconds')
-})
-
-test('CLI warns about a missing OPENAI_API_KEY even for an unknown routing policy', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  // An unknown routing policy clamps to deterministic-flex-v1, which still needs
-  // the pi Flex key, so the missing-key warning must not be suppressed.
-  writePreparedEchoOdw(fakeOdw)
-
-  const result = spawnSync(
-    process.execPath,
-    [
-      cliPath,
-      '--repo-root', targetRepo,
-      '--base', base,
-      '--state-root', join(tempRoot, 'state'),
-      '--odw-bin', fakeOdw,
-      '--runs-root', join(tempRoot, 'runs'),
-      '--routing-policy', 'bogus',
-    ],
-    { cwd: repoRoot, encoding: 'utf8', env: { ...process.env, XDG_CONFIG_HOME: xdgConfig, OPENAI_API_KEY: '' }, stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-
-  assert.match(result.stderr, /OPENAI_API_KEY is not set/u)
-})
-
-test('CLI fails closed with a record stage when appendReview rejects the review', (t) => {
-  // Scenario: a review completes, but the record input it carries is invalid.
-  // Invariant: the CLI fails closed. It reports stage 'record', keeps
-  // recordInput so the operator can retry by hand, claims no recorded entry,
-  // and exits non-zero.
-  //
-  // The review runs against a purpose-built fixture repository with a commit
-  // ahead of an explicit base, never the checkout under test. Pointed at its
-  // own checkout the CLI finds no unreviewed commits, short-circuits with
-  // `skipped: true` before the fake ODW is ever spawned, and exits 0, so the
-  // case silently stopped testing anything it claims to.
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-record-failure-xdg-'))
-  t.after(() => rmSync(xdgConfig, { recursive: true, force: true }))
-  const fakeOdw = join(tempRoot, 'odw')
-  // recordInput carries an invalid headCommit so appendReview throws; the CLI
-  // must surface stage: 'record', keep recordInput for manual retry, and exit
-  // non-zero without claiming a recorded entry.
-  const fakeResult = {
-    ok: true,
-    verdict: 'pass',
-    reviewBase: 'a'.repeat(40),
-    headCommit: 'b'.repeat(40),
-    commitCount: 1,
-    changedFiles: ['src/example.js'],
-    findings: [],
-    reportMarkdown: '# Dakar review\n\nNo blocking findings were accepted.',
-    metrics: {},
-    recordInput: {
-      reviewId: 'head-bbbb',
-      baseCommit: 'a'.repeat(40),
-      headCommit: 'not-a-real-commit',
-      commitCount: 1,
-      changedFiles: ['src/example.js'],
-      models: ['gpt-5.5/high'],
-      findingsTotal: 0,
-      summary: 'No blocking findings were accepted.',
-      metrics: { taskCount: 2 },
-    },
-  }
-  writeFileSync(
-    fakeOdw,
-    `#!/bin/sh\nprintf 'running fake-run ...\\n%s\\n' '${JSON.stringify(fakeResult).replace(/'/g, "'\"'\"'")}'\n`,
-  )
-  chmodSync(fakeOdw, 0o755)
-
-  const result = spawnSync(
-    process.execPath,
-    [
-      cliPath,
-      '--repo-root',
-      targetRepo,
-      '--base',
-      base,
-      '--state-root',
-      join(tempRoot, 'trusted-state'),
-      '--odw-bin',
-      fakeOdw,
-      '--runs-root',
-      join(tempRoot, 'runs'),
-    ],
-    {
-      cwd: targetRepo,
-      encoding: 'utf8',
-      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  )
-  const output = JSON.parse(result.stdout)
-
-  assert.equal(result.status, 1)
-  assert.equal(output.ok, false)
-  assert.equal(output.stage, 'record')
-  assert.equal(output.recorded.ok, false)
-  assert.ok(output.recordInput, 'recordInput is preserved for manual retry')
-  assert.equal(output.recordInput.headCommit, 'not-a-real-commit')
-})
-
-test('CLI leaves reviews.toml untouched and exits non-zero for a deferred result', (t) => {
-  // Scenario: the workflow defers instead of producing a verdict.
-  // Invariant: nothing is recorded. The deferred JSON goes to stdout, no
-  // reviews.toml appears under the trusted state root, and the exit status is
-  // non-zero, so the head stays unreviewed and a later run picks it up again.
-  //
-  // As above, the review runs against a purpose-built fixture repository so the
-  // case cannot depend on whether the checkout under test happens to have
-  // commits ahead of its review base.
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-record-deferred-xdg-'))
-  t.after(() => rmSync(xdgConfig, { recursive: true, force: true }))
-  const stateRoot = join(tempRoot, 'trusted-state')
-  const fakeOdw = join(tempRoot, 'odw')
-  // A deferred workflow result carries ok:false, stage:'deferred', and crucially
-  // no recordInput, so the recordReview guard cannot append history. The CLI must
-  // print the deferred JSON on stdout and exit non-zero.
-  const fakeResult = {
-    ok: false,
-    stage: 'deferred',
-    deferred: true,
-    reason: 'flex capacity exhausted for the required audit',
-    attempts: 3,
-    reviewBase: 'a'.repeat(40),
-    headCommit: 'b'.repeat(40),
-    commitCount: 1,
-    changedFiles: ['src/example.js'],
-    metrics: { ledger: [] },
-  }
-  writeFileSync(
-    fakeOdw,
-    `#!/bin/sh\nprintf 'running fake-run ...\\n%s\\n' '${JSON.stringify(fakeResult).replace(/'/g, "'\"'\"'")}'\n`,
-  )
-  chmodSync(fakeOdw, 0o755)
-
-  const result = spawnSync(
-    process.execPath,
-    [
-      cliPath,
-      '--repo-root',
-      targetRepo,
-      '--base',
-      base,
-      '--state-root',
-      stateRoot,
-      '--odw-bin',
-      fakeOdw,
-      '--runs-root',
-      join(tempRoot, 'runs'),
-    ],
-    {
-      cwd: targetRepo,
-      encoding: 'utf8',
-      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  )
-  const output = JSON.parse(result.stdout)
-
-  assert.equal(result.status, 1)
-  assert.equal(output.ok, false)
-  assert.equal(output.stage, 'deferred')
-  assert.equal(output.deferred, true)
-  assert.equal(output.recordInput, undefined)
-  assert.equal(output.recorded, undefined, 'no recording is attempted for a deferred review')
-  // No reviews.toml under the trusted state root: the head stays unrecorded.
-  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
-})
-
-test('CLI skips the review without invoking ODW when nothing is unreviewed', () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-skip-'))
-  const targetRepo = join(tempRoot, 'repo')
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
-  mkdirSync(targetRepo, { recursive: true })
-  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
-  const marker = join(tempRoot, 'odw-invoked')
-  const fakeOdw = join(tempRoot, 'odw')
-  const stateRoot = join(tempRoot, 'state')
-  writeFileSync(fakeOdw, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
-  chmodSync(fakeOdw, 0o755)
-
-  const output = runCli(
-    [
-      '--repo-root', targetRepo,
-      '--base', 'HEAD',
-      '--head', 'HEAD',
-      '--state-root', stateRoot,
-      '--odw-bin', fakeOdw,
-      '--runs-root', join(tempRoot, 'runs'),
-    ],
-    { env: { XDG_CONFIG_HOME: xdgConfig } },
-  )
-  const result = JSON.parse(output)
-
-  assert.equal(result.ok, true)
-  assert.equal(result.skipped, true)
-  assert.match(result.reason, /No unreviewed commits/u)
-  assert.equal(result.resolvedConfig, undefined)
-  assert.equal(typeof result.headCommit, 'string')
-  assert.ok(result.headCommit.length > 0)
-  assert.equal(result.recorded, undefined)
-  assert.equal(existsSync(marker), false)
-  // A skipped review records nothing: no reviews.toml under the trusted state root.
-  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
-})
-
-test('CLI skip result honours --format markdown by emitting the JSON fallback', () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-skip-md-'))
-  const targetRepo = join(tempRoot, 'repo')
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
-  mkdirSync(targetRepo, { recursive: true })
-  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
-  const fakeOdw = join(tempRoot, 'odw')
-  writeFileSync(fakeOdw, `#!/bin/sh\nexit 1\n`)
-  chmodSync(fakeOdw, 0o755)
-
-  // The skip result carries no reportMarkdown, so markdown must fall back to the
-  // JSON serialization printWorkflowOutput emits; the output stays parseable.
-  const output = runCli(
-    [
-      '--repo-root', targetRepo,
-      '--base', 'HEAD',
-      '--head', 'HEAD',
-      '--state-root', join(tempRoot, 'state'),
-      '--odw-bin', fakeOdw,
-      '--runs-root', join(tempRoot, 'runs'),
-      '--format', 'markdown',
-    ],
-    { env: { XDG_CONFIG_HOME: xdgConfig } },
-  )
-  const result = JSON.parse(output)
-
-  assert.equal(result.ok, true)
-  assert.equal(result.skipped, true)
-  assert.match(result.reason, /No unreviewed commits/u)
-})
-
-test('CLI fails with a prepare envelope without invoking ODW when refs are invalid', () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-prepare-fail-'))
-  const targetRepo = join(tempRoot, 'repo')
-  const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
-  mkdirSync(targetRepo, { recursive: true })
-  execFileSync('git', ['-C', targetRepo, 'init', '-b', 'main'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.name', 'Dakar test'])
-  execFileSync('git', ['-C', targetRepo, 'config', 'user.email', 'dakar@example.invalid'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '--allow-empty', '-m', 'initial'])
-  const marker = join(tempRoot, 'odw-invoked')
-  const fakeOdw = join(tempRoot, 'odw')
-  writeFileSync(fakeOdw, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
-  chmodSync(fakeOdw, 0o755)
-
-  const result = spawnSync(
-    process.execPath,
-    [
-      cliPath,
-      '--repo-root', targetRepo,
-      '--base', 'HEAD',
-      '--head', 'definitely-missing-ref',
-      '--state-root', join(tempRoot, 'state'),
-      '--odw-bin', fakeOdw,
-      '--runs-root', join(tempRoot, 'runs'),
-    ],
-    {
-      cwd: repoRoot,
-      env: { ...process.env, XDG_CONFIG_HOME: xdgConfig },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  )
-
-  assert.equal(result.status, 1)
-  assert.equal(result.stdout, '')
-  assert.match(result.stderr, /"stage":\s*"prepare"/u)
-  assert.match(result.stderr, /"ok":\s*false/u)
-  assert.equal(existsSync(marker), false)
-})
-
-test('a blocking deterministic gate returns SARIF without invoking ODW', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const config = join(tempRoot, 'gates.yaml')
-  const marker = join(tempRoot, 'odw-invoked')
-  const fakeOdw = join(tempRoot, 'odw')
-  writeFileSync(config, `
-pre_merge_checks:
-  custom_checks:
-    - mode: error
-      name: Blocking fixture
-      command: node -e "process.stderr.write('repair this'); process.exit(7)"
-`)
-  writeFileSync(fakeOdw, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
-  chmodSync(fakeOdw, 0o755)
-
-  const completed = spawnSync(
-    process.execPath,
-    [
-      cliPath,
-      '--repo-root', targetRepo,
-      '--base', base,
-      '--config', config,
-      '--state-root', join(tempRoot, 'state'),
-      '--odw-bin', fakeOdw,
-      '--runs-root', join(tempRoot, 'runs'),
-    ],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-  const result = JSON.parse(completed.stdout)
-
-  assert.equal(completed.status, 1)
-  assert.equal(existsSync(marker), false)
-  assert.equal(result.stage, 'deterministic-gates')
-  assert.deepEqual(result.metrics.ledger, [])
-  assert.equal(result.metrics.spentUsd, 0)
-  assert.equal(result.metrics.reservedAuditUsd, 0)
-  assert.equal(result.recordInput, undefined)
-  assert.equal(result.sarif.version, '2.1.0')
-  assert.match(result.reportMarkdown, /Blocking fixture/u)
-})
-
-test('a repository configuration absent from the trusted base fails closed', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const marker = join(tempRoot, 'odw-invoked')
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  writeFileSync(join(targetRepo, '.coderabbit.yaml'), `
-pre_merge_checks:
-  custom_checks:
-    - mode: error
-      name: Untrusted head command
-      command: node -e "process.exit(9)"
-`)
-  execFileSync('git', ['-C', targetRepo, 'add', '.coderabbit.yaml'])
-  execFileSync('git', ['-C', targetRepo, 'commit', '-m', 'untrusted config change'])
-  writePreparedEchoOdw(fakeOdw, { bodyPrefix: `appendFileSync('${marker}', 'yes')` })
-
-  const completed = spawnSync(
-    process.execPath,
-    [cliPath,
-      '--repo-root', targetRepo,
-      '--base', base,
-      '--state-root', join(tempRoot, 'state'),
-      '--odw-bin', fakeOdw,
-      '--runs-root', join(tempRoot, 'runs'),
-    ],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-
-  assert.equal(completed.status, 1)
-  assert.equal(completed.stdout, '')
-  assert.match(completed.stderr, /cannot read trusted review configuration/u)
-  assert.match(completed.stderr, /\.coderabbit\.yaml/u)
-  assert.equal(existsSync(marker), false, 'ODW must not run after a trusted-base lookup failure')
-})
-
-test('install script installs a callable CLI from a clean checkout', (t) => {
-  const missingPrerequisite = ['bun', 'node', 'npm', 'odw'].find(
-    (command) => spawnSync(command, ['--version'], { encoding: 'utf8' }).status !== 0,
-  )
-  if (missingPrerequisite) {
-    t.skip(`${missingPrerequisite} is required but is not installed`)
-    return
-  }
-
-  const installFixture = makeCleanInstallFixture(t)
-  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
-  t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
-  execFileSync(join(installFixture, 'install.sh'), {
-    cwd: installFixture,
-    env: { ...process.env, BUN_INSTALL: bunInstall, NODE_ENV: 'production' },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
-  const output = execFileSync(join(bunInstall, 'bin', 'dakar-review'), ['--version'], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
-  const rootPackage = JSON.parse(readFileSync(join(installFixture, 'package.json'), 'utf8'))
-  const installedYamlPackage = JSON.parse(
-    readFileSync(join(installFixture, 'node_modules', 'js-yaml', 'package.json'), 'utf8'),
-  )
-  assert.equal(installedYamlPackage.version, rootPackage.dependencies['js-yaml'])
-  assert.equal(existsSync(join(installFixture, 'node_modules', 'typescript', 'package.json')), true)
-  assert.equal(output.trim(), '0.1.0')
-})
-
-test('install script repairs stale duplicate Bun global entries', (t) => {
-  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8' })
-  if (bunCheck.status !== 0) {
-    t.skip('bun is not installed')
-    return
-  }
-
-  const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
-  t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
-  const installFixture = makeCleanInstallFixture(t)
-  const globalDir = join(bunInstall, 'install', 'global')
-  mkdirSync(globalDir, { recursive: true })
-  writeFileSync(
-    join(globalDir, 'package.json'),
-    '{\n  "dependencies": {\n    "dakar": "/tmp/old",\n    "dakar": "/tmp/older"\n  }\n}\n',
-  )
-  writeFileSync(
-    join(globalDir, 'bun.lock'),
-    '{\n  "packages": {\n    "dakar": ["old"],\n    "dakar": ["older"]\n  }\n}\n',
-  )
-
-  const result = spawnSync(join(installFixture, 'install.sh'), {
-    cwd: installFixture,
-    env: { ...process.env, BUN_INSTALL: bunInstall },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  const combinedOutput = `${result.stdout}\n${result.stderr}`
-
-  assert.equal(result.status, 0, combinedOutput)
-  assert.doesNotMatch(combinedOutput, /Duplicate key|Duplicate package path/u)
-  assert.equal((readFileSync(join(globalDir, 'package.json'), 'utf8').match(/"dakar"\s*:/gu) || []).length, 1)
-  assert.equal(
-    execFileSync(join(bunInstall, 'bin', 'dakar-review'), ['--version'], { encoding: 'utf8' }).trim(),
-    '0.1.0',
-  )
-})
-
-test('install script serializes each Bun global mutation across checkouts', async (t) => {
-  for (const blockedOperation of ['remove', 'install']) {
-    await t.test(`blocks a second installer during Bun ${blockedOperation}`, async (t) => {
-      const harness = makeInstallerHarness(t)
-      const first = startInstaller(
-        harness.firstFixture,
-        harness.env('first', { DAKAR_TEST_BLOCK_OPERATION: blockedOperation }),
-      )
-      let second
-
-      try {
-        await waitForPath(harness.blocked, `the first Bun ${blockedOperation} operation`)
-        assert.equal(existsSync(harness.lockDir), true)
-
-        second = startInstaller(harness.secondFixture, harness.env('second'))
-        await waitForPath(harness.lockWaiter, 'the second installer to wait for the lock')
-        await waitFor(
-          () => second.stderr().includes('operation=global-install lock=waiting'),
-          'the waiting lock diagnostic',
-        )
-        assert.match(second.stderr(), /elapsed=\d+s path=/u)
-        assert.equal(existsSync(harness.lockDir), true)
-        assert.equal(harness.events().some((event) => event.startsWith('second:')), false)
-
-        writeFileSync(harness.release, '')
-        assert.deepEqual(await first.exit, { code: 0, signal: null })
-        assert.deepEqual(await second.exit, { code: 0, signal: null })
-        assert.deepEqual(harness.events(), [
-          'first:npm',
-          'first:remove',
-          'first:install',
-          'second:npm',
-          'second:remove',
-          'second:install',
-        ])
-        assert.equal(existsSync(harness.lockDir), false)
-      } finally {
-        writeFileSync(harness.release, '')
-        await first.exit
-        if (second) {
-          await second.exit
-        }
-      }
-    })
-  }
-})
-
-test('install script releases its lock after a failed dependency restoration', async (t) => {
-  const harness = makeInstallerHarness(t)
-  const installer = startInstaller(
-    harness.firstFixture,
-    harness.env('first', { DAKAR_TEST_NPM_EXIT_CODE: '17' }),
-  )
-
-  assert.notEqual((await installer.exit).code, 0)
-  assert.deepEqual(harness.events(), ['first:npm'])
-  assert.equal(existsSync(harness.lockDir), false)
-})
-
-test('install script releases its own lock after handled signals', async (t) => {
-  for (const signal of ['SIGHUP', 'SIGINT', 'SIGTERM']) {
-    await t.test(signal, async (t) => {
-      const harness = makeInstallerHarness(t)
-      const installer = startInstaller(
-        harness.firstFixture,
-        harness.env('first', { DAKAR_TEST_BLOCK_OPERATION: 'remove' }),
-        true,
-      )
-
-      try {
-        await waitForPath(harness.blocked, `a blocked Bun remove before ${signal}`)
-        assert.equal(existsSync(harness.lockDir), true)
-        process.kill(-installer.child.pid, signal)
-
-        assert.notEqual((await installer.exit).code, 0)
-        assert.deepEqual(harness.events(), ['first:npm', 'first:remove'])
-        assert.equal(existsSync(harness.lockDir), false)
-      } finally {
-        writeFileSync(harness.release, '')
-        await installer.exit
-      }
-    })
-  }
-})
-
-test('cancelling a waiting installer preserves another installer lock', async (t) => {
-  for (const signal of ['SIGHUP', 'SIGINT', 'SIGTERM']) {
-    await t.test(signal, async (t) => {
-      const harness = makeInstallerHarness(t)
-      const holder = startInstaller(
-        harness.firstFixture,
-        harness.env('first', { DAKAR_TEST_BLOCK_OPERATION: 'remove' }),
-      )
-      let waiter
-
-      try {
-        await waitForPath(harness.blocked, 'the lock-owning installer to block in Bun remove')
-        waiter = startInstaller(harness.secondFixture, harness.env('second'), true)
-        await waitForPath(harness.lockWaiter, 'the second installer to wait for the lock')
-        process.kill(-waiter.child.pid, signal)
-
-        assert.notEqual((await waiter.exit).code, 0)
-        assert.equal(existsSync(harness.lockDir), true)
-        assert.deepEqual(harness.events(), ['first:npm', 'first:remove'])
-
-        writeFileSync(harness.release, '')
-        assert.deepEqual(await holder.exit, { code: 0, signal: null })
-        assert.equal(existsSync(harness.lockDir), false)
-      } finally {
-        writeFileSync(harness.release, '')
-        await holder.exit
-        if (waiter) {
-          await waiter.exit
-        }
-      }
-    })
-  }
-})
-
-test('install script times out without reclaiming another installer lock', async (t) => {
-  const harness = makeInstallerHarness(t)
-  mkdirSync(harness.lockDir)
-  const installer = startInstaller(
-    harness.firstFixture,
-    harness.env('first', { DAKAR_INSTALL_LOCK_WAIT_SECONDS: '1' }),
-  )
-
-  const result = await installer.exit
-  assert.notEqual(result.code, 0)
-  assert.match(installer.stderr(), /operation=global-install lock=timeout/u)
-  assert.match(installer.stderr(), /elapsed=\d+s/u)
-  assert.match(installer.stderr(), new RegExp(`path=${harness.lockDir}`, 'u'))
-  assert.match(installer.stderr(), /confirm no installer process is active/u)
-  assert.deepEqual(harness.events(), [])
-  assert.equal(existsSync(harness.lockDir), true)
-})
-
-test('install script rejects invalid lock-wait limits before mutation', async (t) => {
-  for (const lockWaitLimit of ['0', '01', '10seconds']) {
-    await t.test(lockWaitLimit, async (t) => {
-      const harness = makeInstallerHarness(t)
-      const installer = startInstaller(
-        harness.firstFixture,
-        harness.env('first', { DAKAR_INSTALL_LOCK_WAIT_SECONDS: lockWaitLimit }),
-      )
-
-      assert.equal((await installer.exit).code, 2)
-      assert.match(installer.stderr(), /DAKAR_INSTALL_LOCK_WAIT_SECONDS must be a positive base-10 integer/u)
-      assert.deepEqual(harness.events(), [])
-      assert.equal(existsSync(harness.lockDir), false)
-    })
-  }
-})
-
-test('install script reports an unavailable Bun global lock path', (t) => {
-  const installFixture = makeCleanInstallFixture(t)
-  const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
-  t.after(() => rmSync(toolDir, { recursive: true, force: true }))
-  const unavailableBunInstall = join(toolDir, 'not-a-directory')
-  const npmMarker = join(toolDir, 'npm-invoked')
-  writeFileSync(unavailableBunInstall, '')
-  writeFileSync(
-    join(toolDir, 'bun'),
-    `#!/bin/sh
-case "$1:$2" in
-  pm:cache) printf '%s\\n' "$BUN_INSTALL/install/cache" ;;
-  *) exit 0 ;;
-esac
-`,
-  )
-  writeFileSync(join(toolDir, 'npm'), `#!/bin/sh\n: > '${npmMarker}'\n`)
-  for (const command of ['node', 'odw']) {
-    writeFileSync(join(toolDir, command), '#!/bin/sh\nexit 0\n')
-  }
-  for (const command of ['bun', 'node', 'npm', 'odw']) {
-    chmodSync(join(toolDir, command), 0o755)
-  }
-
-  const result = spawnSync('/bin/sh', [join(installFixture, 'install.sh')], {
-    cwd: installFixture,
-    env: { ...process.env, PATH: `${toolDir}:${process.env.PATH}`, BUN_INSTALL: unavailableBunInstall },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
-  assert.equal(result.status, 1)
-  assert.match(result.stderr, /operation=global-install lock=acquisition-failed/u)
-  assert.match(result.stderr, /path=.*\.dakar-install\.lock/u)
-  assert.equal(existsSync(npmMarker), false, 'npm must not run when lock acquisition fails')
-})
-
-test('install script stops before installation when npm is unavailable', (t) => {
-  const toolDir = mkdtempSync(join(tmpdir(), 'dakar-install-tools-'))
-  t.after(() => rmSync(toolDir, { recursive: true, force: true }))
-  const installMarker = join(toolDir, 'bun-invoked')
-  writeFileSync(join(toolDir, 'bun'), `#!/bin/sh\n: > '${installMarker}'\n`)
-  writeFileSync(join(toolDir, 'node'), '#!/bin/sh\nexit 0\n')
-  writeFileSync(join(toolDir, 'odw'), '#!/bin/sh\nexit 0\n')
-  writeFileSync(join(toolDir, 'dirname'), '#!/bin/sh\nexec /usr/bin/dirname "$@"\n')
-  for (const command of ['bun', 'node', 'odw', 'dirname']) {
-    chmodSync(join(toolDir, command), 0o755)
-  }
-
-  const result = spawnSync('/bin/sh', [installPath], {
-    cwd: repoRoot,
-    env: { PATH: toolDir },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
-  assert.equal(result.status, 127)
-  assert.equal(result.stdout, '')
-  assert.match(result.stderr, /install\.sh: npm is required but was not found on PATH/u)
-  assert.equal(existsSync(installMarker), false, 'Bun must not run without npm')
-})
-
-test('install script help does not install', () => {
-  const output = execFileSync(installPath, ['--help'], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
-  assert.match(output, /Usage: \.\/install\.sh/u)
-})
-
-test('a recordWithheld result stays successful and records nothing', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const stateRoot = join(tempRoot, 'trusted-state')
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  // Partial planned coverage legitimately withholds recordInput; the CLI must
-  // pass the result through unrecorded without flipping it to a record error.
-  writeFileSync(
-    fakeOdw,
-    `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ ok: true, verdict: 'pass', findings: [], reportMarkdown: 'x', metrics: {},
-  recordWithheld: { reason: 'planned finder coverage was incomplete', truncatedFileCount: 2, admissionRefusalCount: 0, lunaDowngradeCount: 0 } }))
-`,
-  )
-  chmodSync(fakeOdw, 0o755)
-
-  const result = spawnSync(
-    process.execPath,
-    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot, '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-  const output = JSON.parse(result.stdout)
-
-  assert.equal(result.status, 0)
-  assert.equal(output.ok, true)
-  assert.equal(output.stage, undefined, 'a withheld record is not a record error')
-  assert.equal(output.recordWithheld.truncatedFileCount, 2)
-  assert.equal(output.recorded, undefined, 'nothing is stamped as recorded')
-  assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false, 'nothing may be recorded')
-})
-
-test('a hung log follow still fetches and records the completed result', () => {
-  const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
-  const stateRoot = join(tempRoot, 'trusted-state')
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  // `odw run` emits a run id; `odw logs --follow` hangs forever; `odw result`
-  // returns a completed, recordable review. A follow timeout must not abandon
-  // the billed result: the CLI fetches and records it in the grace window.
-  writeFileSync(
-    fakeOdw,
-    `#!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs'
-const values = process.argv.slice(2)
-const mode = values[0]
-if (mode === 'run') {
-  const input = JSON.parse(values[values.indexOf('--args') + 1])
-  writeFileSync(process.env.DAKAR_FAKE_PREPARED, JSON.stringify(input.prepared))
-  process.stdout.write('started run 20260719-000000-abcdef\\n')
-} else if (mode === 'logs') {
-  // A genuine hang: the interval keeps the event loop alive until SIGTERM.
-  setInterval(() => {}, 1000)
-} else if (mode === 'result') {
-  const prepared = JSON.parse(readFileSync(process.env.DAKAR_FAKE_PREPARED, 'utf8'))
-  process.stdout.write(JSON.stringify({
-    ok: true, verdict: 'pass',
-    reviewBase: prepared.reviewBase, headCommit: prepared.headCommit,
-    commitCount: prepared.commitCount, changedFiles: prepared.changedFiles,
-    findings: [], reportMarkdown: 'x', metrics: {},
-    recordInput: {
-      reviewId: 'head-' + prepared.headCommit, baseCommit: prepared.reviewBase,
-      headCommit: prepared.headCommit, commitCount: prepared.commitCount,
-      changedFiles: prepared.changedFiles, models: ['gpt-5.6-luna'],
-      findingsTotal: 0, summary: 'clean', metrics: {},
-    },
-  }))
-}
-`,
-  )
-  chmodSync(fakeOdw, 0o755)
-
-  const result = spawnSync(
-    process.execPath,
-    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
-     '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, DAKAR_FAKE_PREPARED: join(tempRoot, 'prepared.json') } },
-  )
-  assert.equal(result.status, 0, result.stderr)
-  const output = JSON.parse(result.stdout)
-  assert.equal(output.ok, true)
-  assert.equal(output.recorded.ok, true, 'the completed result must be recorded despite the hung follow')
-  assert.equal(output.recorded.headCommit, head)
-})
-
-test('a failed grace fetch reports the result error in the log envelope', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  writeFileSync(
-    fakeOdw,
-    `#!/usr/bin/env node
-const mode = process.argv[2]
-if (mode === 'run') {
-  process.stdout.write('started run 20260719-000000-fedcba\\n')
-} else if (mode === 'logs') {
-  setInterval(() => {}, 1000)
-} else if (mode === 'result') {
-  process.stderr.write('grace fetch exploded\\n')
-  process.exitCode = 42
-}
-`,
-  )
-  chmodSync(fakeOdw, 0o755)
-
-  const result = spawnSync(
-    process.execPath,
-    [cliPath, '--repo-root', targetRepo, '--base', base,
-     '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-
-  assert.equal(result.status, 1)
-  assert.equal(result.stdout, '')
-  assert.match(result.stderr, /"stage":\s*"odw-logs"/u)
-  assert.match(result.stderr, /"error":\s*"grace fetch exploded"/u)
-})
-
-test('an outer timeout below the retry worst case warns on stderr', () => {
-  const { tempRoot, targetRepo, base } = setUpRecordRepo()
-  const stateRoot = join(tempRoot, 'trusted-state')
-  const fakeOdw = join(tempRoot, 'odw.mjs')
-  writePreparedEchoOdw(fakeOdw)
-  chmodSync(fakeOdw, 0o755)
-
-  const result = spawnSync(
-    process.execPath,
-    [cliPath, '--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
-     '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs'), '--timeout', '600'],
-    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-
-  assert.equal(result.status, 0)
-  assert.match(result.stderr, /below the retry schedule's worst case/u)
 })

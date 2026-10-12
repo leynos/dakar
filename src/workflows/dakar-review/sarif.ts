@@ -59,6 +59,18 @@ export interface SarifAssemblyInput {
   verdicts?: Verdict[]
 }
 
+/** Evidence selected for one semantic SARIF result by the assembly pass. */
+interface SemanticSarifEvidence {
+  /** Accepted candidate, when the reviewed candidate was selected. */
+  accepted: Candidate | undefined
+  /** Discard record associated with the candidate, when present. */
+  discard: Discarded | undefined
+  /** Verifier audit verdict associated with the candidate, when present. */
+  verdict: Verdict | undefined
+  /** Source ledger row supplying the candidate's routing provenance. */
+  sourceLedger: LedgerEntry | undefined
+}
+
 /** Returns a stable severity mapping for SARIF result levels. */
 function sarifLevel(severity: string): 'error' | 'warning' | 'note' {
   if (severity === 'critical' || severity === 'high') return 'error'
@@ -109,82 +121,80 @@ function ledgerFor(candidate: Candidate | { candidateId?: string }, ledger: Ledg
   return ledger.find((entry) => entry.callId === candidate.taskId)
 }
 
-/**
- * Assembles the canonical SARIF 2.1.0 document from immutable review evidence.
- *
- * Candidate identity and Luna evidence are copied into namespaced properties;
- * Terra verdicts are separate audit records and never overwrite the candidate.
- *
- * @param input - Normalized semantic evidence, deterministic gates, and cost ledger.
- * @returns One deterministic SARIF run containing every accepted and discarded item.
- */
-export function assembleSarif(input: SarifAssemblyInput): DakarSarif {
-  const candidates = [...(input.candidates || [])]
-  const acceptedById = new Map(
-    (input.accepted || []).map((candidate): [string, Candidate] => [candidate.candidateId, candidate]),
-  )
-  const verdicts = [...(input.verdicts || [])]
-  const ledger = [...(input.ledger || [])]
-  const discardById = new Map(
-    (input.discarded || []).map((item): [string | undefined, Discarded] => [item.candidate.candidateId, item]),
-  )
-  const semanticResults = candidates
-    .map((candidate) => {
-      const accepted = acceptedById.get(candidate.candidateId)
-      const discard = discardById.get(candidate.candidateId)
-      const verdict = verdictFor(candidate.candidateId, verdicts)
-      const sourceLedger = ledgerFor(candidate, ledger)
-      const disposition = accepted
-        ? {
-            status: verdict?.status || 'accepted',
-            reason: verdict?.reason || '',
-            evidenceChecked: verdict?.evidenceChecked || '',
-            acceptedSeverity: accepted.severity,
-          }
-        : {
-            status: discard?.status || verdict?.status || 'not_selected',
-            reason: discard?.reason || verdict?.reason || '',
-            evidenceChecked: discard?.evidenceChecked || verdict?.evidenceChecked || '',
-          }
-      return {
-        ruleId: `dakar/semantic/${candidate.candidateId}`,
-        level: sarifLevel(accepted?.severity || candidate.severity),
-        message: { text: candidate.title },
-        locations: locationsFor(candidate),
-        fingerprints: {
-          'dakar/candidateId': candidate.candidateId,
-          'dakar/semanticFingerprint': candidate.candidateId.slice(candidate.taskId.length + 1),
-        },
-        ...(accepted ? {} : { suppressions: [{ kind: 'external', status: 'accepted', justification: disposition.reason }] }),
-        properties: {
-          dakar: {
-            kind: 'semantic',
-            candidate: candidateEvidence(candidate),
-            provenance: {
-              taskId: candidate.taskId,
-              taskKind: candidate.taskKind,
-              model: candidate.sourceModel,
-              lane: sourceLedger?.lane || 'luna-flex',
-              serviceTier: sourceLedger?.serviceTier || 'flex',
-              reasoningEffort: sourceLedger?.reasoningEffort,
-            },
-            audit: verdict ? { ...verdict } : null,
-            disposition,
-            clusterId: verdict?.clusterId,
-            cost: sourceLedger ? { ...sourceLedger } : null,
-            pricingTableVersion: input.pricingTableVersion,
-          },
-        },
-      }
-    })
-    .sort((left, right) => {
-      const leftId = left.fingerprints['dakar/candidateId']
-      const rightId = right.fingerprints['dakar/candidateId']
-      return leftId === rightId ? 0 : leftId < rightId ? -1 : 1
-    })
+/** Apply a verifier's audit fields, retaining the original truthy fallbacks. */
+function verdictDisposition(verdict: Verdict | undefined, fallbackStatus: string) {
+  return {
+    status: verdict?.status || fallbackStatus,
+    reason: verdict?.reason || '',
+    evidenceChecked: verdict?.evidenceChecked || '',
+  }
+}
 
+/** Independently prefer each truthy discard field over its verifier fallback. */
+function discardDisposition(discard: Discarded | undefined, disposition: ReturnType<typeof verdictDisposition>) {
+  return {
+    status: discard?.status || disposition.status,
+    reason: discard?.reason || disposition.reason,
+    evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked,
+  }
+}
+
+/** Prefer accepted evidence, or independently override audit fields with a discard. */
+function semanticDisposition(accepted: Candidate | undefined, discard: Discarded | undefined, verdict: Verdict | undefined) {
+  const disposition = verdictDisposition(verdict, accepted ? 'accepted' : 'not_selected')
+  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity }
+  return discardDisposition(discard, disposition)
+}
+
+/** Carry trusted task provenance and the ledger's optional routing details. */
+function semanticProvenance(candidate: Candidate, sourceLedger: LedgerEntry | undefined) {
+  return {
+    taskId: candidate.taskId,
+    taskKind: candidate.taskKind,
+    model: candidate.sourceModel,
+    lane: sourceLedger?.lane || 'luna-flex',
+    serviceTier: sourceLedger?.serviceTier || 'flex',
+    reasoningEffort: sourceLedger?.reasoningEffort,
+  }
+}
+
+/** Project one normalized candidate into the canonical semantic SARIF shape. */
+function semanticSarifResult(
+  candidate: Candidate,
+  evidence: SemanticSarifEvidence,
+  pricingTableVersion: string,
+) {
+  const { accepted, discard, verdict, sourceLedger } = evidence
+  const disposition = semanticDisposition(accepted, discard, verdict)
+  return {
+    ruleId: `dakar/semantic/${candidate.candidateId}`,
+    level: sarifLevel(accepted?.severity || candidate.severity),
+    message: { text: candidate.title },
+    locations: locationsFor(candidate),
+    fingerprints: {
+      'dakar/candidateId': candidate.candidateId,
+      'dakar/semanticFingerprint': candidate.candidateId.slice(candidate.taskId.length + 1),
+    },
+    ...(accepted ? {} : { suppressions: [{ kind: 'external', status: 'accepted', justification: disposition.reason }] }),
+    properties: {
+      dakar: {
+        kind: 'semantic',
+        candidate: candidateEvidence(candidate),
+        provenance: semanticProvenance(candidate, sourceLedger),
+        audit: verdict ? { ...verdict } : null,
+        disposition,
+        clusterId: verdict?.clusterId,
+        cost: sourceLedger ? { ...sourceLedger } : null,
+        pricingTableVersion,
+      },
+    },
+  }
+}
+
+/** Project discards that were omitted from the candidate inventory. */
+function extraDiscardResults(input: SarifAssemblyInput, candidates: Candidate[], verdicts: Verdict[]) {
   const knownCandidateIds = new Set(candidates.map((candidate) => candidate.candidateId))
-  const extraDiscards = (input.discarded || [])
+  return (input.discarded || [])
     .filter((item) => !knownCandidateIds.has(item.candidate.candidateId || ''))
     .map((item) => ({
       ruleId: `dakar/semantic/${item.candidate.candidateId || 'unknown'}`,
@@ -205,8 +215,11 @@ export function assembleSarif(input: SarifAssemblyInput): DakarSarif {
         },
       },
     }))
+}
 
-  const gateResults = (input.gates || [])
+/** Project non-passing deterministic gates into SARIF result records. */
+function gateSarifResults(input: SarifAssemblyInput) {
+  return (input.gates || [])
     .filter((gate) => gate.status !== 'passed')
     .map((gate) => ({
       ruleId: `dakar/gate/${gate.gateId}`,
@@ -222,6 +235,57 @@ export function assembleSarif(input: SarifAssemblyInput): DakarSarif {
         },
       },
     }))
+}
+
+/** Determine whether every gate passed or was explicitly non-blocking. */
+function gatesAllowExecution(gates: DeterministicGateResult[]) {
+  return gates.every((gate) => gate.status === 'passed' || !gate.blocking)
+}
+
+/** Snapshot the optional candidate list before result enrichment and sorting. */
+function candidateInventory(candidates: Candidate[] | undefined): Candidate[] {
+  return [...(candidates || [])]
+}
+
+/**
+ * Assembles the canonical SARIF 2.1.0 document from immutable review evidence.
+ *
+ * Candidate identity and Luna evidence are copied into namespaced properties;
+ * Terra verdicts are separate audit records and never overwrite the candidate.
+ *
+ * @param input - Normalized semantic evidence, deterministic gates, and cost ledger.
+ * @returns One deterministic SARIF run containing every accepted and discarded item.
+ */
+export function assembleSarif(input: SarifAssemblyInput): DakarSarif {
+  const candidates = candidateInventory(input.candidates)
+  const acceptedById = new Map(
+    (input.accepted || []).map((candidate): [string, Candidate] => [candidate.candidateId, candidate]),
+  )
+  const verdicts = [...(input.verdicts || [])]
+  const ledger = [...(input.ledger || [])]
+  const discardById = new Map(
+    (input.discarded || []).map((item): [string | undefined, Discarded] => [item.candidate.candidateId, item]),
+  )
+  const semanticResults = candidates
+    .map((candidate) => {
+      const accepted = acceptedById.get(candidate.candidateId)
+      const discard = discardById.get(candidate.candidateId)
+      const verdict = verdictFor(candidate.candidateId, verdicts)
+      const sourceLedger = ledgerFor(candidate, ledger)
+      return semanticSarifResult(
+        candidate,
+        { accepted, discard, verdict, sourceLedger },
+        input.pricingTableVersion,
+      )
+    })
+    .sort((left, right) => {
+      const leftId = left.fingerprints['dakar/candidateId']
+      const rightId = right.fingerprints['dakar/candidateId']
+      return leftId === rightId ? 0 : leftId < rightId ? -1 : 1
+    })
+
+  const extraDiscards = extraDiscardResults(input, candidates, verdicts)
+  const gateResults = gateSarifResults(input)
 
   const results = [...gateResults, ...semanticResults, ...extraDiscards]
   const ruleIds = [...new Set(results.map((result) => result.ruleId))].sort()
@@ -238,7 +302,7 @@ export function assembleSarif(input: SarifAssemblyInput): DakarSarif {
         },
       },
       invocations: [{
-        executionSuccessful: gates.every((gate) => gate.status === 'passed' || !gate.blocking),
+        executionSuccessful: gatesAllowExecution(gates),
         properties: { dakar: { gates } },
       }],
       results,
@@ -262,32 +326,72 @@ function dakarProperties(result: Record<string, unknown>): Record<string, unknow
 }
 
 /**
+ * Traverses semantic results in the first run without changing projection order.
+ *
+ * @param sarif - Dakar SARIF document.
+ * @param project - Selects and converts one semantic result's Dakar properties.
+ * @returns Compatibility records in their original result order.
+ */
+function projectSemanticResults<T>(sarif: DakarSarif, project: (dakar: Record<string, unknown>) => T[]): T[] {
+  const [run] = sarif.runs
+  if (!run) return []
+  return run.results.flatMap((result) => {
+    const dakar = dakarProperties(result)
+    if (dakar.kind !== 'semantic') return []
+    return project(dakar)
+  })
+}
+
+/**
+ * Converts accepted Dakar result properties to the legacy finding shape.
+ *
+ * @param dakar - Dakar-owned semantic result properties.
+ * @returns One compatibility finding with its original fallback values.
+ */
+function compatibilityFinding(dakar: Record<string, unknown>): Record<string, unknown> {
+  const disposition = dakar.disposition as Record<string, unknown>
+  const candidate = dakar.candidate as Record<string, unknown>
+  const audit = dakar.audit as Record<string, unknown> | null
+  return {
+    severity: disposition.acceptedSeverity || candidate.severity,
+    path: candidate.path,
+    line: Number(candidate.line) > 0 ? candidate.line : undefined,
+    title: candidate.title,
+    detail: candidate.detail || '',
+    evidence: candidate.evidence || '',
+    clusterId: audit?.clusterId || undefined,
+    sourceTasks: [candidate.taskId],
+  }
+}
+
+/**
  * Projects accepted compatibility findings from the canonical SARIF document.
  *
  * @param sarif - Dakar SARIF document.
  * @returns Existing CLI finding objects derived only from SARIF evidence.
  */
 export function projectFindingsFromSarif(sarif: DakarSarif): Array<Record<string, unknown>> {
-  const [run] = sarif.runs
-  if (!run) return []
-  return run.results.flatMap((result) => {
-    const dakar = dakarProperties(result)
-    if (dakar.kind !== 'semantic') return []
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition as Record<string, unknown>
     if (!['accepted', 'severity_downgraded'].includes(String(disposition?.status))) return []
-    const candidate = dakar.candidate as Record<string, unknown>
-    const audit = dakar.audit as Record<string, unknown> | null
-    return [{
-      severity: disposition.acceptedSeverity || candidate.severity,
-      path: candidate.path,
-      line: Number(candidate.line) > 0 ? candidate.line : undefined,
-      title: candidate.title,
-      detail: candidate.detail || '',
-      evidence: candidate.evidence || '',
-      clusterId: audit?.clusterId || undefined,
-      sourceTasks: [candidate.taskId],
-    }]
+    return [compatibilityFinding(dakar)]
   })
+}
+
+/**
+ * Converts one non-accepted Dakar result to the compatibility discard shape.
+ *
+ * @param dakar - Dakar-owned result properties from a SARIF result.
+ * @returns The legacy discard record, retaining its candidate reference.
+ */
+function compatibilityDiscard(dakar: Record<string, unknown>): Discarded {
+  const disposition = dakar.disposition as Record<string, unknown>
+  return {
+    candidate: dakar.candidate as unknown as Candidate,
+    status: String(disposition?.status || ''),
+    reason: String(disposition?.reason || ''),
+    evidenceChecked: String(disposition?.evidenceChecked || ''),
+  }
 }
 
 /**
@@ -297,19 +401,10 @@ export function projectFindingsFromSarif(sarif: DakarSarif): Array<Record<string
  * @returns Existing discard objects derived only from SARIF evidence.
  */
 export function projectDiscardedFromSarif(sarif: DakarSarif): Discarded[] {
-  const [run] = sarif.runs
-  if (!run) return []
-  return run.results.flatMap((result) => {
-    const dakar = dakarProperties(result)
-    if (dakar.kind !== 'semantic') return []
+  return projectSemanticResults(sarif, (dakar) => {
     const disposition = dakar.disposition as Record<string, unknown>
     if (['accepted', 'severity_downgraded'].includes(String(disposition?.status))) return []
-    return [{
-      candidate: dakar.candidate as unknown as Candidate,
-      status: String(disposition?.status || ''),
-      reason: String(disposition?.reason || ''),
-      evidenceChecked: String(disposition?.evidenceChecked || ''),
-    }]
+    return [compatibilityDiscard(dakar)]
   })
 }
 

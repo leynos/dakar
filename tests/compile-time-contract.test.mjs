@@ -1,4 +1,8 @@
-/** @file Verify the contributor TypeScript contract rejects runtime syntax. */
+/**
+ * Verify the contributor TypeScript contract rejects runtime-only syntax.
+ *
+ * @module
+ */
 
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -39,7 +43,7 @@ test('tsconfig pins the erasable strict module contract', () => {
       strict: true,
       target: 'ES2024',
       verbatimModuleSyntax: true,
-      include: ['src/workflows/dakar-review/**/*.ts'],
+      include: ['src/workflows/dakar-review/**/*.ts', 'tests/types/**/*.ts'],
     },
   )
 })

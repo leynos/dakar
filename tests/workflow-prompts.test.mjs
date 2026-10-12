@@ -1,4 +1,8 @@
-/** @file Unit-test prompt construction from TypeScript source. */
+/**
+ * Unit-test prompt construction from TypeScript source.
+ *
+ * @module
+ */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -107,6 +111,21 @@ test('taskPrompt omits the unscoped diff command for an empty task', () => {
 
   assert.match(prompt, /diff --stat/u)
   assert.doesNotMatch(prompt, /diff 'base-sha\.\.head-sha' --/u)
+})
+
+test('taskPrompt accepts translated context guidance without owning MCP details', () => {
+  const guidance = 'Repository context can answer dependency questions.'
+  const prompt = taskPrompt({
+    taskId: 'source-1',
+    kind: 'source',
+    files: ['src/a.ts'],
+    assignedModel: 'gpt-5.6-luna/high',
+    modelLabel: 'pi-luna-flex-high',
+    maxFindings: 6,
+  }, { reviewBase: 'base-sha', headCommit: 'head-sha' }, CONTEXT, guidance)
+
+  assert.ok(prompt.includes(guidance), 'finder prompt must include translated context capability guidance')
+  assert.doesNotMatch(prompt, /mcp (?:codegraph|deepwiki)/u, 'core task prompting must not render provider commands')
 })
 
 test('auditPrompt embeds compacted candidate JSON, policy path, AGENTS block, and budget note', () => {

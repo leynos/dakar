@@ -81,6 +81,20 @@ export function isReasoning(value: unknown): value is Reasoning {
   return value === 'low' || value === 'medium' || value === 'high'
 }
 
+/** Luna Flex roles the finder-plan builder accepts. */
+export type LunaFlexLaneRole = 'luna' | 'luna-medium' | 'luna-low'
+
+/**
+ * Select the registered Luna Flex lane for a reasoning value.
+ *
+ * @param reasoning - Resolved or untrusted reasoning value.
+ * @returns The high lane by default, or the matching de-escalation lane.
+ */
+export function lunaFlexLaneRole(reasoning: unknown): LunaFlexLaneRole {
+  if (reasoning === 'medium') return 'luna-medium'
+  if (reasoning === 'low') return 'luna-low'
+  return 'luna'
+}
 /** Pins one Flex execution lane to its model, adapter, service tier, and effort. */
 export interface FlexLaneSpec {
   /** Logical Flex lane role that selects this pinned specification. */
@@ -98,19 +112,22 @@ export interface FlexLaneSpec {
 /**
  * Maps each Flex lane role to its host-selected model and pi adapter. The host,
  * not an agent prompt, chooses the lane; agents cannot promote themselves to a
- * more expensive model or service tier (ADR 002). `luna-medium` is the
- * pre-registered escalation lane for the Luna finder.
+ * more expensive model or service tier (ADR 002). The default `luna` and
+ * `terra` lanes run at high reasoning since the 2026-08-13 Flex repricing;
+ * `luna-medium` and `luna-low` are the pre-registered de-escalation lanes for
+ * the Luna finder.
  */
-export const FLEX_LANE_ROLES: Readonly<Record<'luna' | 'luna-medium' | 'terra', Readonly<FlexLaneSpec>>> = Object.freeze({
-  luna: Object.freeze({ role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low' }),
+export const FLEX_LANE_ROLES: Readonly<Record<'luna' | 'luna-medium' | 'luna-low' | 'terra', Readonly<FlexLaneSpec>>> = Object.freeze({
+  luna: Object.freeze({ role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-high', serviceTier: 'flex', reasoning: 'high' }),
   'luna-medium': Object.freeze({ role: 'luna-medium', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-medium', serviceTier: 'flex', reasoning: 'medium' }),
-  terra: Object.freeze({ role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex', serviceTier: 'flex', reasoning: 'medium' }),
+  'luna-low': Object.freeze({ role: 'luna-low', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low' }),
+  terra: Object.freeze({ role: 'terra', model: 'gpt-5.6-terra', adapter: 'pi-terra-flex-high', serviceTier: 'flex', reasoning: 'high' }),
 })
 
 /**
  * Resolves a Flex lane role to its pinned lane specification.
  *
- * @param role - One of `luna`, `luna-medium`, or `terra`.
+ * @param role - One of `luna`, `luna-medium`, `luna-low`, or `terra`.
  * @returns The frozen lane specification for that role.
  * @throws {Error} When the role is not a registered Flex lane.
  */

@@ -10,12 +10,14 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { deriveOdwConfig } from '../scripts/odw-config.mjs'
+import { addContextGuidance, CONTEXT_WARMUP_BOUNDARY, warmReviewedContextIndex } from '../scripts/context-warmup.mjs'
+import { isRepositoryRelativePath } from '../scripts/repository-paths.mjs'
 import { runDeterministicGates } from '../scripts/deterministic-gates.mjs'
 import { parseReviewPolicy, resolveReviewConfig } from '../scripts/review-config.mjs'
 import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
@@ -30,6 +32,13 @@ import { appendReview, prepare } from '../scripts/review-state.mjs'
 
 /** ODW's documented default per-model-call timeout in seconds. */
 const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
+
+/** Keep usage-log effects at the CLI boundary rather than inside parsing. */
+const REPORTED_USAGE_BOUNDARY = Object.freeze({
+  read: (path) => readFileSync(path, 'utf8'),
+  remove: (path) => rmSync(path, { force: true }),
+  report: (message) => process.stderr.write(message),
+})
 
 /**
  * Clamp a per-call timeout to the same default and bounds the workflow applies.
@@ -86,7 +95,7 @@ const piAgentDir = join(packageRoot, 'adapters', 'pi')
  * adapters, returning the temp file path for the CLI's own ODW spawns.
  *
  * The packaged config leaves each adapter call unbounded, so a run-local copy
- * carries the `--per-call-timeout` value (or the documented default) on the three
+ * carries the `--per-call-timeout` value (or the documented default) on every
  * pi Flex adapters only. The file lives under the OS temp directory and is
  * removed after the run, exactly like the usage-log file.
  *
@@ -117,11 +126,99 @@ function writeDerivedOdwConfig(perCallTimeoutSeconds = DEFAULT_PER_CALL_TIMEOUT_
  */
 function odwEnv(usageLogPath = usageLogFile) {
   const env = { ...process.env, PI_CODING_AGENT_DIR: piAgentDir, PI_SKIP_VERSION_CHECK: '1' }
+  env.TRACEPARENT = CONTEXT_WARMUP_BOUNDARY.trace.traceparent
   if (usageLogPath) env.DAKAR_USAGE_LOG = usageLogPath
   return env
 }
 
 const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`)
+
+/**
+ * Read and consume the pi extension's JSON-lines usage log.
+ *
+ * @param {string} logPath - path supplied to the pi extension.
+ * @param {{ read: Function, remove: Function }} boundary - Narrow filesystem effects.
+ * @returns {{ lines: unknown[], readOutcome: string, parseOutcome: string, cleanupOutcome: string, invalidLines: number }} Explicit read, parse, and cleanup evidence.
+ */
+function consumeReportedUsageLog(logPath, boundary) {
+  let raw
+  try {
+    raw = boundary.read(logPath)
+  } catch (error) {
+    return { lines: [], readOutcome: error?.code === 'ENOENT' ? 'absent' : 'failed', parseOutcome: 'not_attempted', cleanupOutcome: 'not_attempted', invalidLines: 0 }
+  }
+  let cleanupOutcome = 'succeeded'
+  try {
+    boundary.remove(logPath)
+  } catch {
+    cleanupOutcome = 'failed'
+  }
+  return { ...parseReportedUsage(raw), readOutcome: 'succeeded', cleanupOutcome }
+}
+
+/** Parse usage records in order without imposing a schema on valid JSON. */
+function parseReportedUsage(raw) {
+  const lines = []
+  let invalidLines = 0
+  let parseOutcome = 'succeeded'
+  for (const line of raw.split('\n')) {
+    if (line.trim() === '') continue
+    try {
+      lines.push(JSON.parse(line))
+    } catch {
+      invalidLines += 1
+      parseOutcome = 'degraded'
+    }
+  }
+  return { lines, invalidLines, parseOutcome }
+}
+
+/** Expose advisory usage-log failures without disclosing paths or records. */
+function reportUsageLogOutcome(result, report) {
+  if (result.readOutcome !== 'failed' && result.cleanupOutcome !== 'failed' && result.invalidLines === 0) return
+  const event = {
+    event: 'reported_usage_log',
+    readOutcome: result.readOutcome,
+    parseOutcome: result.parseOutcome,
+    cleanupOutcome: result.cleanupOutcome,
+    invalidLines: result.invalidLines,
+  }
+  report(`dakar-review: usage log ${JSON.stringify(event)}\n`)
+}
+
+/**
+ * Sum the four reported token fields without changing their numeric coercion.
+ *
+ * @param {unknown[]} lines - parsed usage-log records.
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number }} reported totals.
+ */
+function sumReportedTokens(lines) {
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  for (const line of lines) {
+    for (const key of Object.keys(totals)) {
+      totals[key] += Number(line.usage?.[key]) || 0
+    }
+  }
+  return totals
+}
+
+/**
+ * Stamp reported usage and totals onto workflow metrics and its first SARIF run.
+ *
+ * @param {object} output - parsed workflow result to annotate in place.
+ * @param {unknown[]} lines - parsed usage records retained on the result.
+ * @param {{ input: number, output: number, cacheRead: number, cacheWrite: number }} totals - summed token counts.
+ */
+function annotateReportedUsage(output, lines, totals) {
+  output.metrics = output.metrics || {}
+  output.metrics.reportedUsage = lines
+  output.metrics.reportedTokens = totals
+  const sarifDakar = output.sarif?.runs?.[0]?.properties?.dakar
+  if (sarifDakar && typeof sarifDakar === 'object') {
+    sarifDakar.reportedUsage = lines
+    sarifDakar.reportedTokens = totals
+  }
+}
 
 /**
  * Attach the pi extension's reported usage lines to the workflow output.
@@ -137,42 +234,14 @@ const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.js
  * @returns {object} the same output, annotated when usage lines exist.
  */
 function attachReportedUsage(output) {
-  let raw
-  try {
-    raw = readFileSync(usageLogFile, 'utf8')
-  } catch {
-    return output
-  }
-  try {
-    rmSync(usageLogFile, { force: true })
-  } catch {
-    // A leftover temp file is harmless.
-  }
-  const lines = raw
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)]
-      } catch {
-        return []
-      }
-    })
-  if (lines.length === 0 || typeof output !== 'object' || output === null) return output
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-  for (const line of lines) {
-    for (const key of Object.keys(totals)) {
-      totals[key] += Number(line.usage?.[key]) || 0
-    }
-  }
-  output.metrics = output.metrics || {}
-  output.metrics.reportedUsage = lines
-  output.metrics.reportedTokens = totals
-  const sarifDakar = output.sarif?.runs?.[0]?.properties?.dakar
-  if (sarifDakar && typeof sarifDakar === 'object') {
-    sarifDakar.reportedUsage = lines
-    sarifDakar.reportedTokens = totals
-  }
+  const result = consumeReportedUsageLog(usageLogFile, REPORTED_USAGE_BOUNDARY)
+  reportUsageLogOutcome(result, REPORTED_USAGE_BOUNDARY.report)
+  const { lines } = result
+  if (lines.length === 0) return output
+  if (typeof output !== 'object') return output
+  if (output === null) return output
+  const totals = sumReportedTokens(lines)
+  annotateReportedUsage(output, lines, totals)
   return output
 }
 
@@ -214,6 +283,61 @@ const OPTION_SPECS = new Map([
 ])
 
 /**
+ * Resolve one CLI token to its option name, inline value, and specification.
+ *
+ * @param {string} token - argument token to parse.
+ * @returns {{ name: string, inlineValue: string | undefined, spec: { key: string, value: boolean, number?: boolean } }} parsed option details.
+ */
+function readOptionToken(token) {
+  if (!token.startsWith('--')) {
+    throw new Error(`unexpected positional argument: ${token}`)
+  }
+  const [name, inlineValue] = token.slice(2).split(/=(.*)/su, 2)
+  const spec = OPTION_SPECS.get(name)
+  if (!spec) {
+    throw new Error(`unknown option: --${name}`)
+  }
+  return { name, inlineValue, spec }
+}
+
+/**
+ * Validate that a value option has a value which is not another option token.
+ *
+ * @param {string} name - option name used in the existing diagnostic.
+ * @param {string | undefined} value - inline or following argument value.
+ * @returns {string} validated option value.
+ */
+function requireOptionValue(name, value) {
+  if (value === undefined || value.startsWith('--')) {
+    throw new Error(`--${name} requires a value`)
+  }
+  return value
+}
+
+/**
+ * Consume the value associated with a resolved CLI option.
+ *
+ * @param {string[]} argv - argument tokens, excluding the node/script prefix.
+ * @param {number} index - index of the option token in `argv`.
+ * @param {{ name: string, inlineValue: string | undefined, spec: { key: string, value: boolean, number?: boolean } }} option - resolved option token.
+ * @returns {{ value: string | number | boolean, nextIndex: number }} converted value and next unconsumed token index.
+ */
+function consumeOptionValue(argv, index, option) {
+  const { name, inlineValue, spec } = option
+  if (!spec.value) {
+    if (inlineValue !== undefined) {
+      throw new Error(`--${name} does not take a value`)
+    }
+    return { value: true, nextIndex: index + 1 }
+  }
+  const value = requireOptionValue(name, inlineValue === undefined ? argv[index + 1] : inlineValue)
+  return {
+    value: spec.number ? numberValue(name, value) : value,
+    nextIndex: inlineValue === undefined ? index + 2 : index + 1,
+  }
+}
+
+/**
  * Parse the CLI argument vector into a plain options object.
  *
  * @param {string[]} argv - argument tokens, excluding the node/script prefix.
@@ -221,28 +345,12 @@ const OPTION_SPECS = new Map([
  */
 function parseArgs(argv) {
   const parsed = {}
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index]
-    if (!token.startsWith('--')) {
-      throw new Error(`unexpected positional argument: ${token}`)
-    }
-    const [name, inlineValue] = token.slice(2).split(/=(.*)/su, 2)
-    const spec = OPTION_SPECS.get(name)
-    if (!spec) {
-      throw new Error(`unknown option: --${name}`)
-    }
-    if (!spec.value) {
-      if (inlineValue !== undefined) {
-        throw new Error(`--${name} does not take a value`)
-      }
-      parsed[spec.key] = true
-      continue
-    }
-    const value = inlineValue ?? argv[++index]
-    if (value === undefined || value.startsWith('--')) {
-      throw new Error(`--${name} requires a value`)
-    }
-    parsed[spec.key] = spec.number ? numberValue(name, value) : value
+  let index = 0
+  while (index < argv.length) {
+    const option = readOptionToken(argv[index])
+    const consumed = consumeOptionValue(argv, index, option)
+    parsed[option.spec.key] = consumed.value
+    index = consumed.nextIndex
   }
   return parsed
 }
@@ -291,6 +399,26 @@ function extractRunId(text) {
 }
 
 /**
+ * Run a Git command against a trusted instruction commit and contextualise failures.
+ *
+ * @param {string} repoRoot - absolute path to the repository root.
+ * @param {string[]} args - Git arguments following `-C <repoRoot>`.
+ * @param {{ prefix: string, fallback: string }} failureContext - operation-specific diagnostic details.
+ * @returns {string} unmodified stdout from the successful Git command.
+ */
+function runTrustedInstructionGit(repoRoot, args, failureContext) {
+  const result = spawnSync('git', ['-C', repoRoot, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    throw new Error(`${failureContext.prefix}: ${result.stderr.trim() || failureContext.fallback}`)
+  }
+  return result.stdout
+}
+
+/**
  * Read `AGENTS.md` from the trusted review base, returning null when absent.
  *
  * Content is truncated to 24,000 characters so large files do not overflow
@@ -301,33 +429,22 @@ function extractRunId(text) {
  * @returns {{ source: string, content: string, truncated: boolean } | null} parsed instructions, or null.
  */
 function readAgentInstructions(repoRoot, baseRef) {
-  const revision = spawnSync('git', ['-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (revision.error) throw revision.error
-  if (revision.status !== 0) {
-    throw new Error(`cannot resolve trusted review base ${baseRef}: ${revision.stderr.trim() || 'git rev-parse failed'}`)
-  }
-  const resolvedCommit = revision.stdout.trim()
-  const exists = spawnSync('git', ['-C', repoRoot, 'ls-tree', '-z', resolvedCommit, '--', 'AGENTS.md'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (exists.error) throw exists.error
-  if (exists.status !== 0) {
-    throw new Error(`cannot inspect ${resolvedCommit}:AGENTS.md: ${exists.stderr.trim() || 'git ls-tree failed'}`)
-  }
-  if (exists.stdout === '') return null
-  const result = spawnSync('git', ['-C', repoRoot, 'show', `${resolvedCommit}:AGENTS.md`], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`cannot read ${resolvedCommit}:AGENTS.md: ${result.stderr.trim() || 'git show failed'}`)
-  }
-  const content = result.stdout
+  const resolvedCommit = runTrustedInstructionGit(
+    repoRoot,
+    ['rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`],
+    { prefix: `cannot resolve trusted review base ${baseRef}`, fallback: 'git rev-parse failed' },
+  ).trim()
+  const entries = runTrustedInstructionGit(
+    repoRoot,
+    ['ls-tree', '-z', resolvedCommit, '--', 'AGENTS.md'],
+    { prefix: `cannot inspect ${resolvedCommit}:AGENTS.md`, fallback: 'git ls-tree failed' },
+  )
+  if (entries === '') return null
+  const content = runTrustedInstructionGit(
+    repoRoot,
+    ['show', `${resolvedCommit}:AGENTS.md`],
+    { prefix: `cannot read ${resolvedCommit}:AGENTS.md`, fallback: 'git show failed' },
+  )
   return {
     source: `${resolvedCommit}:AGENTS.md`,
     content: content.slice(0, 24_000),
@@ -353,6 +470,7 @@ function buildWorkflowArgs(options, repoRoot) {
     policy: resolvedConfig.policy,
     repoRoot,
   }
+  addContextGuidance(workflowArgs, repoRoot)
   if (agentInstructions) {
     workflowArgs.agentInstructions = agentInstructions
   }
@@ -459,7 +577,9 @@ function printWorkflowOutput(output, format) {
  * @returns {boolean} whether both are arrays of identical length and order.
  */
 function changedFilesEqual(left, right) {
-  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+  if (!Array.isArray(left)) return false
+  if (!Array.isArray(right)) return false
+  if (left.length !== right.length) return false
   return left.every((value, index) => value === right[index])
 }
 
@@ -561,6 +681,20 @@ function recordReview(output, trustedLocation, prepared) {
 }
 
 /**
+ * Copy provider-reported metrics into the recordable result when present.
+ *
+ * @param {object} output - the parsed ODW workflow result.
+ */
+function copyReportedMetricsToRecordInput(output) {
+  if (!output) return
+  if (typeof output !== 'object') return
+  if (!output.recordInput) return
+  const metrics = (output.recordInput.metrics = output.recordInput.metrics || {})
+  if (output.metrics?.reportedUsage !== undefined) metrics.reportedUsage = output.metrics.reportedUsage
+  if (output.metrics?.reportedTokens !== undefined) metrics.reportedTokens = output.metrics.reportedTokens
+}
+
+/**
  * Attach reported usage, fold it into recordInput, then record the review.
  *
  * The reported-usage lines are attached (and their token totals folded into
@@ -577,11 +711,7 @@ function finalizeWorkflowResult(output, workflowArgs) {
   // A dry run never records: there is no prepared snapshot to validate against
   // and no completed head to append.
   if (workflowArgs.dryRun) return output
-  if (output && typeof output === 'object' && output.recordInput) {
-    const metrics = (output.recordInput.metrics = output.recordInput.metrics || {})
-    if (output.metrics?.reportedUsage !== undefined) metrics.reportedUsage = output.metrics.reportedUsage
-    if (output.metrics?.reportedTokens !== undefined) metrics.reportedTokens = output.metrics.reportedTokens
-  }
+  copyReportedMetricsToRecordInput(output)
   return recordReview(
     output,
     { 'repo-root': workflowArgs.repoRoot, 'state-root': workflowArgs.stateRoot },
@@ -658,6 +788,7 @@ function followOdwLogs(odwBin, args, timeoutMs) {
  * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
  * @returns {Promise<object>} the parsed and (on success) recorded workflow result.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: ODW may publish a result after log follow exits; retry result fetches until the bounded deadline while retaining the last fetch error.
 async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1000) {
   const odwBin = options.odwBin || 'odw'
   const deadline = Date.now() + timeoutMs
@@ -683,6 +814,59 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
 }
 
 /**
+ * Give a timed-out log follow a separate five-second result-recovery window.
+ *
+ * @param {object} options - parsed CLI options.
+ * @param {object} workflowArgs - workflow arguments to pass via `--args`.
+ * @param {string} runId - ODW run identifier to recover.
+ * @returns {Promise<{ output?: object, status?: number }>} recovered result or failure status.
+ */
+async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
+  // A hung or outlasted log stream must not abandon a possibly-completed
+  // (and already billed) review: give the result one short grace fetch so
+  // a run that finished while the follow was stuck is still recorded.
+  process.stderr.write(
+    `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch\n`,
+  )
+  try {
+    return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify(
+        {
+          ok: false,
+          stage: 'odw-logs',
+          runId,
+          error:
+            error.message ||
+            `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    return { status: 1 }
+  }
+}
+
+/**
+ * Report an unsuccessful ODW launch using the CLI's established error envelope.
+ *
+ * @param {object} result - synchronous ODW launch result.
+ * @returns {{ status: number }} non-zero command status for the caller.
+ */
+function reportOdwLaunchFailure(result) {
+  const error = {
+    ok: false,
+    stage: 'odw',
+    status: result.status,
+    error: result.stderr.trim() || result.stdout.trim() || 'ODW failed',
+  }
+  process.stderr.write(`${JSON.stringify(error, null, 2)}\n`)
+  return { status: result.status || 1 }
+}
+
+/**
  * Run ODW asynchronously, streaming live log output to stderr while preserving a clean stdout result.
  *
  * Launches a non-waiting `odw run`, follows logs via {@link followOdwLogs}, then
@@ -701,14 +885,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   })
 
   if (result.status !== 0) {
-    const error = {
-      ok: false,
-      stage: 'odw',
-      status: result.status,
-      error: result.stderr.trim() || result.stdout.trim() || 'ODW failed',
-    }
-    process.stderr.write(`${JSON.stringify(error, null, 2)}\n`)
-    return { status: result.status || 1 }
+    return reportOdwLaunchFailure(result)
   }
 
   if (result.stderr.trim()) {
@@ -718,33 +895,15 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   const timeoutMs = (options.timeout || 3600) * 1000
   const resultDeadline = Date.now() + timeoutMs
   process.stderr.write(`dakar-review: following ODW run ${runId}\n`)
+  process.stderr.write(`${JSON.stringify({
+    event: 'dakar_trace_link',
+    traceId: CONTEXT_WARMUP_BOUNDARY.trace.traceId,
+    spanId: CONTEXT_WARMUP_BOUNDARY.trace.spanId,
+    runId,
+  })}\n`)
   const logStatus = await followOdwLogs(odwBin, buildRunScopedArgs('logs', options, runId, ['--follow']), timeoutMs)
   if (logStatus === 124) {
-    // A hung or outlasted log stream must not abandon a possibly-completed
-    // (and already billed) review: give the result one short grace fetch so
-    // a run that finished while the follow was stuck is still recorded.
-    process.stderr.write(
-      `dakar-review: log follow timed out after ${options.timeout || 3600}s; attempting one result fetch\n`,
-    )
-    try {
-      return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
-    } catch (error) {
-      process.stderr.write(
-        `${JSON.stringify(
-          {
-            ok: false,
-            stage: 'odw-logs',
-            runId,
-            error:
-              error.message ||
-              `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
-          },
-          null,
-          2,
-        )}\n`,
-      )
-      return { status: 1 }
-    }
+    return recoverOdwResultAfterLogTimeout(options, workflowArgs, runId)
   }
   if (logStatus !== 0) {
     process.stderr.write(`dakar-review: ODW log stream exited with status ${logStatus}; fetching result anyway\n`)
@@ -794,12 +953,12 @@ Review tuning (bounds enforced by the workflow; the CLI only forwards):
   --max-luna-calls <n>               Maximum Luna Flex finder calls (default: 4)
   --transaction-max-files <n>        Maximum files per finder pack (default: 5)
   --transaction-max-input-tokens <n> Finder input-token estimate (default: 12000)
-  --transaction-max-output-tokens <n> Finder output-token estimate (default: 750)
+  --transaction-max-output-tokens <n> Finder output-token estimate (default: 2000)
   --terra-max-input-tokens <n>       Audit input-token estimate (default: 48000)
-  --terra-max-output-tokens <n>      Audit output-token estimate (default: 2500)
+  --terra-max-output-tokens <n>      Audit output-token estimate (default: 5000)
   --adapter-overhead-tokens <n>      Per-call adapter overhead tokens (default: 13000)
   --max-audit-candidates <n>         Maximum candidates sent to the audit (default: 30)
-  --luna-reasoning <low|medium>      Luna finder reasoning effort (default: low)
+  --luna-reasoning <low|medium|high> Luna finder reasoning effort (default: high)
   --routing-policy <policy>          Routing policy (default: deterministic-flex-v1)
   --flex-attempts <n>                Flex retry attempts per call (default: 3)
   --per-call-timeout <seconds>       Per-model-call timeout (default: 300)
@@ -894,7 +1053,7 @@ function blockingGateResult(gates, config, prepared) {
 }
 
 /**
- * Reads executable gate policy from the trusted review base when repository-local.
+ * Read executable gate policy from the trusted review base when repository-local.
  *
  * A pull request may edit its own working-tree configuration, so executing that
  * text would grant the reviewed head command execution. Repository-local gate
@@ -910,7 +1069,7 @@ function blockingGateResult(gates, config, prepared) {
  */
 function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
   const relativePath = relative(repoRoot, configPath)
-  if (!isAbsolute(relativePath) && relativePath !== '..' && !relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
+  if (isRepositoryRelativePath(relativePath)) {
     const revisionPath = relativePath.replaceAll('\\', '/')
     const revision = `${reviewBase}:${revisionPath}`
     const result = spawnSync('git', ['-C', repoRoot, 'show', revision], {
@@ -928,13 +1087,75 @@ function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
 }
 
 /**
- * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
+ * Complete the host-side preflight required before a live ODW review.
  *
- * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
- * @returns {Promise<number>} process exit code; 0 on success, 1 on failure.
+ * This preserves the CLI boundary: preparation and deterministic failures emit
+ * their terminal result before ODW starts, while advisory authentication,
+ * context-index, and timeout warnings remain on stderr.
+ *
+ * @param {object} options - Parsed CLI options.
+ * @param {string} repoRoot - Absolute path to the reviewed repository root.
+ * @param {object} workflowArgs - Mutable workflow arguments for the ODW run.
+ * @param {string} format - Requested final output format.
+ * @returns {number | null} terminal exit code, or null after successful preflight.
  */
-async function run(argv) {
-  const options = parseArgs(argv)
+function prepareLiveReview(options, repoRoot, workflowArgs, format) {
+  const preparation = prepareReview(options, repoRoot, workflowArgs.config)
+  if (preparation.status !== undefined) return preparation.status
+  if (preparation.skip) {
+    // Route the skip result through the shared printer so it honours --format;
+    // a skip has no reportMarkdown, so markdown falls back to the JSON dump.
+    printWorkflowOutput(preparation.skip, format)
+    return 0
+  }
+  workflowArgs.prepared = preparation.prepared
+  const gateConfig = readTrustedGateConfig(workflowArgs.config, repoRoot, workflowArgs.prepared.reviewBase)
+  const trustedPolicy = parseReviewPolicy(gateConfig, {
+    configPath: `${workflowArgs.config} (trusted review base ${workflowArgs.prepared.reviewBase})`,
+  })
+  workflowArgs.policy = trustedPolicy
+  const deterministicGates = runDeterministicGates(trustedPolicy, repoRoot)
+  workflowArgs.prepared.deterministicGates = deterministicGates
+  if (deterministicGates.some((gate) => gate.blocking && gate.status !== 'passed')) {
+    printWorkflowOutput(blockingGateResult(deterministicGates, workflowArgs.config, workflowArgs.prepared), format)
+    return 1
+  }
+  // Every routing policy clamps to the live deterministic-flex-v1 lane
+  // (config.ts), which dispatches through the pi Flex adapters that resolve the
+  // API key from OPENAI_API_KEY. An unknown policy must not suppress this
+  // warning, so the gate keys off the key alone. Warn rather than fail so a
+  // mocked ODW binary still runs.
+  if (!process.env.OPENAI_API_KEY) {
+    process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
+  }
+  warmReviewedContextIndex(repoRoot, workflowArgs.prepared, CONTEXT_WARMUP_BOUNDARY)
+  // Advisory guard: an outer wait shorter than the retry schedule's worst
+  // case can kill a healthy run before the workflow's own deferral logic
+  // fires. The knob bounds mirror resolveWorkflowConfig's defaults.
+  const worstCase = worstCaseReviewSeconds(
+    {
+      flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),
+      flexInitialBackoffSeconds: clampLikeConfig(options.flexInitialBackoffSeconds, 30, 1, 300),
+      flexMaxBackoffSeconds: clampLikeConfig(options.flexMaxBackoffSeconds, 120, 1, 900),
+      flexJitterSeconds: clampLikeConfig(options.flexJitterSeconds, 10, 0, 60),
+    },
+    clampPerCallTimeout(options.perCallTimeoutSeconds),
+  )
+  if ((options.timeout || 3600) < worstCase) {
+    process.stderr.write(
+      `dakar-review: --timeout ${options.timeout || 3600}s is below the retry schedule's worst case (${worstCase}s); the run may be killed before the workflow can defer.\n`,
+    )
+  }
+  return null
+}
+
+/**
+ * Print a terminal meta-option response when the CLI should not start a review.
+ *
+ * @param {object} options - Parsed CLI options.
+ * @returns {number | null} terminal exit code, or null when review work continues.
+ */
+function metaOptionExitCode(options) {
   if (options.help) {
     process.stdout.write(usage())
     return 0
@@ -943,63 +1164,31 @@ async function run(argv) {
     process.stdout.write('0.1.0\n')
     return 0
   }
+  return null
+}
 
-  const repoRoot = resolve(options.repoRoot || process.cwd())
+/**
+ * Resolve and validate the requested final output format.
+ *
+ * @param {object} options - Parsed CLI options.
+ * @returns {string} the supported JSON or Markdown output format.
+ * @throws {Error} When the requested format is unsupported.
+ */
+function outputFormat(options) {
   const format = options.format || 'json'
-  if (!['json', 'markdown'].includes(format)) {
-    throw new Error('--format must be json or markdown')
-  }
+  if (!['json', 'markdown'].includes(format)) throw new Error('--format must be json or markdown')
+  return format
+}
 
-  const workflowArgs = buildWorkflowArgs(options, repoRoot)
-  if (!options.dryRun) {
-    const preparation = prepareReview(options, repoRoot, workflowArgs.config)
-    if (preparation.status !== undefined) {
-      return preparation.status
-    }
-    if (preparation.skip) {
-      // Route the skip result through the shared printer so it honours --format;
-      // a skip has no reportMarkdown, so markdown falls back to the JSON dump.
-      printWorkflowOutput(preparation.skip, format)
-      return 0
-    }
-    workflowArgs.prepared = preparation.prepared
-    const gateConfig = readTrustedGateConfig(workflowArgs.config, repoRoot, workflowArgs.prepared.reviewBase)
-    const trustedPolicy = parseReviewPolicy(gateConfig, {
-      configPath: `${workflowArgs.config} (trusted review base ${workflowArgs.prepared.reviewBase})`,
-    })
-    workflowArgs.policy = trustedPolicy
-    const deterministicGates = runDeterministicGates(trustedPolicy, repoRoot)
-    workflowArgs.prepared.deterministicGates = deterministicGates
-    if (deterministicGates.some((gate) => gate.blocking && gate.status !== 'passed')) {
-      printWorkflowOutput(blockingGateResult(deterministicGates, workflowArgs.config, workflowArgs.prepared), format)
-      return 1
-    }
-    // Every routing policy clamps to the live deterministic-flex-v1 lane
-    // (config.ts), which dispatches through the pi Flex adapters that resolve the
-    // API key from OPENAI_API_KEY. An unknown policy must not suppress this
-    // warning, so the gate keys off the key alone. Warn rather than fail so a
-    // mocked ODW binary still runs.
-    if (!process.env.OPENAI_API_KEY) {
-      process.stderr.write('dakar-review: OPENAI_API_KEY is not set; the pi Flex adapters will fail to authenticate.\n')
-    }
-    // Advisory guard: an outer wait shorter than the retry schedule's worst
-    // case can kill a healthy run before the workflow's own deferral logic
-    // fires. The knob bounds mirror resolveWorkflowConfig's defaults.
-    const worstCase = worstCaseReviewSeconds(
-      {
-        flexAttempts: clampLikeConfig(options.flexAttempts, 3, 1, 6),
-        flexInitialBackoffSeconds: clampLikeConfig(options.flexInitialBackoffSeconds, 30, 1, 300),
-        flexMaxBackoffSeconds: clampLikeConfig(options.flexMaxBackoffSeconds, 120, 1, 900),
-        flexJitterSeconds: clampLikeConfig(options.flexJitterSeconds, 10, 0, 60),
-      },
-      clampPerCallTimeout(options.perCallTimeoutSeconds),
-    )
-    if ((options.timeout || 3600) < worstCase) {
-      process.stderr.write(
-        `dakar-review: --timeout ${options.timeout || 3600}s is below the retry schedule's worst case (${worstCase}s); the run may be killed before the workflow can defer.\n`,
-      )
-    }
-  }
+/**
+ * Launch ODW after preflight and emit its final workflow result.
+ *
+ * @param {object} options - Parsed CLI options, mutated only with the run-local config path.
+ * @param {object} workflowArgs - Prepared workflow arguments for the ODW run.
+ * @param {string} format - Requested final output format.
+ * @returns {Promise<number>} process exit code for the completed ODW result.
+ */
+async function launchOdw(options, workflowArgs, format) {
   // Derive a run-local ODW config that bounds the pi Flex calls with the per-call
   // timeout, then remove it after the run like the usage-log file.
   options.odwConfigPath = writeDerivedOdwConfig(clampPerCallTimeout(options.perCallTimeoutSeconds))
@@ -1015,14 +1204,33 @@ async function run(argv) {
       // A leftover temp file is harmless.
     }
   }
-  if (outcome.status !== undefined) {
-    return outcome.status
-  }
+  if (outcome.status !== undefined) return outcome.status
   // Reported usage is attached and folded into recordInput before recording by
   // finalizeWorkflowResult; nothing further to enrich here.
   const output = outcome.output
   printWorkflowOutput(output, format)
   return output.ok === false ? 1 : 0
+}
+/**
+ * Entry point: parse arguments, invoke ODW, print results, and return an exit code.
+ *
+ * @param {string[]} argv - raw argument tokens (typically `process.argv.slice(2)`).
+ * @returns {Promise<number>} process exit code; 0 on success, 1 on failure.
+ */
+async function run(argv) {
+  const options = parseArgs(argv)
+  const metaExitCode = metaOptionExitCode(options)
+  if (metaExitCode !== null) return metaExitCode
+
+  const repoRoot = resolve(options.repoRoot || process.cwd())
+  const format = outputFormat(options)
+
+  const workflowArgs = buildWorkflowArgs(options, repoRoot)
+  if (!options.dryRun) {
+    const preflightStatus = prepareLiveReview(options, repoRoot, workflowArgs, format)
+    if (preflightStatus !== null) return preflightStatus
+  }
+  return launchOdw(options, workflowArgs, format)
 }
 
 try {

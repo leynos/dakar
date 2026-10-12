@@ -11,5 +11,5 @@
     "target": "ES2024",
     "verbatimModuleSyntax": true
   },
-  "include": ["src/workflows/dakar-review/**/*.ts"]
+  "include": ["src/workflows/dakar-review/**/*.ts", "tests/types/**/*.ts"]
 }
