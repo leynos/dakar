@@ -137,6 +137,9 @@ test('compatibility findings and discards are deterministic SARIF projections', 
 
 test('finding projection returns no findings without a first run or results', () => {
   assert.deepEqual(projectFindingsFromSarif({ runs: [] }), [])
+  assert.deepEqual(projectFindingsFromSarif({ runs: [null] }), [])
+  assert.deepEqual(projectDiscardedFromSarif({ runs: [null] }), [])
+  assert.match(renderSarifMarkdown({ runs: [null] }), /No blocking findings were accepted\./u)
   assert.deepEqual(projectFindingsFromSarif(projectedDocument([])), [])
   assert.deepEqual(
     projectFindingsFromSarif(projectedDocument([], [projectedResult(semanticDakarResult())])),
@@ -349,6 +352,49 @@ test('projections retain sparse traversal and malformed-result failures', () => 
     assert.throws(() => project(projectedDocument([null])), TypeError, 'null results retain their existing failure')
     assert.throws(() => project({ runs: [{}] }), TypeError, 'missing results retain their existing failure')
   }
+})
+
+test('projections ignore result rows without object Dakar properties', () => {
+  const sarif = projectedDocument([
+    {},
+    { properties: null },
+    { properties: 'invalid' },
+    { properties: {} },
+    { properties: { dakar: null } },
+    { properties: { dakar: 42 } },
+    projectedResult(semanticDakarResult()),
+  ])
+
+  assert.equal(projectFindingsFromSarif(sarif).length, 1)
+  assert.deepEqual(projectDiscardedFromSarif(sarif), [])
+  assert.match(renderSarifMarkdown(sarif), /^## high: Finding title$/mu)
+})
+
+test('accepted candidate stubs retain the legacy sparse finding shape', () => {
+  const sarif = projectedDocument([
+    projectedResult({ kind: 'semantic', candidate: { candidateId: 'stub' }, disposition: { status: 'accepted' } }),
+    projectedResult({
+      kind: 'semantic',
+      candidate: { candidateId: 'partial', severity: 'medium', path: 'src/partial.ts', line: 3, title: 'Partial' },
+      disposition: { status: 'accepted' },
+    }),
+  ])
+
+  assert.deepEqual(projectFindingsFromSarif(sarif), [
+    { severity: undefined, path: undefined, line: undefined, title: undefined, detail: '', evidence: '', clusterId: undefined, sourceTasks: [undefined] },
+    { severity: 'medium', path: 'src/partial.ts', line: 3, title: 'Partial', detail: '', evidence: '', clusterId: undefined, sourceTasks: [undefined] },
+  ])
+})
+
+test('selection stringifies status and ignores malformed gate dispositions', () => {
+  const sarif = projectedDocument([
+    projectedResult(semanticDakarResult({ disposition: { status: ['accepted'] } })),
+    { message: { text: 'gate without disposition' }, properties: { dakar: { kind: 'deterministic-gate', disposition: null } } },
+  ])
+
+  assert.equal(projectFindingsFromSarif(sarif).length, 1)
+  assert.deepEqual(projectDiscardedFromSarif(sarif), [])
+  assert.match(renderSarifMarkdown(sarif), /1 confirmed finding require changes\./u)
 })
 
 test('SARIF projections preserve audited severity and distinguish advisory gates', () => {

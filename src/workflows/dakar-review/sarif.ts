@@ -4,10 +4,14 @@
  * @module
  */
 
+import * as z from 'zod'
 import type { Candidate, DeterministicGateResult, Discarded, LedgerEntry, Verdict } from './types.ts'
 
 /** SARIF keeps explicit JSON nulls for its optional provenance records. */
 const JSON_NULL: null = JSON.parse('null')
+
+/** Accept object-shaped SARIF properties without replacing their references. */
+const sarifObjectSchema = z.union([z.looseObject({}), z.array(z.unknown())])
 
 /** One SARIF rule descriptor emitted by the Dakar tool driver. */
 interface SarifRuleDescriptor {
@@ -85,7 +89,15 @@ export interface DakarSarif {
   }>
 }
 
-type CandidateEvidence = Candidate | { candidateId?: string }
+type CandidateEvidence = Candidate | {
+  candidateId?: string
+  severity?: string
+  path?: string
+  line?: number
+  title?: string
+  detail?: string
+  evidence?: string
+}
 
 interface SemanticDisposition {
   status: string
@@ -189,11 +201,11 @@ function candidateEvidence(candidate: CandidateEvidence): CandidateEvidence {
 
 /** Builds a SARIF location only when normalized source evidence supplies a path. */
 function locationsFor(candidate: CandidateEvidence): NonNullable<SarifResult['locations']> {
-  if (!('path' in candidate) || candidate.path === '') return []
+  if (!candidate.path) return []
   const physicalLocation: NonNullable<SarifResult['locations']>[number]['physicalLocation'] = {
     artifactLocation: { uri: candidate.path },
   }
-  if (candidate.line > 0) physicalLocation.region = { startLine: candidate.line }
+  if (candidate.line !== undefined && candidate.line > 0) physicalLocation.region = { startLine: candidate.line }
   return [{ physicalLocation }]
 }
 
@@ -404,81 +416,67 @@ export function assembleSarif(input: SarifAssemblyInput): DakarSarif {
   }
 }
 
+/** Reads Dakar properties from an object-shaped result, retaining the original reference. */
+function dakarProperties(result: SarifResult): SarifResult['properties']['dakar'] | undefined {
+  const { properties } = result
+  if (!sarifObjectSchema.safeParse(properties).success) return undefined
+  const { dakar } = properties
+  if (!sarifObjectSchema.safeParse(dakar).success) return undefined
+  return dakar
+}
+
 /** Returns semantic results from the first run without changing projection order. */
 function semanticResults(sarif: DakarSarif): SemanticDakarProperties[] {
   const [run] = sarif.runs
-  if (run === undefined) return []
+  if (!run) return []
   return run.results.flatMap((result) => {
-    const { dakar } = result.properties
-    return dakar.kind === 'semantic' ? [dakar] : []
+    const dakar = dakarProperties(result)
+    return dakar?.kind === 'semantic' ? [dakar] : []
   })
 }
 
 interface CompatibilityFinding {
-  severity: string
-  path: string
+  severity: string | undefined
+  path: string | undefined
   line: number | undefined
-  title: string
+  title: string | undefined
   detail: string
   evidence: string
   clusterId: string | undefined
-  sourceTasks: string[]
+  sourceTasks: Array<string | undefined>
 }
 
 /** Converts accepted Dakar result properties to the legacy finding shape. */
 function compatibilityFinding(dakar: SemanticDakarProperties): CompatibilityFinding {
-  const { candidate } = dakar
-  if (!('taskId' in candidate)) {
-    return emptyCompatibilityFinding(dakar)
-  }
-  return candidateCompatibilityFinding(candidate, dakar)
-}
-
-/** Projects complete candidate evidence into the legacy finding shape. */
-function candidateCompatibilityFinding(candidate: Candidate, dakar: SemanticDakarProperties): CompatibilityFinding {
-  const { disposition, audit } = dakar
+  const { candidate, disposition, audit } = dakar
   const location = compatibilityLocation(candidate)
   const description = compatibilityDescription(candidate)
   return {
-    severity: disposition?.acceptedSeverity || candidate.severity || 'low',
+    severity: disposition?.acceptedSeverity || candidate.severity,
     path: location.path,
     line: location.line,
     title: description.title,
     detail: description.detail,
     evidence: description.evidence,
     clusterId: audit?.clusterId || undefined,
-    sourceTasks: [candidate.taskId],
+    sourceTasks: ['taskId' in candidate ? candidate.taskId : undefined],
   }
 }
 
 /** Normalizes the descriptive text fields for legacy consumers. */
-function compatibilityDescription(candidate: Candidate): Pick<CompatibilityFinding, 'title' | 'detail' | 'evidence'> {
+function compatibilityDescription(candidate: CandidateEvidence): Pick<CompatibilityFinding, 'title' | 'detail' | 'evidence'> {
   return {
-    title: candidate.title || '',
+    title: candidate.title,
     detail: candidate.detail || '',
     evidence: candidate.evidence || '',
   }
 }
 
-/** Preserves the legacy blank projection for an accepted result without a candidate. */
-function emptyCompatibilityFinding(dakar: SemanticDakarProperties): CompatibilityFinding {
-  return {
-    severity: dakar.disposition?.acceptedSeverity || 'low',
-    path: '',
-    line: undefined,
-    title: '',
-    detail: '',
-    evidence: '',
-    clusterId: dakar.audit?.clusterId || undefined,
-    sourceTasks: [],
-  }
-}
-
 /** Normalizes a candidate's path and positive line for legacy consumers. */
-function compatibilityLocation(candidate: Candidate): Pick<CompatibilityFinding, 'path' | 'line'> {
+function compatibilityLocation(candidate: CandidateEvidence): Pick<CompatibilityFinding, 'path' | 'line'> {
   const { line } = candidate
   return {
-    path: candidate.path || '',
+    path: candidate.path,
     line: line !== undefined && line > 0 ? line : undefined,
   }
 }
@@ -491,7 +489,7 @@ function compatibilityLocation(candidate: Candidate): Pick<CompatibilityFinding,
  */
 export function projectFindingsFromSarif(sarif: DakarSarif): CompatibilityFinding[] {
   return semanticResults(sarif).flatMap((dakar) => {
-    if (!['accepted', 'severity_downgraded'].includes(dakar.disposition?.status || '')) return []
+    if (!['accepted', 'severity_downgraded'].includes(String(dakar.disposition?.status))) return []
     return [compatibilityFinding(dakar)]
   })
 }
@@ -515,9 +513,17 @@ function compatibilityDiscard(dakar: SemanticDakarProperties): Discarded {
  */
 export function projectDiscardedFromSarif(sarif: DakarSarif): Discarded[] {
   return semanticResults(sarif).flatMap((dakar) => {
-    if (['accepted', 'severity_downgraded'].includes(dakar.disposition?.status || '')) return []
+    if (['accepted', 'severity_downgraded'].includes(String(dakar.disposition?.status))) return []
     return [compatibilityDiscard(dakar)]
   })
+}
+
+/** Identifies gate results with an object-shaped blocking disposition. */
+function isBlockingGate(result: SarifResult): boolean {
+  const dakar = dakarProperties(result)
+  return dakar?.kind === 'deterministic-gate'
+    && sarifObjectSchema.safeParse(dakar.disposition).success
+    && dakar.disposition.status === 'blocking'
 }
 
 /**
@@ -529,11 +535,8 @@ export function projectDiscardedFromSarif(sarif: DakarSarif): Discarded[] {
 export function renderSarifMarkdown(sarif: DakarSarif): string {
   const findings = projectFindingsFromSarif(sarif)
   const [run] = sarif.runs
-  const gateFailures = (run?.results || []).filter((result) => result.properties.dakar.kind === 'deterministic-gate')
-  const blockingGateFailures = gateFailures.filter((result) => {
-    const dakar = result.properties.dakar
-    return dakar.kind === 'deterministic-gate' && dakar.disposition.status === 'blocking'
-  })
+  const gateFailures = (run?.results || []).filter((result) => dakarProperties(result)?.kind === 'deterministic-gate')
+  const blockingGateFailures = gateFailures.filter((result) => isBlockingGate(result))
   const summary = blockingGateFailures.length > 0
     ? `${blockingGateFailures.length} blocking deterministic gate failure${blockingGateFailures.length === 1 ? '' : 's'} require remediation.`
     : (findings.length === 0

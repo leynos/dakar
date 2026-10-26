@@ -454,311 +454,6 @@ function worstCaseReviewSeconds(config2, perCallTimeoutSeconds) {
   return chain + chain;
 }
 
-// src/workflows/dakar-review/sarif.ts
-var JSON_NULL = JSON.parse("null");
-var SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
-function sarifLevel(severity) {
-  if (severity === "critical" || severity === "high") return "error";
-  if (severity === "medium") return "warning";
-  return "note";
-}
-function candidateEvidence(candidate) {
-  if (!("taskId" in candidate)) return { candidateId: candidate.candidateId };
-  return {
-    candidateId: candidate.candidateId,
-    taskId: candidate.taskId,
-    taskKind: candidate.taskKind,
-    sourceModel: candidate.sourceModel,
-    verificationPolicy: candidate.verificationPolicy,
-    title: candidate.title,
-    severity: candidate.severity,
-    path: candidate.path,
-    line: candidate.line,
-    detail: candidate.detail,
-    evidence: candidate.evidence,
-    confidence: candidate.confidence,
-    policyRefs: [...candidate.policyRefs]
-  };
-}
-function locationsFor(candidate) {
-  if (!("path" in candidate) || candidate.path === "") return [];
-  const physicalLocation = {
-    artifactLocation: { uri: candidate.path }
-  };
-  if (candidate.line > 0) physicalLocation.region = { startLine: candidate.line };
-  return [{ physicalLocation }];
-}
-function verdictFor(candidateId, verdicts) {
-  return verdicts.find((verdict) => verdict.candidateId === candidateId);
-}
-function ledgerFor(candidate, ledger) {
-  if (!("taskId" in candidate)) return void 0;
-  return ledger.find((entry) => entry.callId === candidate.taskId);
-}
-function verdictDisposition(verdict, fallbackStatus) {
-  return {
-    status: verdict?.status || fallbackStatus,
-    reason: verdict?.reason || "",
-    evidenceChecked: verdict?.evidenceChecked || ""
-  };
-}
-function discardDisposition(discard, disposition) {
-  return {
-    status: discard?.status || disposition.status,
-    reason: discard?.reason || disposition.reason,
-    evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked
-  };
-}
-function semanticDisposition(accepted, discard, verdict) {
-  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
-  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
-  return discardDisposition(discard, disposition);
-}
-function semanticProvenance(candidate, sourceLedger) {
-  return {
-    taskId: candidate.taskId,
-    taskKind: candidate.taskKind,
-    model: candidate.sourceModel,
-    lane: sourceLedger?.lane || "luna-flex",
-    serviceTier: sourceLedger?.serviceTier || "flex",
-    reasoningEffort: sourceLedger?.reasoningEffort
-  };
-}
-function semanticSarifResult(candidate, evidence, pricingTableVersion) {
-  const { accepted, discard, verdict, sourceLedger } = evidence;
-  const disposition = semanticDisposition(accepted, discard, verdict);
-  const dakar = {
-    kind: "semantic",
-    candidate: candidateEvidence(candidate),
-    provenance: semanticProvenance(candidate, sourceLedger),
-    audit: verdict === void 0 ? JSON_NULL : { ...verdict },
-    disposition,
-    clusterId: verdict?.clusterId,
-    cost: sourceLedger === void 0 ? JSON_NULL : { ...sourceLedger },
-    pricingTableVersion
-  };
-  const result = {
-    ruleId: `dakar/semantic/${candidate.candidateId}`,
-    level: sarifLevel(accepted?.severity || candidate.severity),
-    message: { text: candidate.title },
-    locations: locationsFor(candidate),
-    fingerprints: {
-      "dakar/candidateId": candidate.candidateId,
-      "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
-    }
-  };
-  if (accepted === void 0) {
-    return {
-      ...result,
-      suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }],
-      properties: { dakar }
-    };
-  }
-  return { ...result, properties: { dakar } };
-}
-function extraDiscardResults(input, candidates, verdicts) {
-  const knownCandidateIds = new Set(candidates.map((candidate) => candidate.candidateId));
-  return (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => {
-    const candidateId = item.candidate.candidateId || "unknown";
-    const audit = verdictFor(item.candidate.candidateId, verdicts);
-    const dakar = {
-      kind: "semantic",
-      candidate: candidateEvidence(item.candidate),
-      provenance: JSON_NULL,
-      audit: audit || JSON_NULL,
-      disposition: { status: item.status, reason: item.reason, evidenceChecked: item.evidenceChecked },
-      cost: JSON_NULL,
-      pricingTableVersion: input.pricingTableVersion
-    };
-    return {
-      ruleId: `dakar/semantic/${candidateId}`,
-      level: "note",
-      message: { text: item.reason },
-      locations: locationsFor(item.candidate),
-      fingerprints: { "dakar/candidateId": candidateId },
-      suppressions: [{ kind: "external", status: "accepted", justification: item.reason }],
-      properties: { dakar }
-    };
-  });
-}
-function gateSarifResults(input) {
-  return (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
-    ruleId: `dakar/gate/${gate.gateId}`,
-    level: gate.blocking ? "error" : "warning",
-    message: { text: `${gate.name} ${gate.status}: ${gate.command}` },
-    fingerprints: { "dakar/gateId": gate.gateId },
-    properties: {
-      dakar: {
-        kind: "deterministic-gate",
-        gate: { ...gate },
-        disposition: { status: gate.blocking ? "blocking" : "non-blocking" },
-        pricingTableVersion: input.pricingTableVersion
-      }
-    }
-  }));
-}
-function gatesAllowExecution(gates) {
-  return gates.every((gate) => gate.status === "passed" || !gate.blocking);
-}
-function candidateInventory(candidates) {
-  return [...candidates || []];
-}
-function assembleSarif(input) {
-  const candidates = candidateInventory(input.candidates);
-  const acceptedById = new Map(
-    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
-  );
-  const verdicts = [...input.verdicts || []];
-  const ledger = [...input.ledger || []];
-  const discardById = new Map(
-    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
-  );
-  const semanticResults2 = candidates.map((candidate) => {
-    const accepted = acceptedById.get(candidate.candidateId);
-    const discard = discardById.get(candidate.candidateId);
-    const verdict = verdictFor(candidate.candidateId, verdicts);
-    const sourceLedger = ledgerFor(candidate, ledger);
-    return semanticSarifResult(candidate, { accepted, discard, verdict, sourceLedger }, input.pricingTableVersion);
-  }).toSorted((left, right) => {
-    const leftId = left.fingerprints["dakar/candidateId"] ?? "";
-    const rightId = right.fingerprints["dakar/candidateId"] ?? "";
-    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
-  });
-  const extraDiscards = extraDiscardResults(input, candidates, verdicts);
-  const gateResults = gateSarifResults(input);
-  const results = [...gateResults, ...semanticResults2, ...extraDiscards];
-  const ruleIds = [...new Set(results.map((result) => result.ruleId))].toSorted();
-  const gates = (input.gates || []).map((gate) => ({ ...gate }));
-  return {
-    $schema: SARIF_SCHEMA,
-    version: "2.1.0",
-    runs: [{
-      tool: {
-        driver: {
-          name: "Dakar",
-          version: "0.1.0",
-          rules: ruleIds.map((id) => ({ id, name: id }))
-        }
-      },
-      invocations: [{ executionSuccessful: gatesAllowExecution(gates), properties: { dakar: { gates } } }],
-      results,
-      properties: {
-        dakar: {
-          pricingTableVersion: input.pricingTableVersion,
-          ledger: ledger.map((entry) => ({ ...entry })),
-          auditVerdicts: verdicts.map((verdict) => ({ ...verdict }))
-        }
-      }
-    }]
-  };
-}
-function semanticResults(sarif) {
-  const [run2] = sarif.runs;
-  if (run2 === void 0) return [];
-  return run2.results.flatMap((result) => {
-    const { dakar } = result.properties;
-    return dakar.kind === "semantic" ? [dakar] : [];
-  });
-}
-function compatibilityFinding(dakar) {
-  const { candidate } = dakar;
-  if (!("taskId" in candidate)) {
-    return emptyCompatibilityFinding(dakar);
-  }
-  return candidateCompatibilityFinding(candidate, dakar);
-}
-function candidateCompatibilityFinding(candidate, dakar) {
-  const { disposition, audit } = dakar;
-  const location = compatibilityLocation(candidate);
-  const description = compatibilityDescription(candidate);
-  return {
-    severity: disposition?.acceptedSeverity || candidate.severity || "low",
-    path: location.path,
-    line: location.line,
-    title: description.title,
-    detail: description.detail,
-    evidence: description.evidence,
-    clusterId: audit?.clusterId || void 0,
-    sourceTasks: [candidate.taskId]
-  };
-}
-function compatibilityDescription(candidate) {
-  return {
-    title: candidate.title || "",
-    detail: candidate.detail || "",
-    evidence: candidate.evidence || ""
-  };
-}
-function emptyCompatibilityFinding(dakar) {
-  return {
-    severity: dakar.disposition?.acceptedSeverity || "low",
-    path: "",
-    line: void 0,
-    title: "",
-    detail: "",
-    evidence: "",
-    clusterId: dakar.audit?.clusterId || void 0,
-    sourceTasks: []
-  };
-}
-function compatibilityLocation(candidate) {
-  const { line } = candidate;
-  return {
-    path: candidate.path || "",
-    line: line !== void 0 && line > 0 ? line : void 0
-  };
-}
-function projectFindingsFromSarif(sarif) {
-  return semanticResults(sarif).flatMap((dakar) => {
-    if (!["accepted", "severity_downgraded"].includes(dakar.disposition?.status || "")) return [];
-    return [compatibilityFinding(dakar)];
-  });
-}
-function compatibilityDiscard(dakar) {
-  const { disposition } = dakar;
-  return {
-    candidate: dakar.candidate,
-    status: String(disposition?.status || ""),
-    reason: String(disposition?.reason || ""),
-    evidenceChecked: String(disposition?.evidenceChecked || "")
-  };
-}
-function projectDiscardedFromSarif(sarif) {
-  return semanticResults(sarif).flatMap((dakar) => {
-    if (["accepted", "severity_downgraded"].includes(dakar.disposition?.status || "")) return [];
-    return [compatibilityDiscard(dakar)];
-  });
-}
-function renderSarifMarkdown(sarif) {
-  const findings = projectFindingsFromSarif(sarif);
-  const [run2] = sarif.runs;
-  const gateFailures = (run2?.results || []).filter((result) => result.properties.dakar.kind === "deterministic-gate");
-  const blockingGateFailures = gateFailures.filter((result) => {
-    const dakar = result.properties.dakar;
-    return dakar.kind === "deterministic-gate" && dakar.disposition.status === "blocking";
-  });
-  const summary = blockingGateFailures.length > 0 ? `${blockingGateFailures.length} blocking deterministic gate failure${blockingGateFailures.length === 1 ? "" : "s"} require remediation.` : findings.length === 0 ? "No blocking findings were accepted." : `${findings.length} confirmed finding${findings.length === 1 ? "" : "s"} require changes.`;
-  return [
-    "# Dakar review",
-    "",
-    summary,
-    ...gateFailures.flatMap((result) => ["", `## deterministic gate: ${result.message.text}`]),
-    ...findings.flatMap((finding) => [
-      "",
-      `## ${finding.severity}: ${finding.title}`,
-      "",
-      `${finding.path}${finding.line ? `:${finding.line}` : ""}`,
-      "",
-      finding.detail,
-      "",
-      `Evidence: ${finding.evidence}`
-    ])
-  ].join("\n");
-}
-
-// bin/dakar-review.mjs
-import { appendReview, prepare } from "../scripts/review-state.mjs";
-
 // node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
@@ -6675,6 +6370,14 @@ function object(shape, params) {
   };
   return new ZodObject(def);
 }
+function looseObject(shape, params) {
+  return new ZodObject({
+    type: "object",
+    shape,
+    catchall: unknown(),
+    ...util_exports.normalizeParams(params)
+  });
+}
 var ZodUnion = /* @__PURE__ */ $constructor("ZodUnion", (inst, def) => {
   $ZodUnion.init(inst, def);
   ZodType.init(inst, def);
@@ -6961,7 +6664,300 @@ function json(params) {
   return jsonSchema;
 }
 
+// src/workflows/dakar-review/sarif.ts
+var JSON_NULL = JSON.parse("null");
+var sarifObjectSchema = union([looseObject({}), array(unknown())]);
+var SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
+function sarifLevel(severity) {
+  if (severity === "critical" || severity === "high") return "error";
+  if (severity === "medium") return "warning";
+  return "note";
+}
+function candidateEvidence(candidate) {
+  if (!("taskId" in candidate)) return { candidateId: candidate.candidateId };
+  return {
+    candidateId: candidate.candidateId,
+    taskId: candidate.taskId,
+    taskKind: candidate.taskKind,
+    sourceModel: candidate.sourceModel,
+    verificationPolicy: candidate.verificationPolicy,
+    title: candidate.title,
+    severity: candidate.severity,
+    path: candidate.path,
+    line: candidate.line,
+    detail: candidate.detail,
+    evidence: candidate.evidence,
+    confidence: candidate.confidence,
+    policyRefs: [...candidate.policyRefs]
+  };
+}
+function locationsFor(candidate) {
+  if (!candidate.path) return [];
+  const physicalLocation = {
+    artifactLocation: { uri: candidate.path }
+  };
+  if (candidate.line !== void 0 && candidate.line > 0) physicalLocation.region = { startLine: candidate.line };
+  return [{ physicalLocation }];
+}
+function verdictFor(candidateId, verdicts) {
+  return verdicts.find((verdict) => verdict.candidateId === candidateId);
+}
+function ledgerFor(candidate, ledger) {
+  if (!("taskId" in candidate)) return void 0;
+  return ledger.find((entry) => entry.callId === candidate.taskId);
+}
+function verdictDisposition(verdict, fallbackStatus) {
+  return {
+    status: verdict?.status || fallbackStatus,
+    reason: verdict?.reason || "",
+    evidenceChecked: verdict?.evidenceChecked || ""
+  };
+}
+function discardDisposition(discard, disposition) {
+  return {
+    status: discard?.status || disposition.status,
+    reason: discard?.reason || disposition.reason,
+    evidenceChecked: discard?.evidenceChecked || disposition.evidenceChecked
+  };
+}
+function semanticDisposition(accepted, discard, verdict) {
+  const disposition = verdictDisposition(verdict, accepted ? "accepted" : "not_selected");
+  if (accepted) return { ...disposition, acceptedSeverity: accepted.severity };
+  return discardDisposition(discard, disposition);
+}
+function semanticProvenance(candidate, sourceLedger) {
+  return {
+    taskId: candidate.taskId,
+    taskKind: candidate.taskKind,
+    model: candidate.sourceModel,
+    lane: sourceLedger?.lane || "luna-flex",
+    serviceTier: sourceLedger?.serviceTier || "flex",
+    reasoningEffort: sourceLedger?.reasoningEffort
+  };
+}
+function semanticSarifResult(candidate, evidence, pricingTableVersion) {
+  const { accepted, discard, verdict, sourceLedger } = evidence;
+  const disposition = semanticDisposition(accepted, discard, verdict);
+  const dakar = {
+    kind: "semantic",
+    candidate: candidateEvidence(candidate),
+    provenance: semanticProvenance(candidate, sourceLedger),
+    audit: verdict === void 0 ? JSON_NULL : { ...verdict },
+    disposition,
+    clusterId: verdict?.clusterId,
+    cost: sourceLedger === void 0 ? JSON_NULL : { ...sourceLedger },
+    pricingTableVersion
+  };
+  const result = {
+    ruleId: `dakar/semantic/${candidate.candidateId}`,
+    level: sarifLevel(accepted?.severity || candidate.severity),
+    message: { text: candidate.title },
+    locations: locationsFor(candidate),
+    fingerprints: {
+      "dakar/candidateId": candidate.candidateId,
+      "dakar/semanticFingerprint": candidate.candidateId.slice(candidate.taskId.length + 1)
+    }
+  };
+  if (accepted === void 0) {
+    return {
+      ...result,
+      suppressions: [{ kind: "external", status: "accepted", justification: disposition.reason }],
+      properties: { dakar }
+    };
+  }
+  return { ...result, properties: { dakar } };
+}
+function extraDiscardResults(input, candidates, verdicts) {
+  const knownCandidateIds = new Set(candidates.map((candidate) => candidate.candidateId));
+  return (input.discarded || []).filter((item) => !knownCandidateIds.has(item.candidate.candidateId || "")).map((item) => {
+    const candidateId = item.candidate.candidateId || "unknown";
+    const audit = verdictFor(item.candidate.candidateId, verdicts);
+    const dakar = {
+      kind: "semantic",
+      candidate: candidateEvidence(item.candidate),
+      provenance: JSON_NULL,
+      audit: audit || JSON_NULL,
+      disposition: { status: item.status, reason: item.reason, evidenceChecked: item.evidenceChecked },
+      cost: JSON_NULL,
+      pricingTableVersion: input.pricingTableVersion
+    };
+    return {
+      ruleId: `dakar/semantic/${candidateId}`,
+      level: "note",
+      message: { text: item.reason },
+      locations: locationsFor(item.candidate),
+      fingerprints: { "dakar/candidateId": candidateId },
+      suppressions: [{ kind: "external", status: "accepted", justification: item.reason }],
+      properties: { dakar }
+    };
+  });
+}
+function gateSarifResults(input) {
+  return (input.gates || []).filter((gate) => gate.status !== "passed").map((gate) => ({
+    ruleId: `dakar/gate/${gate.gateId}`,
+    level: gate.blocking ? "error" : "warning",
+    message: { text: `${gate.name} ${gate.status}: ${gate.command}` },
+    fingerprints: { "dakar/gateId": gate.gateId },
+    properties: {
+      dakar: {
+        kind: "deterministic-gate",
+        gate: { ...gate },
+        disposition: { status: gate.blocking ? "blocking" : "non-blocking" },
+        pricingTableVersion: input.pricingTableVersion
+      }
+    }
+  }));
+}
+function gatesAllowExecution(gates) {
+  return gates.every((gate) => gate.status === "passed" || !gate.blocking);
+}
+function candidateInventory(candidates) {
+  return [...candidates || []];
+}
+function assembleSarif(input) {
+  const candidates = candidateInventory(input.candidates);
+  const acceptedById = new Map(
+    (input.accepted || []).map((candidate) => [candidate.candidateId, candidate])
+  );
+  const verdicts = [...input.verdicts || []];
+  const ledger = [...input.ledger || []];
+  const discardById = new Map(
+    (input.discarded || []).map((item) => [item.candidate.candidateId, item])
+  );
+  const semanticResults2 = candidates.map((candidate) => {
+    const accepted = acceptedById.get(candidate.candidateId);
+    const discard = discardById.get(candidate.candidateId);
+    const verdict = verdictFor(candidate.candidateId, verdicts);
+    const sourceLedger = ledgerFor(candidate, ledger);
+    return semanticSarifResult(candidate, { accepted, discard, verdict, sourceLedger }, input.pricingTableVersion);
+  }).toSorted((left, right) => {
+    const leftId = left.fingerprints["dakar/candidateId"] ?? "";
+    const rightId = right.fingerprints["dakar/candidateId"] ?? "";
+    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
+  });
+  const extraDiscards = extraDiscardResults(input, candidates, verdicts);
+  const gateResults = gateSarifResults(input);
+  const results = [...gateResults, ...semanticResults2, ...extraDiscards];
+  const ruleIds = [...new Set(results.map((result) => result.ruleId))].toSorted();
+  const gates = (input.gates || []).map((gate) => ({ ...gate }));
+  return {
+    $schema: SARIF_SCHEMA,
+    version: "2.1.0",
+    runs: [{
+      tool: {
+        driver: {
+          name: "Dakar",
+          version: "0.1.0",
+          rules: ruleIds.map((id) => ({ id, name: id }))
+        }
+      },
+      invocations: [{ executionSuccessful: gatesAllowExecution(gates), properties: { dakar: { gates } } }],
+      results,
+      properties: {
+        dakar: {
+          pricingTableVersion: input.pricingTableVersion,
+          ledger: ledger.map((entry) => ({ ...entry })),
+          auditVerdicts: verdicts.map((verdict) => ({ ...verdict }))
+        }
+      }
+    }]
+  };
+}
+function dakarProperties(result) {
+  const { properties } = result;
+  if (!sarifObjectSchema.safeParse(properties).success) return void 0;
+  const { dakar } = properties;
+  if (!sarifObjectSchema.safeParse(dakar).success) return void 0;
+  return dakar;
+}
+function semanticResults(sarif) {
+  const [run2] = sarif.runs;
+  if (!run2) return [];
+  return run2.results.flatMap((result) => {
+    const dakar = dakarProperties(result);
+    return dakar?.kind === "semantic" ? [dakar] : [];
+  });
+}
+function compatibilityFinding(dakar) {
+  const { candidate, disposition, audit } = dakar;
+  const location = compatibilityLocation(candidate);
+  const description = compatibilityDescription(candidate);
+  return {
+    severity: disposition?.acceptedSeverity || candidate.severity,
+    path: location.path,
+    line: location.line,
+    title: description.title,
+    detail: description.detail,
+    evidence: description.evidence,
+    clusterId: audit?.clusterId || void 0,
+    sourceTasks: ["taskId" in candidate ? candidate.taskId : void 0]
+  };
+}
+function compatibilityDescription(candidate) {
+  return {
+    title: candidate.title,
+    detail: candidate.detail || "",
+    evidence: candidate.evidence || ""
+  };
+}
+function compatibilityLocation(candidate) {
+  const { line } = candidate;
+  return {
+    path: candidate.path,
+    line: line !== void 0 && line > 0 ? line : void 0
+  };
+}
+function projectFindingsFromSarif(sarif) {
+  return semanticResults(sarif).flatMap((dakar) => {
+    if (!["accepted", "severity_downgraded"].includes(String(dakar.disposition?.status))) return [];
+    return [compatibilityFinding(dakar)];
+  });
+}
+function compatibilityDiscard(dakar) {
+  const { disposition } = dakar;
+  return {
+    candidate: dakar.candidate,
+    status: String(disposition?.status || ""),
+    reason: String(disposition?.reason || ""),
+    evidenceChecked: String(disposition?.evidenceChecked || "")
+  };
+}
+function projectDiscardedFromSarif(sarif) {
+  return semanticResults(sarif).flatMap((dakar) => {
+    if (["accepted", "severity_downgraded"].includes(String(dakar.disposition?.status))) return [];
+    return [compatibilityDiscard(dakar)];
+  });
+}
+function isBlockingGate(result) {
+  const dakar = dakarProperties(result);
+  return dakar?.kind === "deterministic-gate" && sarifObjectSchema.safeParse(dakar.disposition).success && dakar.disposition.status === "blocking";
+}
+function renderSarifMarkdown(sarif) {
+  const findings = projectFindingsFromSarif(sarif);
+  const [run2] = sarif.runs;
+  const gateFailures = (run2?.results || []).filter((result) => dakarProperties(result)?.kind === "deterministic-gate");
+  const blockingGateFailures = gateFailures.filter((result) => isBlockingGate(result));
+  const summary = blockingGateFailures.length > 0 ? `${blockingGateFailures.length} blocking deterministic gate failure${blockingGateFailures.length === 1 ? "" : "s"} require remediation.` : findings.length === 0 ? "No blocking findings were accepted." : `${findings.length} confirmed finding${findings.length === 1 ? "" : "s"} require changes.`;
+  return [
+    "# Dakar review",
+    "",
+    summary,
+    ...gateFailures.flatMap((result) => ["", `## deterministic gate: ${result.message.text}`]),
+    ...findings.flatMap((finding) => [
+      "",
+      `## ${finding.severity}: ${finding.title}`,
+      "",
+      `${finding.path}${finding.line ? `:${finding.line}` : ""}`,
+      "",
+      finding.detail,
+      "",
+      `Evidence: ${finding.evidence}`
+    ])
+  ].join("\n");
+}
+
 // bin/dakar-review.mjs
+import { appendReview, prepare } from "../scripts/review-state.mjs";
 var DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300;
 var jsonReplacer = (_key, value) => value;
 var prettyJson = (value) => JSON.stringify(value, jsonReplacer, 2);

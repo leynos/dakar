@@ -9540,6 +9540,7 @@ function worstCaseReviewSeconds(config2, perCallTimeoutSeconds) {
 
 // src/workflows/dakar-review/sarif.ts
 var JSON_NULL = JSON.parse("null");
+var sarifObjectSchema = union([looseObject({}), array(unknown())]);
 var SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 function sarifLevel(severity) {
   if (severity === "critical" || severity === "high") return "error";
@@ -9565,11 +9566,11 @@ function candidateEvidence(candidate) {
   };
 }
 function locationsFor(candidate) {
-  if (!("path" in candidate) || candidate.path === "") return [];
+  if (!candidate.path) return [];
   const physicalLocation = {
     artifactLocation: { uri: candidate.path }
   };
-  if (candidate.line > 0) physicalLocation.region = { startLine: candidate.line };
+  if (candidate.line !== void 0 && candidate.line > 0) physicalLocation.region = { startLine: candidate.line };
   return [{ physicalLocation }];
 }
 function verdictFor(candidateId, verdicts) {
@@ -9736,65 +9737,53 @@ function assembleSarif(input) {
     }]
   };
 }
+function dakarProperties(result) {
+  const { properties } = result;
+  if (!sarifObjectSchema.safeParse(properties).success) return void 0;
+  const { dakar } = properties;
+  if (!sarifObjectSchema.safeParse(dakar).success) return void 0;
+  return dakar;
+}
 function semanticResults(sarif) {
   const [run] = sarif.runs;
-  if (run === void 0) return [];
+  if (!run) return [];
   return run.results.flatMap((result) => {
-    const { dakar } = result.properties;
-    return dakar.kind === "semantic" ? [dakar] : [];
+    const dakar = dakarProperties(result);
+    return dakar?.kind === "semantic" ? [dakar] : [];
   });
 }
 function compatibilityFinding(dakar) {
-  const { candidate } = dakar;
-  if (!("taskId" in candidate)) {
-    return emptyCompatibilityFinding(dakar);
-  }
-  return candidateCompatibilityFinding(candidate, dakar);
-}
-function candidateCompatibilityFinding(candidate, dakar) {
-  const { disposition, audit } = dakar;
+  const { candidate, disposition, audit } = dakar;
   const location = compatibilityLocation(candidate);
   const description = compatibilityDescription(candidate);
   return {
-    severity: disposition?.acceptedSeverity || candidate.severity || "low",
+    severity: disposition?.acceptedSeverity || candidate.severity,
     path: location.path,
     line: location.line,
     title: description.title,
     detail: description.detail,
     evidence: description.evidence,
     clusterId: audit?.clusterId || void 0,
-    sourceTasks: [candidate.taskId]
+    sourceTasks: ["taskId" in candidate ? candidate.taskId : void 0]
   };
 }
 function compatibilityDescription(candidate) {
   return {
-    title: candidate.title || "",
+    title: candidate.title,
     detail: candidate.detail || "",
     evidence: candidate.evidence || ""
-  };
-}
-function emptyCompatibilityFinding(dakar) {
-  return {
-    severity: dakar.disposition?.acceptedSeverity || "low",
-    path: "",
-    line: void 0,
-    title: "",
-    detail: "",
-    evidence: "",
-    clusterId: dakar.audit?.clusterId || void 0,
-    sourceTasks: []
   };
 }
 function compatibilityLocation(candidate) {
   const { line } = candidate;
   return {
-    path: candidate.path || "",
+    path: candidate.path,
     line: line !== void 0 && line > 0 ? line : void 0
   };
 }
 function projectFindingsFromSarif(sarif) {
   return semanticResults(sarif).flatMap((dakar) => {
-    if (!["accepted", "severity_downgraded"].includes(dakar.disposition?.status || "")) return [];
+    if (!["accepted", "severity_downgraded"].includes(String(dakar.disposition?.status))) return [];
     return [compatibilityFinding(dakar)];
   });
 }
@@ -9809,18 +9798,19 @@ function compatibilityDiscard(dakar) {
 }
 function projectDiscardedFromSarif(sarif) {
   return semanticResults(sarif).flatMap((dakar) => {
-    if (["accepted", "severity_downgraded"].includes(dakar.disposition?.status || "")) return [];
+    if (["accepted", "severity_downgraded"].includes(String(dakar.disposition?.status))) return [];
     return [compatibilityDiscard(dakar)];
   });
+}
+function isBlockingGate(result) {
+  const dakar = dakarProperties(result);
+  return dakar?.kind === "deterministic-gate" && sarifObjectSchema.safeParse(dakar.disposition).success && dakar.disposition.status === "blocking";
 }
 function renderSarifMarkdown(sarif) {
   const findings = projectFindingsFromSarif(sarif);
   const [run] = sarif.runs;
-  const gateFailures = (run?.results || []).filter((result) => result.properties.dakar.kind === "deterministic-gate");
-  const blockingGateFailures = gateFailures.filter((result) => {
-    const dakar = result.properties.dakar;
-    return dakar.kind === "deterministic-gate" && dakar.disposition.status === "blocking";
-  });
+  const gateFailures = (run?.results || []).filter((result) => dakarProperties(result)?.kind === "deterministic-gate");
+  const blockingGateFailures = gateFailures.filter((result) => isBlockingGate(result));
   const summary = blockingGateFailures.length > 0 ? `${blockingGateFailures.length} blocking deterministic gate failure${blockingGateFailures.length === 1 ? "" : "s"} require remediation.` : findings.length === 0 ? "No blocking findings were accepted." : `${findings.length} confirmed finding${findings.length === 1 ? "" : "s"} require changes.`;
   return [
     "# Dakar review",
