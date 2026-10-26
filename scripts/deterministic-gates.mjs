@@ -46,8 +46,8 @@ function digest(value) {
  */
 function redactEvidence(value) {
   let redacted = String(value || '')
-    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/giu, '$1[REDACTED]')
-    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/gu, '[REDACTED]')
+    .replaceAll(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/giu, '$1[REDACTED]')
+    .replaceAll(/\b(sk-[A-Za-z0-9_-]{12,})\b/gu, '[REDACTED]')
   for (const [name, secret] of Object.entries(process.env)) {
     if (!/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH)/iu.test(name) || !secret || secret.length < 4) continue
     redacted = redacted.split(secret).join('[REDACTED]')
@@ -92,7 +92,7 @@ export function runDeterministicGates(policy, repoRoot) {
     })
     const stdout = completed.stdout || ''
     const stderr = completed.stderr || ''
-    const status = completed.error ? 'error' : completed.status === 0 ? 'passed' : 'failed'
+    const status = completed.error ? 'error' : (completed.status === 0 ? 'passed' : 'failed')
     return {
       ...gate,
       command: redactEvidence(gate.command),

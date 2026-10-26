@@ -4,23 +4,130 @@
  * @module
  */
 
+import * as z from 'zod'
 import { adapterForReasoning, baseModel, DEFAULT_REVIEW_MODELS, isReasoning, modelName, reasoningFromModel } from './model-routing.ts'
 import type {
   AgentInstructions,
+  JsonValue,
   ModelSpec,
   NormalizedReviewPolicy,
-  PolicyCustomCheck,
-  PolicyPathInstruction,
   PreparedReview,
   Reasoning,
-  UnknownObject,
+  WorkflowArgs,
 } from './types.ts'
+
+const numericArgumentSchema = z.union([z.number(), z.string()])
+const reasoningSchema = z.enum(['low', 'medium', 'high'])
+/** JSON null marks the existing absent-or-invalid agent-instructions contract. */
+const NO_AGENT_INSTRUCTIONS: null = JSON.parse('null')
+const agentInstructionsSchema = z.object({
+  content: z.string().optional(),
+  source: z.string().optional(),
+  truncated: z.boolean().optional(),
+})
+const pathInstructionSchema = z.strictObject({
+  instructions: z.string(),
+  path: z.string(),
+  policyRef: z.string(),
+})
+const customCheckSchema = z.strictObject({
+  blocking: z.boolean(),
+  command: z.string().optional(),
+  gateId: z.string(),
+  instructions: z.string().optional(),
+  name: z.string(),
+})
+const reviewPolicySchema = z.strictObject({
+  customChecks: z.array(customCheckSchema),
+  ignoredKeys: z.array(z.string()),
+  language: z.string().optional(),
+  pathInstructions: z.array(pathInstructionSchema),
+  profile: z.string().optional(),
+  toneInstructions: z.string().optional(),
+  version: z.literal(1),
+})
+const modelSpecSchema = z.strictObject({
+  label: z.string().optional(),
+  model: z.string(),
+  reasoning: reasoningSchema,
+  role: z.string().optional(),
+})
+function optionalParsed<Schema extends z.ZodType>(schema: Schema) {
+  return z.preprocess((candidate) => {
+    const parsed = schema.safeParse(candidate)
+    if (parsed.success) return parsed.data
+  }, schema.optional())
+}
+
+const modelCandidateSchema = optionalParsed(modelSpecSchema)
+const deterministicGateSchema = z.strictObject({
+  blocking: z.boolean(),
+  command: z.string(),
+  exitCode: z.union([z.number(), z.null()]),
+  gateId: z.string(),
+  name: z.string(),
+  signal: z.union([z.string(), z.null()]).optional(),
+  status: z.enum(['passed', 'failed', 'error']),
+  stderr: z.string(),
+  stderrSha256: z.string(),
+  stdout: z.string(),
+  stdoutSha256: z.string(),
+})
+const preparedReviewSchema = z.object({
+  alreadyReviewed: z.boolean().optional(),
+  changedFiles: z.array(z.string()).optional(),
+  commitCount: z.number().optional(),
+  deterministicGates: z.array(deterministicGateSchema).optional(),
+  diffStat: z.string().optional(),
+  headCommit: z.string().optional(),
+  ok: z.boolean().optional(),
+  reviewBase: z.string().optional(),
+  stateFile: z.string().optional(),
+  warnings: z.array(z.string()).optional(),
+}).passthrough()
+const numericArgumentField = optionalParsed(numericArgumentSchema)
+const stringArgumentField = optionalParsed(z.string())
+const reasoningArgumentField = optionalParsed(reasoningSchema)
+const workflowArgsSchema = z.object({
+  adapterOverheadTokens: numericArgumentField,
+  agentInstructions: optionalParsed(agentInstructionsSchema),
+  base: stringArgumentField,
+  budgetGbp: numericArgumentField,
+  config: stringArgumentField,
+  dryRun: optionalParsed(z.boolean()),
+  flexAttempts: numericArgumentField,
+  flexInitialBackoffSeconds: numericArgumentField,
+  flexJitterSeconds: numericArgumentField,
+  flexMaxBackoffSeconds: numericArgumentField,
+  head: stringArgumentField,
+  lunaReasoning: reasoningArgumentField,
+  maxAuditCandidates: numericArgumentField,
+  maxCandidates: numericArgumentField,
+  maxFindings: numericArgumentField,
+  maxLunaFlexCalls: numericArgumentField,
+  maxTasks: numericArgumentField,
+  models: optionalParsed(z.array(modelCandidateSchema)),
+  perCallTimeoutSeconds: numericArgumentField,
+  policy: optionalParsed(z.json()),
+  prepared: optionalParsed(preparedReviewSchema),
+  repoRoot: stringArgumentField,
+  contextGuidance: stringArgumentField,
+  routingPolicy: stringArgumentField,
+  stateRoot: stringArgumentField,
+  synthesisModel: stringArgumentField,
+  synthesisReasoning: reasoningArgumentField,
+  terraMaxInputTokens: numericArgumentField,
+  terraMaxOutputTokens: numericArgumentField,
+  transactionMaxFiles: numericArgumentField,
+  transactionMaxInputTokens: numericArgumentField,
+  transactionMaxOutputTokens: numericArgumentField,
+}).passthrough()
 
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
   /** Per-call token overhead the adapter reserves, bounded to 0–50,000 tokens. */
   readonly adapterOverheadTokens: number
-  /** Validated trusted-base instructions, or null when the raw argument was absent or malformed. */
+  /** Validated trusted-base instructions, or null when absent or malformed. */
   readonly agentInstructions: AgentInstructions | null
   /** Non-blank base ref to diff against, defaulting to `origin/main`. */
   readonly baseRef: string
@@ -100,10 +207,6 @@ export interface WorkflowConfig {
  * @param value - Value crossing the workflow argument boundary.
  * @returns Whether the value can be inspected as an object.
  */
-function isObject(value: unknown): value is UnknownObject {
-  return typeof value === 'object' && value !== null
-}
-
 /**
  * Normalizes an untrusted numeric limit to a positive bounded integer.
  *
@@ -112,8 +215,8 @@ function isObject(value: unknown): value is UnknownObject {
  * @param ceiling - Inclusive upper bound for a valid result.
  * @returns A positive integer no greater than the ceiling.
  */
-function positiveLimit(value: unknown, fallback: number, ceiling: number): number {
-  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
+function positiveLimit(value: number | string | undefined, fallback: number, ceiling: number): number {
+  const parsed = Number(value)
   const floored = Math.floor(parsed)
   return Number.isFinite(parsed) && floored > 0 ? Math.min(floored, ceiling) : fallback
 }
@@ -130,8 +233,8 @@ function positiveLimit(value: unknown, fallback: number, ceiling: number): numbe
  * @param max - Inclusive upper bound; larger candidates clamp to this value.
  * @returns A bounded integer within `[min, max]`.
  */
-function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
+function boundedInteger(value: number | string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number(value)
   const floored = Math.floor(parsed)
   return Number.isFinite(parsed) && floored >= min ? Math.min(floored, max) : fallback
 }
@@ -145,8 +248,8 @@ function boundedInteger(value: unknown, fallback: number, min: number, max: numb
  * @param max - Inclusive upper bound; larger candidates clamp to this value.
  * @returns A bounded real number within `[min, max]`.
  */
-function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
+function boundedNumber(value: number | string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number(value)
   return Number.isFinite(parsed) && parsed >= min ? Math.min(parsed, max) : fallback
 }
 
@@ -162,8 +265,8 @@ const LIVE_ROUTING_POLICIES: ReadonlySet<string> = new Set([LIVE_ROUTING_POLICY]
  * @param value - Untrusted routing-policy candidate from workflow arguments.
  * @returns The candidate when it names a live policy, otherwise the default.
  */
-function liveRoutingPolicy(value: unknown): string {
-  return typeof value === 'string' && LIVE_ROUTING_POLICIES.has(value) ? value : LIVE_ROUTING_POLICY
+function liveRoutingPolicy(value: string | undefined): string {
+  return value !== undefined && LIVE_ROUTING_POLICIES.has(value) ? value : LIVE_ROUTING_POLICY
 }
 
 /**
@@ -173,26 +276,18 @@ function liveRoutingPolicy(value: unknown): string {
  * @param fallback - Value used when the candidate is not a non-blank string.
  * @returns The candidate string or fallback.
  */
-function nonBlankString(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.trim() !== '' ? value : fallback
+function nonBlankString(value: string | undefined, fallback: string): string {
+  return value !== undefined && value.trim() !== '' ? value : fallback
 }
 
 /**
  * Validates optional trusted-base agent instructions supplied by the CLI.
  *
  * @param value - Untrusted workflow argument to validate field by field.
- * @returns A frozen instruction object, or null when the value is malformed.
+ * @returns A frozen instruction object, or null when the value is absent or malformed.
  */
-function configuredAgentInstructions(value: unknown): AgentInstructions | null {
-  if (!isObject(value)) return null
-  if (value.content !== undefined && typeof value.content !== 'string') return null
-  if (value.source !== undefined && typeof value.source !== 'string') return null
-  if (value.truncated !== undefined && typeof value.truncated !== 'boolean') return null
-  return Object.freeze({
-    content: value.content,
-    source: value.source,
-    truncated: value.truncated,
-  })
+function configuredAgentInstructions(value: AgentInstructions | undefined): AgentInstructions | null {
+  return value === undefined ? NO_AGENT_INSTRUCTIONS : Object.freeze(value)
 }
 
 /** Empty normalized policy used when direct workflow callers omit the hand-off. */
@@ -203,83 +298,33 @@ const EMPTY_REVIEW_POLICY: Readonly<NormalizedReviewPolicy> = Object.freeze({
   ignoredKeys: Object.freeze([]),
 })
 
-/** Tests whether an object contains only the normalized contract's named keys. */
-function hasOnlyKeys(value: UnknownObject, allowed: readonly string[]): boolean {
-  const allowedKeys = new Set(allowed)
-  return Object.keys(value).every((key) => allowedKeys.has(key))
-}
-
-/** Validates one normalized path-instruction entry. */
-function configuredPathInstruction(value: unknown): PolicyPathInstruction | null {
-  if (
-    !isObject(value) ||
-    !hasOnlyKeys(value, ['instructions', 'path', 'policyRef']) ||
-    typeof value.instructions !== 'string' ||
-    typeof value.path !== 'string' ||
-    typeof value.policyRef !== 'string'
-  ) return null
-  return Object.freeze({ instructions: value.instructions, path: value.path, policyRef: value.policyRef })
-}
-
-/** Validates one normalized deterministic or model-mediated custom check. */
-function configuredCustomCheck(value: unknown): PolicyCustomCheck | null {
-  if (
-    !isObject(value) ||
-    !hasOnlyKeys(value, ['blocking', 'command', 'gateId', 'instructions', 'name']) ||
-    typeof value.blocking !== 'boolean' ||
-    typeof value.gateId !== 'string' ||
-    typeof value.name !== 'string' ||
-    (value.command !== undefined && typeof value.command !== 'string') ||
-    (value.instructions !== undefined && typeof value.instructions !== 'string')
-  ) return null
-  return Object.freeze({
-    blocking: value.blocking,
-    gateId: value.gateId,
-    name: value.name,
-    ...(value.command === undefined ? {} : { command: value.command }),
-    ...(value.instructions === undefined ? {} : { instructions: value.instructions }),
-  })
-}
-
 /**
  * Validate the normalized review-policy hand-off supplied by the CLI.
  *
  * @param value - untrusted workflow argument.
  * @returns Frozen policy and a validity flag; omission is a valid empty policy.
  */
-function configuredReviewPolicy(value: unknown): {
+interface ConfiguredReviewPolicy {
   policy: Readonly<NormalizedReviewPolicy>
   valid: boolean
-} {
+}
+
+function configuredReviewPolicy(value: JsonValue | undefined): ConfiguredReviewPolicy {
   if (value === undefined) return { policy: EMPTY_REVIEW_POLICY, valid: true }
-  if (
-    !isObject(value) ||
-    !hasOnlyKeys(value, ['customChecks', 'ignoredKeys', 'language', 'pathInstructions', 'profile', 'toneInstructions', 'version']) ||
-    value.version !== 1 ||
-    !Array.isArray(value.pathInstructions) ||
-    !Array.isArray(value.customChecks) ||
-    !Array.isArray(value.ignoredKeys) ||
-    !value.ignoredKeys.every((entry) => typeof entry === 'string') ||
-    (value.language !== undefined && typeof value.language !== 'string') ||
-    (value.profile !== undefined && typeof value.profile !== 'string') ||
-    (value.toneInstructions !== undefined && typeof value.toneInstructions !== 'string')
-  ) return { policy: EMPTY_REVIEW_POLICY, valid: false }
-  const pathInstructions = value.pathInstructions.map(configuredPathInstruction)
-  const customChecks = value.customChecks.map(configuredCustomCheck)
-  if (pathInstructions.includes(null) || customChecks.includes(null)) {
-    return { policy: EMPTY_REVIEW_POLICY, valid: false }
+  const parsed = reviewPolicySchema.safeParse(value)
+  if (!parsed.success) return { policy: EMPTY_REVIEW_POLICY, valid: false }
+  const policy: NormalizedReviewPolicy = {
+    version: 1,
+    pathInstructions: Object.freeze(parsed.data.pathInstructions.map((entry) => Object.freeze(entry))),
+    customChecks: Object.freeze(parsed.data.customChecks.map((entry) => Object.freeze(entry))),
+    ignoredKeys: Object.freeze([...parsed.data.ignoredKeys]),
   }
+  if (parsed.data.language !== undefined) policy.language = parsed.data.language
+  if (parsed.data.toneInstructions !== undefined) policy.toneInstructions = parsed.data.toneInstructions
+  if (parsed.data.profile !== undefined) policy.profile = parsed.data.profile
   return {
     valid: true,
-    policy: Object.freeze({
-      version: 1,
-      ...(value.language === undefined ? {} : { language: value.language }),
-      ...(value.toneInstructions === undefined ? {} : { toneInstructions: value.toneInstructions }),
-      ...(value.profile === undefined ? {} : { profile: value.profile }),
-      pathInstructions: Object.freeze(pathInstructions) as readonly PolicyPathInstruction[],
-      customChecks: Object.freeze(customChecks) as readonly PolicyCustomCheck[],
-      ignoredKeys: Object.freeze([...value.ignoredKeys]),
-    }),
+    policy: Object.freeze(policy),
   }
 }
 
@@ -289,8 +334,8 @@ function configuredReviewPolicy(value: unknown): {
  * @param value - Untrusted model identifier candidate.
  * @returns Whether the value is a non-blank model with at most one valid suffix.
  */
-function validModelIdentifier(value: unknown): value is string {
-  if (typeof value !== 'string' || value.trim() !== value || value.length === 0 || /\s/u.test(value)) return false
+function validModelIdentifier(value: string | undefined): value is string {
+  if (value === undefined || value.trim() !== value || value.length === 0 || /\s/u.test(value)) return false
   const [model, reasoning, extra] = value.split('/')
   return Boolean(model) && extra === undefined && (reasoning === undefined || isReasoning(reasoning))
 }
@@ -301,17 +346,12 @@ function validModelIdentifier(value: unknown): value is string {
  * @param value - Candidate model list from workflow arguments.
  * @returns Valid model specifications in their supplied order.
  */
-function configuredModels(value: unknown): ModelSpec[] {
-  if (!Array.isArray(value)) return []
-  return value.filter(
-    (candidate): candidate is ModelSpec =>
-      isObject(candidate) &&
-      (candidate.label === undefined || typeof candidate.label === 'string') &&
-      validModelIdentifier(candidate.model) &&
-      (candidate.reasoning === 'low' || candidate.reasoning === 'medium' || candidate.reasoning === 'high') &&
-      reasoningFromModel(candidate.model, candidate.reasoning) === candidate.reasoning &&
-      (candidate.role === undefined || typeof candidate.role === 'string'),
-  )
+function configuredModels(value: Array<ModelSpec | undefined> | undefined): ModelSpec[] {
+  return (value || []).flatMap((model) => {
+    if (model === undefined || !validModelIdentifier(model.model)) return []
+    if (reasoningFromModel(model.model, model.reasoning) !== model.reasoning) return []
+    return [Object.freeze(model)]
+  })
 }
 
 /**
@@ -320,8 +360,9 @@ function configuredModels(value: unknown): ModelSpec[] {
  * @param value - Raw ODW arguments; malformed fields fall back to safe defaults.
  * @returns A frozen configuration whose limits and model identifiers are valid.
  */
-export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
-  const args = isObject(value) ? value : {}
+export function resolveWorkflowConfig(value: JsonValue | WorkflowArgs | undefined): WorkflowConfig {
+  const input = workflowArgsSchema.safeParse(value)
+  const args = input.success ? input.data : {}
   const policy = configuredReviewPolicy(args.policy)
   const customModels = configuredModels(args.models)
   const reviewModels: readonly Readonly<ModelSpec>[] = customModels.length > 0
@@ -330,7 +371,7 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
   const synthesisModel = validModelIdentifier(args.synthesisModel) ? args.synthesisModel : 'gpt-5.5'
   const requestedReasoning = reasoningFromModel(
     synthesisModel,
-    isReasoning(args.synthesisReasoning) ? args.synthesisReasoning : 'high',
+    args.synthesisReasoning ?? 'high',
   )
   const synthesisReasoning = isReasoning(requestedReasoning) ? requestedReasoning : 'high'
   const synthesisModelBase = baseModel(synthesisModel)
@@ -358,17 +399,17 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     headRef: nonBlankString(args.head, 'HEAD'),
     // High by default since the 2026-08-13 Flex repricing made Luna five
     // times cheaper; 'medium' and 'low' remain as de-escalation values.
-    lunaReasoning: isReasoning(args.lunaReasoning) ? args.lunaReasoning : 'high',
+    lunaReasoning: args.lunaReasoning ?? 'high',
     maxAuditCandidates: positiveLimit(args.maxAuditCandidates, 30, 100),
-    maxCandidates: positiveLimit(args.maxCandidates, 30, 1_000),
+    maxCandidates: positiveLimit(args.maxCandidates, 30, 1000),
     maxFindings: positiveLimit(args.maxFindings, 20, 200),
     maxLunaFlexCalls: positiveLimit(args.maxLunaFlexCalls, 4, 16),
     maxTasks: positiveLimit(args.maxTasks, 8, 64),
     perCallTimeoutSeconds: boundedInteger(args.perCallTimeoutSeconds, 300, 30, 900),
     policyValid: policy.valid,
-    // Unvalidated passthrough: the CLI prepares the review range host-side and
-    // main.ts validates these fields fail-closed before any downstream use.
-    prepared: isObject(args.prepared) ? (args.prepared as PreparedReview) : undefined,
+    // The host-prepared range is parsed by preparedReviewSchema and checked
+    // against the required commit identity and changed-file invariants in main.ts.
+    prepared: args.prepared,
     repoRoot: nonBlankString(args.repoRoot, '.'),
     contextGuidance: nonBlankString(args.contextGuidance, ''),
     reviewPolicy: policy.policy,
@@ -389,10 +430,10 @@ export function resolveWorkflowConfig(value: unknown): WorkflowConfig {
     // Reasoning tokens bill as output; the high-reasoning defaults need more
     // output headroom than the low-reasoning bounds these replaced (2,500 and
     // 750 respectively).
-    terraMaxOutputTokens: boundedInteger(args.terraMaxOutputTokens, 5_000, 1, 100_000),
+    terraMaxOutputTokens: boundedInteger(args.terraMaxOutputTokens, 5000, 1, 100_000),
     transactionMaxFiles: positiveLimit(args.transactionMaxFiles, 5, 20),
     transactionMaxInputTokens: boundedInteger(args.transactionMaxInputTokens, 12_000, 1, 200_000),
-    transactionMaxOutputTokens: boundedInteger(args.transactionMaxOutputTokens, 2_000, 1, 100_000),
+    transactionMaxOutputTokens: boundedInteger(args.transactionMaxOutputTokens, 2000, 1, 100_000),
     workflowVersion: 'divide-and-conquer-v1',
   })
 }

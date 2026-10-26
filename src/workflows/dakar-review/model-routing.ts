@@ -4,7 +4,14 @@
  * @module
  */
 
+import * as z from 'zod'
 import type { ModelSpec, Reasoning } from './types.ts'
+
+const modelNameInputSchema = z.union([
+  z.string().transform((model) => ({ model, reasoning: 'default' })),
+  z.object({ model: z.string(), reasoning: z.string().optional() }),
+])
+const flexLaneRoleSchema = z.enum(['luna', 'luna-medium', 'luna-low', 'terra'])
 
 /** Provides the immutable default model assignment for each review role. */
 export const DEFAULT_REVIEW_MODELS: readonly Readonly<ModelSpec>[] = Object.freeze([
@@ -22,11 +29,13 @@ export const DEFAULT_REVIEW_MODELS: readonly Readonly<ModelSpec>[] = Object.free
  * @throws {TypeError} When an object specification has no non-empty model identifier.
  */
 export function modelName(spec: ModelSpec | string): string {
-  const model = typeof spec === 'string' ? spec : spec.model
-  if (typeof model !== 'string' || model.length === 0) {
+  const parsed = modelNameInputSchema.safeParse(spec)
+  if (!parsed.success) throw new TypeError('model spec must contain a non-empty model string')
+  const model = parsed.data.model
+  if (model.length === 0) {
     throw new TypeError('model spec must contain a non-empty model string')
   }
-  return model.includes('/') ? model : `${model}/${typeof spec === 'string' ? 'default' : spec.reasoning || 'default'}`
+  return model.includes('/') ? model : `${model}/${parsed.data.reasoning || 'default'}`
 }
 
 /**
@@ -36,7 +45,7 @@ export function modelName(spec: ModelSpec | string): string {
  * @returns The base model segment before the first slash.
  */
 export function baseModel(model: string): string {
-  return String(model).split('/')[0] ?? ''
+  return model.split('/')[0] ?? ''
 }
 
 /**
@@ -47,7 +56,7 @@ export function baseModel(model: string): string {
  * @returns The explicit suffix or the supplied fallback.
  */
 export function reasoningFromModel(model: string, fallback: string): string {
-  return String(model).split('/')[1] || fallback
+  return model.split('/')[1] || fallback
 }
 
 /**
@@ -77,7 +86,7 @@ export function modelForRole(role: string, reviewModels: readonly Readonly<Model
  * @param value - External value to test.
  * @returns Whether the value is `low`, `medium`, or `high`.
  */
-export function isReasoning(value: unknown): value is Reasoning {
+export function isReasoning(value: string): value is Reasoning {
   return value === 'low' || value === 'medium' || value === 'high'
 }
 
@@ -90,7 +99,7 @@ export type LunaFlexLaneRole = 'luna' | 'luna-medium' | 'luna-low'
  * @param reasoning - Resolved or untrusted reasoning value.
  * @returns The high lane by default, or the matching de-escalation lane.
  */
-export function lunaFlexLaneRole(reasoning: unknown): LunaFlexLaneRole {
+export function lunaFlexLaneRole(reasoning: string): LunaFlexLaneRole {
   if (reasoning === 'medium') return 'luna-medium'
   if (reasoning === 'low') return 'luna-low'
   return 'luna'
@@ -109,6 +118,18 @@ export interface FlexLaneSpec {
   reasoning: Reasoning
 }
 
+/** Named lanes available to the host-controlled Flex router. */
+export interface FlexLaneRegistry {
+  /** Default high-reasoning Luna finder lane. */
+  readonly luna: Readonly<FlexLaneSpec>
+  /** Medium-reasoning Luna finder fallback. */
+  readonly 'luna-medium': Readonly<FlexLaneSpec>
+  /** Low-reasoning Luna finder fallback. */
+  readonly 'luna-low': Readonly<FlexLaneSpec>
+  /** High-reasoning Terra audit lane. */
+  readonly terra: Readonly<FlexLaneSpec>
+}
+
 /**
  * Maps each Flex lane role to its host-selected model and pi adapter. The host,
  * not an agent prompt, chooses the lane; agents cannot promote themselves to a
@@ -117,7 +138,7 @@ export interface FlexLaneSpec {
  * `luna-medium` and `luna-low` are the pre-registered de-escalation lanes for
  * the Luna finder.
  */
-export const FLEX_LANE_ROLES: Readonly<Record<'luna' | 'luna-medium' | 'luna-low' | 'terra', Readonly<FlexLaneSpec>>> = Object.freeze({
+export const FLEX_LANE_ROLES: Readonly<FlexLaneRegistry> = Object.freeze({
   luna: Object.freeze({ role: 'luna', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-high', serviceTier: 'flex', reasoning: 'high' }),
   'luna-medium': Object.freeze({ role: 'luna-medium', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex-medium', serviceTier: 'flex', reasoning: 'medium' }),
   'luna-low': Object.freeze({ role: 'luna-low', model: 'gpt-5.6-luna', adapter: 'pi-luna-flex', serviceTier: 'flex', reasoning: 'low' }),
@@ -132,7 +153,7 @@ export const FLEX_LANE_ROLES: Readonly<Record<'luna' | 'luna-medium' | 'luna-low
  * @throws {Error} When the role is not a registered Flex lane.
  */
 export function flexLaneRole(role: string): Readonly<FlexLaneSpec> {
-  const spec = (FLEX_LANE_ROLES as Record<string, Readonly<FlexLaneSpec>>)[role]
-  if (spec === undefined) throw new Error(`unknown flex lane role: ${role}`)
-  return spec
+  const parsed = flexLaneRoleSchema.safeParse(role)
+  if (!parsed.success) throw new Error(`unknown flex lane role: ${role}`)
+  return FLEX_LANE_ROLES[parsed.data]
 }

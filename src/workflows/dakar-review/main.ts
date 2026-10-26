@@ -4,6 +4,7 @@
  * @module
  */
 
+import * as z from 'zod'
 import {
   acceptedFromVerdicts,
   candidatesForVerification,
@@ -49,7 +50,6 @@ interface FlexCallOutcome<T> {
   ok: boolean
   value?: T
   attempts: number
-  error?: unknown
   retryRefusedByBudget?: boolean
 }
 
@@ -103,7 +103,6 @@ async function callWithFlexRetry<T>(
   invoke: () => Promise<T>,
   retryAdmission: RetryAdmission,
 ): Promise<FlexCallOutcome<T>> {
-  let lastError: unknown
   for (let attempt = 1; attempt <= retryConfig.flexAttempts; attempt += 1) {
     // Sleep precedes attempts 2..N; the first attempt runs immediately. Each
     // retry is admitted and charged before its backoff, so a refused retry
@@ -111,7 +110,7 @@ async function callWithFlexRetry<T>(
     if (attempt >= 2) {
       const decision = admit(retryAdmission.state, retryAdmission.worstCaseUsd, retryAdmission.kind)
       if (!decision.admitted) {
-        return { ok: false, attempts: attempt - 1, error: lastError, retryRefusedByBudget: true }
+        return { ok: false, attempts: attempt - 1, retryRefusedByBudget: true }
       }
       retryAdmission.state.spentUsd += retryAdmission.worstCaseUsd
       retryAdmission.ledgerEntry.estimatedWorstCaseUsd += retryAdmission.worstCaseUsd
@@ -122,24 +121,24 @@ async function callWithFlexRetry<T>(
       // ODW's agent() resolves to null on a terminal adapter failure rather
       // than throwing (observed live, M7); a null result therefore consumes a
       // retry attempt exactly as a thrown failure would.
-      if (value === null || value === undefined) {
-        lastError = new Error('agent call returned no result')
+      if (value == undefined) {
         continue
       }
       return { ok: true, value, attempts: attempt }
     } catch (error) {
-      lastError = error
       // A non-retryable failure propagates unchanged; the conservative
       // classifier retries every opaque adapter failure (see retry.ts).
-      if (!isRetryableFlexError(error)) throw error
+      if (!isRetryableFlexError()) throw error
     }
   }
-  return { ok: false, attempts: retryConfig.flexAttempts, error: lastError }
+  return { ok: false, attempts: retryConfig.flexAttempts }
 }
 
 /** Resolve host-provided settings before deriving lane and budget contracts. */
 function resolvedReviewSettings() {
-  const config = resolveWorkflowConfig(args)
+  // ODW injects `args` as unknown; admit only JSON values before field parsing.
+  const parsedArgs = z.json().safeParse(args)
+  const config = resolveWorkflowConfig(parsedArgs.success ? parsedArgs.data : undefined)
   return {
     ADAPTER_OVERHEAD_TOKENS: config.adapterOverheadTokens,
     AGENT_INSTRUCTIONS: config.agentInstructions,
@@ -255,7 +254,7 @@ function dryRunResult(context: WorkflowContext) {
     repoRoot: REPO_ROOT,
     base: BASE_REF,
     head: HEAD_REF,
-    models: REVIEW_MODELS.map(modelName),
+    models: REVIEW_MODELS.map((model) => modelName(model)),
     synthesisModel: SYNTHESIS_MODEL_NAME,
     synthesisAdapter: SYNTHESIS_ADAPTER,
     routingPolicy: ROUTING_POLICY,
@@ -308,20 +307,17 @@ function dryRunResult(context: WorkflowContext) {
 /** Check the immutable commit identities and trusted state location before dispatch. */
 function preparedIdentityValid(prepared: PreparedReview) {
   if (prepared.ok === false) return false
-  if (typeof prepared.headCommit !== 'string') return false
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.headCommit)) return false
-  if (typeof prepared.reviewBase !== 'string') return false
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.reviewBase)) return false
-  if (typeof prepared.stateFile !== 'string') return false
-  return prepared.stateFile.length !== 0
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.headCommit || '')) return false
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(prepared.reviewBase || '')) return false
+  return Boolean(prepared.stateFile)
 }
 
 /** Check the bounded range shape after its identity has been validated. */
 function preparedRangeValid(prepared: PreparedReview) {
   if (!preparedIdentityValid(prepared)) return false
   if (!Number.isInteger(prepared.commitCount)) return false
-  if (Number(prepared.commitCount) < 0) return false
-  return Array.isArray(prepared.changedFiles)
+  if ((prepared.commitCount ?? -1) < 0) return false
+  return prepared.changedFiles !== undefined
 }
 
 /** Return the deterministic gate failure before any model budget is spent. */
@@ -356,7 +352,7 @@ function blockingGateResult(context: WorkflowContext, prepared: PreparedReview, 
       },
     }
   }
-  return null
+  return
 }
 
 /** Refuse all model calls when the mandatory audit cannot fit the budget. */
@@ -378,7 +374,7 @@ function auditReserveFailure(context: WorkflowContext, prepared: PreparedReview)
       },
     }
   }
-  return null
+  return
 }
 
 /** Build the bounded finder plan and preserve the structured planning failure. */
@@ -467,6 +463,7 @@ async function dispatchFinderPacks(context: WorkflowContext, prepared: PreparedR
   const reviewOutcomes = await parallel(
     admittedPacks.map((task) => async () => {
       const ledgerEntry = ledger.find((item) => item.callId === task.taskId)
+      if (ledgerEntry === undefined) throw new Error(`admitted finder pack ${task.taskId} has no ledger entry`)
       return {
         task,
         // Scope the jitter seed per review (head commit) so concurrent reviews of
@@ -486,7 +483,7 @@ async function dispatchFinderPacks(context: WorkflowContext, prepared: PreparedR
           // A finder retry keeps the 'luna-transaction' inequality (its worst
           // case plus the standing audit reservation) because the audit has not
           // run yet; its ledger entry accumulates each admitted attempt.
-          { state: admissionState, worstCaseUsd: ledgerEntry?.estimatedWorstCaseUsd ?? 0, kind: 'luna-transaction', ledgerEntry: ledgerEntry as LedgerEntry },
+          { state: admissionState, worstCaseUsd: ledgerEntry.estimatedWorstCaseUsd, kind: 'luna-transaction', ledgerEntry },
         ),
       }
     }),
@@ -497,13 +494,12 @@ async function dispatchFinderPacks(context: WorkflowContext, prepared: PreparedR
 /** Associates one finder pack with its observed retry outcome. */
 type FinderOutcome = NonNullable<Awaited<ReturnType<typeof dispatchFinderPacks>>[number]>
 
-/** Narrow successful Flex outcomes without changing null or undefined handling. */
+/** Narrow successful Flex outcomes after excluding the adapter's empty result. */
 function hasFlexValue<T>(
   outcome: FlexCallOutcome<T>,
 ): outcome is FlexCallOutcome<Exclude<T, null | undefined>> & { value: Exclude<T, null | undefined> } {
   if (!outcome.ok) return false
-  if (outcome.value === null) return false
-  return outcome.value !== undefined
+  return outcome.value != undefined
 }
 
 /** Bind a completed finder slot to its ledger or record its optional-coverage downgrade. */
@@ -551,7 +547,7 @@ function collectFinderResults(admission: FinderAdmission, reviewOutcomes: Awaite
   const state: FinderCollection = { ...admission, lunaDowngrades: [], taskResults: [] }
   for (let index = 0; index < reviewOutcomes.length; index += 1) {
     const entry = reviewOutcomes[index]
-    if (entry === null || entry === undefined) {
+    if (entry == undefined) {
       recordAbortedFinder(index, state)
       continue
     }
@@ -590,7 +586,7 @@ function zeroFinderCoverageResult(context: WorkflowContext, prepared: PreparedRe
       },
     }
   }
-  return null
+  return
 }
 
 /** Normalize and compact the policy-eligible candidates for the single required audit. */
@@ -734,24 +730,31 @@ async function executeRequiredAudit(context: WorkflowContext, prepared: Prepared
 
 /** Require explanatory evidence and an actual severity reduction for downgraded verdicts. */
 function auditVerdictValid(scheduledCandidate: Candidate, verdict: Verdict) {
-  if (typeof verdict.reason !== 'string') return false
   if (verdict.reason.trim() === '') return false
-  if (typeof verdict.evidenceChecked !== 'string') return false
   if (verdict.evidenceChecked.trim() === '') return false
   if (verdict.status !== 'severity_downgraded') return true
-  if (typeof verdict.acceptedSeverity !== 'string') return false
+  if (verdict.acceptedSeverity === undefined) return false
   return auditSeverityLowered(scheduledCandidate, verdict.acceptedSeverity)
 }
 
 /** Preserve the original rank comparison, including its unknown-severity defaults. */
 function auditSeverityLowered(scheduledCandidate: Candidate, acceptedSeverity: string) {
-  if ((SEVERITY_RANK[acceptedSeverity] ?? -1) <= (SEVERITY_RANK[scheduledCandidate.severity || ''] ?? 4)) return false
+  if (auditSeverityRank(acceptedSeverity, -1) <= auditSeverityRank(scheduledCandidate.severity, 4)) return false
   return true
+}
+
+/** Maps a known severity to its rank and keeps the caller's unknown-value fallback. */
+function auditSeverityRank(severity: string | undefined, fallback: number): number {
+  if (severity === 'critical') return SEVERITY_RANK.critical
+  if (severity === 'high') return SEVERITY_RANK.high
+  if (severity === 'medium') return SEVERITY_RANK.medium
+  if (severity === 'low') return SEVERITY_RANK.low
+  return fallback
 }
 
 /** Preserve the audit's tolerant raw-verdict-array fallback. */
 function rawAuditVerdicts(auditResult: AuditResult): Verdict[] {
-  return auditResult && Array.isArray(auditResult.verdicts) ? auditResult.verdicts : []
+  return auditResult.verdicts
 }
 
 /** Bind the first known verdict per candidate and count unknown or duplicate audit noise. */
@@ -766,8 +769,8 @@ function reconcileAuditVerdicts(auditResult: AuditResult, auditCandidates: Candi
   const chosenVerdicts = new Map<string, Verdict>()
   let unknownAuditVerdictCount = 0
   let duplicateAuditVerdictCount = 0
-  for (const verdict of rawVerdicts.filter(Boolean)) {
-    const candidateId = typeof verdict.candidateId === 'string' ? verdict.candidateId : ''
+  for (const verdict of rawVerdicts) {
+    const candidateId = verdict.candidateId
     if (!auditById.has(candidateId)) {
       unknownAuditVerdictCount += 1
       continue
@@ -779,9 +782,10 @@ function reconcileAuditVerdicts(auditResult: AuditResult, auditCandidates: Candi
     chosenVerdicts.set(candidateId, verdict)
   }
 
-  const boundVerdicts = auditCandidates
-    .map((candidate) => ({ scheduledCandidate: candidate, verdict: chosenVerdicts.get(candidate.candidateId) }))
-    .filter((pair): pair is { scheduledCandidate: Candidate; verdict: Verdict } => pair.verdict !== undefined)
+  const boundVerdicts = auditCandidates.flatMap((candidate) => {
+    const verdict = chosenVerdicts.get(candidate.candidateId)
+    return verdict === undefined ? [] : [{ scheduledCandidate: candidate, verdict }]
+  })
 
   // An incomplete required audit must not record: every audit candidate needs one
   // valid verdict, and a severity_downgraded verdict must actually lower severity.
@@ -953,8 +957,8 @@ type CompletedReviewMetrics = ReturnType<typeof completedReviewMetrics>
 
 /** Decide recording eligibility without treating partial coverage as a reviewed head. */
 function completeFinderCoverage(state: ReviewCompletion) {
-  if (state.truncatedFiles.length !== 0) return false
-  if (state.admissionRefusals.length !== 0) return false
+  if (state.truncatedFiles.length > 0) return false
+  if (state.admissionRefusals.length > 0) return false
   return state.lunaDowngrades.length === 0
 }
 
@@ -1010,7 +1014,7 @@ function completedReviewResult(context: WorkflowContext, prepared: PreparedRevie
   const { verdicts, sarif, authoritativeFindings, discarded, authoritativeSummary, authoritativeReport, finalVerdict } = evidence
   const metrics = completedReviewMetrics(context, prepared, state, evidence)
   const { recordInput, recordWithheld } = completedRecording(prepared, state, evidence, metrics)
-  return {
+  const result = {
     ok: true,
     workflowVersion: WORKFLOW_VERSION,
     verdict: finalVerdict,
@@ -1032,9 +1036,10 @@ function completedReviewResult(context: WorkflowContext, prepared: PreparedRevie
     summary: authoritativeSummary,
     reportMarkdown: authoritativeReport,
     metrics,
-    ...(recordInput ? { recordInput } : {}),
-    ...(recordWithheld ? { recordWithheld } : {}),
+    recordInput,
+    recordWithheld,
   }
+  return result
 }
 
 /** Validate the prepared range, skips, and trusted gate evidence before reserving model spend. */

@@ -32,6 +32,10 @@ const RUNTIME_MODULES = [
   'shell.ts',
   'task-graph.ts',
 ]
+// Zod is the one approved third-party runtime package in the generated
+// workflow. Its pinned package modules are bundled into the single-file
+// artefact; every other runtime input must remain in the source manifest.
+const RUNTIME_PACKAGES = ['zod']
 
 /**
  * Signals a violated ODW build invariant (e.g. an orphan module, a malformed
@@ -67,7 +71,7 @@ function reject(code, message) {
  * @returns {string} the text with every line ending collapsed to `\n`.
  */
 function normalizeLineEndings(text) {
-  return text.replace(/\r\n?/gu, '\n')
+  return text.replaceAll(/\r\n?/gu, '\n')
 }
 
 /**
@@ -117,8 +121,8 @@ function assertLoaderContract(banner, bundle, artefact) {
     const declarations = statement.declarationList.declarations
     return declarations.length === 1 && ts.isIdentifier(declarations[0].name) && declarations[0].name.text === 'meta'
   })
-  const metaStatement = metaStatements[0]
-  const metaDeclaration = metaStatement?.declarationList.declarations[0]
+  const metaStatement = metaStatements.at(0)
+  const metaDeclaration = metaStatement?.declarationList.declarations.at(0)
   const isLiteralMeta =
     bannerFile.parseDiagnostics.length === 0 &&
     bannerFile.statements.length === 1 &&
@@ -136,7 +140,9 @@ function assertLoaderContract(banner, bundle, artefact) {
   }
   const sourceFile = ts.createSourceFile('workflow-bundle.js', bundle, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
   const wrappers = new Set(['__esm', '__commonJS', '__toESM', '__require'])
+  /** @type {string | undefined} */
   let wrapperCall
+  /** @type {boolean} */
   let moduleSyntax = false
   const visit = (node) => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && wrappers.has(node.expression.text)) {
@@ -175,7 +181,7 @@ function assertLoaderContract(banner, bundle, artefact) {
   }
   const metaStart = metaStatement.getStart(bannerFile)
   const wrappedBanner = `${banner.slice(0, metaStart)}${banner.slice(metaStart).replace(/^export const meta\s*=/u, 'const meta =')}`
-  const wrapped = `${wrappedBanner.trimEnd()}\n${bundle.trimEnd()}\nreturn await workflowMain()\n`
+  const wrapped = `${wrappedBanner.trimEnd()}\n{\n${bundle.trimEnd()}\nreturn await workflowMain()\n}\n`
   try {
     new Function(`return (async function __workflow_wrapped__() {\n${wrapped}\n})`)
   } catch (error) {
@@ -191,6 +197,7 @@ export async function buildWorkflow({
   outFile = DEFAULT_OUTPUT,
   checkOnly = false,
   runtimeModules = RUNTIME_MODULES,
+  runtimePackages = RUNTIME_PACKAGES,
 } = {}) {
   const bannerText = await readFile(banner, 'utf8')
   const result = await build({
@@ -212,13 +219,18 @@ export async function buildWorkflow({
   })
   const inputs = new Set(Object.keys(result.metafile.inputs).map((input) => path.resolve(input)))
   const expectedInputs = new Set([path.resolve(entry), ...runtimeModules.map((name) => path.resolve(srcDir, name))])
+  const approvedPackageRoots = runtimePackages.map((name) => path.join(ROOT, 'node_modules', name))
+  const isApprovedPackageInput = (input) => approvedPackageRoots.some((packageRoot) => {
+    const relative = path.relative(packageRoot, input)
+    return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+  })
   for (const modulePath of expectedInputs) {
     if (!inputs.has(modulePath)) {
       reject('BUILD_ORPHAN_MODULE', `${path.relative(srcDir, modulePath)} is absent from the runtime bundle`)
     }
   }
   for (const input of inputs) {
-    if (!expectedInputs.has(input)) {
+    if (!expectedInputs.has(input) && !isApprovedPackageInput(input)) {
       reject('BUILD_ORPHAN_MODULE', `${path.relative(srcDir, input)} is bundled but absent from the runtime manifest`)
     }
   }
@@ -232,10 +244,12 @@ export async function buildWorkflow({
     ' */',
     bannerText.trimEnd(),
     '',
+    '{',
     bundle.trimEnd(),
     '',
     '// --- Entry (generated footer) --------------------------------------------',
     'return await workflowMain()',
+    '}',
     '',
   ].join('\n')
   assertLoaderContract(bannerText, bundle, artefact)

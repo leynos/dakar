@@ -4,7 +4,7 @@
  * @module
  */
 
-import { isAbsolute } from 'node:path'
+import nodePath from 'node:path'
 
 /**
  * Classify a lexical path as repository-local without resolving symlinks.
@@ -13,7 +13,7 @@ import { isAbsolute } from 'node:path'
  * @returns {boolean} whether the path stays lexically inside the root.
  */
 export function isRepositoryRelativePath(relativePath) {
-  if (isAbsolute(relativePath)) return false
+  if (nodePath.isAbsolute(relativePath)) return false
   if (relativePath === '..') return false
   if (relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) return false
   return true

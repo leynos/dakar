@@ -7,7 +7,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import nodePath from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { contextToolsBlock } from './context-tools.mjs'
 import { isRepositoryRelativePath } from './repository-paths.mjs'
@@ -111,13 +111,13 @@ export function addContextGuidance(workflowArgs, repoRoot, boundary = CONTEXT_WA
 /**
  * Determine whether the operator's MCP CLI is available for CodeGraph warmup.
  *
- * @param {number | null} timeout - Probe timeout, bounded by the shared deadline.
+ * @param {number | undefined} timeout - Probe timeout, bounded by the shared deadline.
  * @param {Function} runMcp - Injected MCP subprocess runner.
  * @returns {{ available: boolean, outcome: string, deadlineExhausted: boolean }}
  *   The probe result without exposing process output or repository data.
  */
 function isMcpCliAvailable(timeout, boundary, span) {
-  if (timeout === null) {
+  if (timeout === undefined) {
     return { available: false, outcome: 'deadline_exhausted', deadlineExhausted: true, failureCategory: 'deadline' }
   }
   const probe = runWarmupMcp(['--list'], { encoding: 'utf8', timeout }, boundary, span)
@@ -174,11 +174,11 @@ function reportContextWarmupOperation(
  *
  * @param {number} deadline - Absolute monotonic-millisecond warmup deadline.
  * @param {{ now: () => number }} clock - Injected monotonic clock.
- * @returns {number | null} A positive bounded timeout, or null once time expires.
+ * @returns {number | undefined} A positive bounded timeout, or undefined once time expires.
  */
 function warmupTimeout(deadline, clock) {
   const remaining = Math.floor(deadline - clock.now())
-  if (remaining <= 0) return null
+  if (remaining <= 0) return
   return remaining
 }
 
@@ -216,7 +216,7 @@ function warmContextTool(tool, payload, context) {
   const span = createWarmupSpan(context.trace)
   const boundedTimeout = warmupTimeout(deadline, clock)
   const startedAt = clock.now()
-  if (boundedTimeout === null) {
+  if (boundedTimeout === undefined) {
     reportContextWarmupOperation({ operation: tool, outcome: 'deadline_exhausted', startedAt, failureCategory: 'deadline' }, context, span)
     return { succeeded: false, outcome: 'deadline_exhausted', deadlineExhausted: true }
   }
@@ -250,10 +250,10 @@ function warmContextTool(tool, payload, context) {
  */
 function indexMarkdownContextCandidate(repoRoot, relPath, seen, context) {
   const { deadline, clock } = context
-  if (warmupTimeout(deadline, clock) === null) {
+  if (warmupTimeout(deadline, clock) === undefined) {
     return { attempted: false, succeeded: false, deadlineExhausted: true }
   }
-  const candidatePath = resolve(repoRoot, relPath)
+  const candidatePath = nodePath.resolve(repoRoot, relPath)
   if (seen.has(candidatePath)) {
     return { attempted: false, succeeded: false, deadlineExhausted: false }
   }
@@ -287,8 +287,8 @@ function indexMarkdownContextCandidate(repoRoot, relPath, seen, context) {
 function repositoryMarkdownPath(repoRoot, relPath, filesystem) {
   try {
     const realRepoRoot = filesystem.realpath(repoRoot)
-    const markdownPath = filesystem.realpath(resolve(realRepoRoot, relPath))
-    const relativePath = relative(realRepoRoot, markdownPath)
+    const markdownPath = filesystem.realpath(nodePath.resolve(realRepoRoot, relPath))
+    const relativePath = nodePath.relative(realRepoRoot, markdownPath)
     if (!isRepositoryRelativePath(relativePath)) return { kind: 'outside' }
     if (!filesystem.stat(markdownPath).isFile()) return { kind: 'absent' }
     return { kind: 'present', path: markdownPath }
@@ -331,7 +331,7 @@ function recordMarkdownWarmupOutcome(summary, result) {
  *   Attempt and success counts plus whether the shared deadline stopped indexing.
  */
 function warmMarkdownContext(repoRoot, changedFiles, context) {
-  const candidates = ['AGENTS.md', 'README.md'].concat((changedFiles || []).filter((path) => path.endsWith('.md')))
+  const candidates = ['AGENTS.md', 'README.md', ...changedFiles.filter((path) => path.endsWith('.md'))]
   const seen = new Set()
   const summary = { attempts: 0, successes: 0, deadlineExhausted: false }
   for (const relPath of candidates) {

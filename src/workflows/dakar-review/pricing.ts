@@ -83,10 +83,10 @@ export const DEFAULT_PRICING_TABLE: PricingTable = {
       outputUsdPerMTok: 0.6,
     },
     'gpt-5.6-terra:flex': {
-      inputUsdPerMTok: 1.0,
+      inputUsdPerMTok: 1,
       cachedInputUsdPerMTok: 0.1,
       cacheWriteUsdPerMTok: 1.25,
-      outputUsdPerMTok: 6.0,
+      outputUsdPerMTok: 6,
     },
     'gpt-5.6-luna:standard': {
       inputUsdPerMTok: 0.2,
@@ -95,10 +95,10 @@ export const DEFAULT_PRICING_TABLE: PricingTable = {
       outputUsdPerMTok: 1.2,
     },
     'gpt-5.6-terra:standard': {
-      inputUsdPerMTok: 2.0,
+      inputUsdPerMTok: 2,
       cachedInputUsdPerMTok: 0.2,
       cacheWriteUsdPerMTok: 2.5,
-      outputUsdPerMTok: 12.0,
+      outputUsdPerMTok: 12,
     },
   },
 }

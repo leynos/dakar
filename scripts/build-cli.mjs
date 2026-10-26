@@ -43,10 +43,13 @@ const result = await build({
   platform: 'node',
   write: false,
 })
-const generated = result.outputFiles[0].text.replace(/\r\n?/gu, '\n')
+const generated = result.outputFiles[0].text.replaceAll(/\r\n?/gu, '\n')
 
 if (checkOnly) {
-  const current = await readFile(OUTPUT, 'utf8').catch(() => null)
+  let current
+  try {
+    current = await readFile(OUTPUT, 'utf8')
+  } catch {}
   if (current !== generated) {
     process.stderr.write('bin/dakar-review.bundle.mjs is stale; run `npm run cli:build`.\n')
     process.exitCode = 1

@@ -13,6 +13,7 @@
   "scripts": {
     "docs:check": "typedoc --options typedoc.json",
     "lint:complexity": "biome lint",
+    "lint:oxlint": "oxlint --config oxlint.config.mjs adapters bin/dakar-review.mjs scripts src",
     "markdownlint": "markdownlint-cli2 $(git ls-files '*.md')",
     "nixie": "nixie $(git ls-files '*.md')",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -27,10 +28,14 @@
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
+    "ai-deslop": "0.4.9",
     "esbuild": "0.28.1",
     "fast-check": "4.9.0",
     "markdownlint-cli2": "0.23.2",
+    "oxlint": "1.82.0",
+    "oxlint-tsgolint": "7.0.2004",
     "typedoc": "0.28.20",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "zod": "4.6.7"
   }
 }

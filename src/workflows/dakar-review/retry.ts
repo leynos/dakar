@@ -24,8 +24,8 @@ export interface FlexRetryConfig {
   readonly flexJitterSeconds: number
 }
 
-const FNV_OFFSET_BASIS = 0x811c9dc5
-const FNV_PRIME = 0x01000193
+const FNV_OFFSET_BASIS = 0x81_1C_9D_C5
+const FNV_PRIME = 0x1_00_01_93
 
 /**
  * Derives a reproducible jitter offset in `[0, jitterSeconds]` from a call id
@@ -45,8 +45,8 @@ export function deterministicJitter(callId: string, attempt: number, jitterSecon
   if (jitterSeconds <= 0) return 0
   const input = `${callId}:${attempt}`
   let hash = FNV_OFFSET_BASIS
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index)
+  for (const character of input) {
+    hash ^= character.codePointAt(0) ?? 0
     hash = Math.imul(hash, FNV_PRIME) >>> 0
   }
   return hash % (jitterSeconds + 1)
@@ -85,10 +85,9 @@ export function backoffSeconds(config: FlexRetryConfig, callId: string, attempt:
  * responsibility. Retrying is safe because the affected stages are idempotent
  * and free of repository writes.
  *
- * @param _error - The value thrown by the failed `agent()` call.
  * @returns Whether the caller should retry the call.
  */
-export function isRetryableFlexError(_error: unknown): boolean {
+export function isRetryableFlexError(): boolean {
   return true
 }
 

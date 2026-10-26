@@ -9,7 +9,9 @@ compilation boundary is recorded in
 [`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md),
 the deterministic and Flex routing decision is recorded in
 [`docs/adr-002-deterministic-tiered-review-cost.md`](adr-002-deterministic-tiered-review-cost.md),
-and delivery plans live under [`docs/execplans/`](execplans/).
+the application lint strategy is recorded in
+[`docs/adr-003-linting-strategy.md`](adr-003-linting-strategy.md), and delivery
+plans live under [`docs/execplans/`](execplans/).
 
 ## 1. Local validation
 
@@ -41,10 +43,15 @@ verify the cumulative timeout without wall-clock sleeps. Shared CLI subprocess
 and repository-fixture helpers live in `tests/cli-test-support.mjs`;
 `npm run test:cli` also runs the bundle and installer tests.
 
-The `make lint` gate runs `npm run lint:complexity`, which uses pinned Biome
-1.9.4 to enforce a maximum cognitive complexity of 9 on the authored CLI
-(`bin/dakar-review.mjs`) and SARIF (`src/workflows/dakar-review/sarif.ts`)
-sources. Generated bundles are excluded.
+The `make lint` gate runs pinned Biome 1.9.4 and Oxlint. Biome enforces a
+maximum cognitive complexity of 9 on the authored CLI (`bin/dakar-review.mjs`)
+and SARIF (`src/workflows/dakar-review/sarif.ts`) sources. Oxlint applies the
+recommended Unicorn and deslop rules to `adapters`, `bin/dakar-review.mjs`,
+`scripts`, and `src`; its pinned versions and sole plugin-rule exception are
+recorded in [ADR 003](adr-003-linting-strategy.md). Generated bundles and tests
+are outside the Oxlint application target. The generated bundles are checked
+through their source gates and freshness checks, while tests run under
+`make test`.
 
 Do not use `node --check workflows/dakar-review.js` as a workflow syntax gate.
 ODW files permit top-level `return`, which ordinary Node syntax checking
@@ -196,8 +203,10 @@ in the design or ExecPlan decision log. Never bind a value that changes between
 phases: prompt construction must receive the policy path the CLI resolved
 host-side rather than capture the initial `auto` placeholder. Internal bundle
 names are not interfaces; only the exact `workflowMain` entry is load-bearing.
-Declare every runtime module in the build manifest and wire it from `main.ts`
-so the compiler can compare the manifest with esbuild's metafile.
+Declare every source runtime module in `RUNTIME_MODULES` and wire it from
+`main.ts` so the compiler can compare the manifest with esbuild's metafile.
+Keep third-party runtime inputs in the separate `RUNTIME_PACKAGES` allowlist;
+the pinned Zod package is currently the only entry.
 
 Source tests should import the narrow module they exercise. Do not slice the
 generated artefact to recover helpers: esbuild may normalize quotes, remove

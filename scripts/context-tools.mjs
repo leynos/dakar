@@ -14,7 +14,7 @@ import { shellWord } from '../src/workflows/dakar-review/shell.ts'
  */
 function mcpPayload(payload) {
   const json = JSON.stringify(payload)
-  if (typeof json !== 'string') throw new Error('MCP payload must be serializable')
+  if (json === undefined) throw new Error('MCP payload must be serializable')
   return shellWord(json)
 }
 

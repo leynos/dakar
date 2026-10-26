@@ -4,8 +4,13 @@
  * @module
  */
 
-/** Represents an untrusted object whose fields require runtime narrowing. */
-export type UnknownObject = Record<string, unknown>
+/** Represents a JSON value received across a workflow or process boundary. */
+export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject
+
+/** Represents a JSON object whose properties are still awaiting domain parsing. */
+export interface JsonObject {
+  [key: string]: JsonValue
+}
 
 /** Enumerates the reasoning levels supported by Dakar's Codex adapters. */
 export type Reasoning = 'low' | 'medium' | 'high'
@@ -77,56 +82,56 @@ export interface NormalizedReviewPolicy {
 /** Describes untrusted external arguments accepted by the workflow entry. */
 export interface WorkflowArgs {
   /** Raw per-call adapter token overhead; validated and bounded during config resolution. */
-  adapterOverheadTokens?: unknown
+  adapterOverheadTokens?: JsonValue
   /** Unvalidated instruction candidate; only trusted after `config.ts` field-checks it. */
-  agentInstructions?: AgentInstructions
+  agentInstructions?: JsonValue
   /** Raw base ref argument, before falling back to the default when blank. */
   base?: string
   /** Raw review budget in GBP; validated and bounded before use. */
-  budgetGbp?: unknown
+  budgetGbp?: JsonValue
   /** Raw CodeRabbit config path or name argument, passed through to config resolution. */
   config?: string
   /** Raw dry-run flag; only `true` (strict equality) enables dry-run mode. */
   dryRun?: boolean
   /** Raw Flex-attempt count; validated and clamped by `positiveLimit` before use. */
-  flexAttempts?: unknown
+  flexAttempts?: JsonValue
   /** Raw initial Flex-retry backoff in seconds; validated and clamped before use. */
-  flexInitialBackoffSeconds?: unknown
+  flexInitialBackoffSeconds?: JsonValue
   /** Raw Flex-retry jitter ceiling in seconds; validated and bounded before use. */
-  flexJitterSeconds?: unknown
+  flexJitterSeconds?: JsonValue
   /** Raw maximum Flex-retry backoff in seconds; validated and clamped before use. */
-  flexMaxBackoffSeconds?: unknown
+  flexMaxBackoffSeconds?: JsonValue
   /** Raw head ref argument, before falling back to `HEAD` when blank. */
   head?: string
   /**
    * Raw Luna finder reasoning level; accepts `low`, `medium`, and `high`.
    * Missing or invalid values fall back to `high`.
    */
-  lunaReasoning?: unknown
+  lunaReasoning?: JsonValue
   /** Raw audit-candidate cap; validated and clamped by `positiveLimit` before use. */
-  maxAuditCandidates?: unknown
+  maxAuditCandidates?: JsonValue
   /** Raw candidate cap; validated and clamped by `positiveLimit` before use. */
-  maxCandidates?: unknown
+  maxCandidates?: JsonValue
   /** Raw findings cap; validated and clamped by `positiveLimit` before use. */
-  maxFindings?: unknown
+  maxFindings?: JsonValue
   /** Raw Luna Flex call cap; validated and clamped by `positiveLimit` before use. */
-  maxLunaFlexCalls?: unknown
+  maxLunaFlexCalls?: JsonValue
   /** Raw task cap; validated and clamped by `positiveLimit` before use. */
-  maxTasks?: unknown
+  maxTasks?: JsonValue
   /** Raw model list; entries are individually validated by `configuredModels`. */
-  models?: unknown
+  models?: JsonValue
   /** Raw per-call timeout in seconds; validated and bounded before use. */
-  perCallTimeoutSeconds?: unknown
+  perCallTimeoutSeconds?: JsonValue
   /** Raw normalized review policy; validated at the workflow boundary before use. */
-  policy?: unknown
+  policy?: JsonValue
   /** Optional host-prepared review range, reused instead of recomputing the diff. */
-  prepared?: PreparedReview
+  prepared?: JsonValue
   /** Raw repository root argument, before falling back to `.` when blank. */
   repoRoot?: string
   /** Optional host-translated, domain-neutral context guidance for finder prompts. */
   contextGuidance?: string
   /** Raw live routing policy identifier; constrained to a known value before use. */
-  routingPolicy?: unknown
+  routingPolicy?: JsonValue
   /** Raw XDG state root argument used to locate review-history state. */
   stateRoot?: string
   /** Raw synthesis model identifier, validated against `validModelIdentifier`. */
@@ -134,15 +139,15 @@ export interface WorkflowArgs {
   /** Raw synthesis reasoning override, validated against the supported levels. */
   synthesisReasoning?: string
   /** Raw input-token cap for the Terra audit lane; validated and bounded before use. */
-  terraMaxInputTokens?: unknown
+  terraMaxInputTokens?: JsonValue
   /** Raw output-token cap for the Terra audit lane; validated and bounded before use. */
-  terraMaxOutputTokens?: unknown
+  terraMaxOutputTokens?: JsonValue
   /** Raw per-pack file cap for the Luna finder lane; validated and clamped before use. */
-  transactionMaxFiles?: unknown
+  transactionMaxFiles?: JsonValue
   /** Raw input-token cap for the Luna finder lane; validated and bounded before use. */
-  transactionMaxInputTokens?: unknown
+  transactionMaxInputTokens?: JsonValue
   /** Raw output-token cap for the Luna finder lane; validated and bounded before use. */
-  transactionMaxOutputTokens?: unknown
+  transactionMaxOutputTokens?: JsonValue
 }
 
 /** Captures the deterministic review range returned by the state helper. */
