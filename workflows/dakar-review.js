@@ -9749,16 +9749,28 @@ function compatibilityFinding(dakar) {
   if (!("taskId" in candidate)) {
     return emptyCompatibilityFinding(dakar);
   }
+  return candidateCompatibilityFinding(candidate, dakar);
+}
+function candidateCompatibilityFinding(candidate, dakar) {
   const { disposition, audit } = dakar;
+  const location = compatibilityLocation(candidate);
+  const description = compatibilityDescription(candidate);
   return {
     severity: disposition?.acceptedSeverity || candidate.severity || "low",
-    path: candidate.path || "",
-    line: positiveCompatibilityLine(candidate.line),
-    title: candidate.title || "",
-    detail: candidate.detail || "",
-    evidence: candidate.evidence || "",
+    path: location.path,
+    line: location.line,
+    title: description.title,
+    detail: description.detail,
+    evidence: description.evidence,
     clusterId: audit?.clusterId || void 0,
     sourceTasks: [candidate.taskId]
+  };
+}
+function compatibilityDescription(candidate) {
+  return {
+    title: candidate.title || "",
+    detail: candidate.detail || "",
+    evidence: candidate.evidence || ""
   };
 }
 function emptyCompatibilityFinding(dakar) {
@@ -9773,8 +9785,12 @@ function emptyCompatibilityFinding(dakar) {
     sourceTasks: []
   };
 }
-function positiveCompatibilityLine(line) {
-  return line !== void 0 && line > 0 ? line : void 0;
+function compatibilityLocation(candidate) {
+  const { line } = candidate;
+  return {
+    path: candidate.path || "",
+    line: line !== void 0 && line > 0 ? line : void 0
+  };
 }
 function projectFindingsFromSarif(sarif) {
   return semanticResults(sarif).flatMap((dakar) => {
@@ -9947,20 +9963,28 @@ function distributeTaskSlots(groups, budget) {
   }
   return slots;
 }
-function buildTaskGraph(prepared, config2) {
+function groupReviewFiles(changedFiles) {
   const groups = /* @__PURE__ */ new Map();
-  for (const file2 of prepared.changedFiles || []) {
+  for (const file2 of changedFiles) {
     const kind = classifyPath(file2);
     const key = kind === "dependency" || kind === "unknown" ? "source" : kind;
     const files = groups.get(key) ?? [];
     files.push(file2);
     groups.set(key, files);
   }
+  return groups;
+}
+function populatedFileGroups(groups) {
   const populated = [];
   for (const kind of ["source", "tests", "config", "docs"]) {
     const files = groups.get(kind) || [];
     if (files.length > 0) populated.push({ kind, files });
   }
+  return populated;
+}
+function buildTaskGraph(prepared, config2) {
+  const groups = groupReviewFiles(prepared.changedFiles || []);
+  const populated = populatedFileGroups(groups);
   const budget = Math.max(1, config2.maxTasks) - 1;
   if (populated.length > budget) {
     throw new Error(`maxTasks=${config2.maxTasks} is too small: ${populated.length} changed-file groups plus a review summary cannot fit; raise maxTasks or narrow the review range`);

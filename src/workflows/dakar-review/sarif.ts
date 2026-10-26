@@ -431,16 +431,32 @@ function compatibilityFinding(dakar: SemanticDakarProperties): CompatibilityFind
   if (!('taskId' in candidate)) {
     return emptyCompatibilityFinding(dakar)
   }
+  return candidateCompatibilityFinding(candidate, dakar)
+}
+
+/** Projects complete candidate evidence into the legacy finding shape. */
+function candidateCompatibilityFinding(candidate: Candidate, dakar: SemanticDakarProperties): CompatibilityFinding {
   const { disposition, audit } = dakar
+  const location = compatibilityLocation(candidate)
+  const description = compatibilityDescription(candidate)
   return {
     severity: disposition?.acceptedSeverity || candidate.severity || 'low',
-    path: candidate.path || '',
-    line: positiveCompatibilityLine(candidate.line),
+    path: location.path,
+    line: location.line,
+    title: description.title,
+    detail: description.detail,
+    evidence: description.evidence,
+    clusterId: audit?.clusterId || undefined,
+    sourceTasks: [candidate.taskId],
+  }
+}
+
+/** Normalizes the descriptive text fields for legacy consumers. */
+function compatibilityDescription(candidate: Candidate): Pick<CompatibilityFinding, 'title' | 'detail' | 'evidence'> {
+  return {
     title: candidate.title || '',
     detail: candidate.detail || '',
     evidence: candidate.evidence || '',
-    clusterId: audit?.clusterId || undefined,
-    sourceTasks: [candidate.taskId],
   }
 }
 
@@ -458,9 +474,13 @@ function emptyCompatibilityFinding(dakar: SemanticDakarProperties): Compatibilit
   }
 }
 
-/** Keeps only a positive line number in the legacy finding projection. */
-function positiveCompatibilityLine(line: number | undefined): number | undefined {
-  return line !== undefined && line > 0 ? line : undefined
+/** Normalizes a candidate's path and positive line for legacy consumers. */
+function compatibilityLocation(candidate: Candidate): Pick<CompatibilityFinding, 'path' | 'line'> {
+  const { line } = candidate
+  return {
+    path: candidate.path || '',
+    line: line !== undefined && line > 0 ? line : undefined,
+  }
 }
 
 /**

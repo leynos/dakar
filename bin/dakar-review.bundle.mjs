@@ -665,16 +665,28 @@ function compatibilityFinding(dakar) {
   if (!("taskId" in candidate)) {
     return emptyCompatibilityFinding(dakar);
   }
+  return candidateCompatibilityFinding(candidate, dakar);
+}
+function candidateCompatibilityFinding(candidate, dakar) {
   const { disposition, audit } = dakar;
+  const location = compatibilityLocation(candidate);
+  const description = compatibilityDescription(candidate);
   return {
     severity: disposition?.acceptedSeverity || candidate.severity || "low",
-    path: candidate.path || "",
-    line: positiveCompatibilityLine(candidate.line),
-    title: candidate.title || "",
-    detail: candidate.detail || "",
-    evidence: candidate.evidence || "",
+    path: location.path,
+    line: location.line,
+    title: description.title,
+    detail: description.detail,
+    evidence: description.evidence,
     clusterId: audit?.clusterId || void 0,
     sourceTasks: [candidate.taskId]
+  };
+}
+function compatibilityDescription(candidate) {
+  return {
+    title: candidate.title || "",
+    detail: candidate.detail || "",
+    evidence: candidate.evidence || ""
   };
 }
 function emptyCompatibilityFinding(dakar) {
@@ -689,8 +701,12 @@ function emptyCompatibilityFinding(dakar) {
     sourceTasks: []
   };
 }
-function positiveCompatibilityLine(line) {
-  return line !== void 0 && line > 0 ? line : void 0;
+function compatibilityLocation(candidate) {
+  const { line } = candidate;
+  return {
+    path: candidate.path || "",
+    line: line !== void 0 && line > 0 ? line : void 0
+  };
 }
 function projectFindingsFromSarif(sarif) {
   return semanticResults(sarif).flatMap((dakar) => {

@@ -143,6 +143,29 @@ export function distributeTaskSlots(groups: Array<{ kind: string; files: string[
   return slots
 }
 
+/** Groups changed files by their review task kind. */
+function groupReviewFiles(changedFiles: string[]): Map<string, string[]> {
+  const groups = new Map<string, string[]>()
+  for (const file of changedFiles) {
+    const kind = classifyPath(file)
+    const key = kind === 'dependency' || kind === 'unknown' ? 'source' : kind
+    const files = groups.get(key) ?? []
+    files.push(file)
+    groups.set(key, files)
+  }
+  return groups
+}
+
+/** Selects nonempty file groups in the stable task ordering. */
+function populatedFileGroups(groups: Map<string, string[]>): Array<{ kind: string; files: string[] }> {
+  const populated: Array<{ kind: string; files: string[] }> = []
+  for (const kind of ['source', 'tests', 'config', 'docs']) {
+    const files = groups.get(kind) || []
+    if (files.length > 0) populated.push({ kind, files })
+  }
+  return populated
+}
+
 /**
  * Constructs complete changed-file coverage plus the mandatory summary task.
  *
@@ -152,19 +175,8 @@ export function distributeTaskSlots(groups: Array<{ kind: string; files: string[
  * @throws {Error} When the task budget cannot cover every group and the summary.
  */
 export function buildTaskGraph(prepared: PreparedReview, config: TaskGraphConfig): ReviewTask[] {
-  const groups = new Map<string, string[]>()
-  for (const file of prepared.changedFiles || []) {
-    const kind = classifyPath(file)
-    const key = kind === 'dependency' || kind === 'unknown' ? 'source' : kind
-    const files = groups.get(key) ?? []
-    files.push(file)
-    groups.set(key, files)
-  }
-  const populated: Array<{ kind: string; files: string[] }> = []
-  for (const kind of ['source', 'tests', 'config', 'docs']) {
-    const files = groups.get(kind) || []
-    if (files.length > 0) populated.push({ kind, files })
-  }
+  const groups = groupReviewFiles(prepared.changedFiles || [])
+  const populated = populatedFileGroups(groups)
   const budget = Math.max(1, config.maxTasks) - 1
   if (populated.length > budget) {
     throw new Error(`maxTasks=${config.maxTasks} is too small: ${populated.length} changed-file groups plus a review summary cannot fit; raise maxTasks or narrow the review range`)

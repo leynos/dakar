@@ -189,6 +189,25 @@ function assertLoaderContract(banner, bundle, artefact) {
   }
 }
 
+/** Checks whether a bundled input lies within an approved package root. */
+function isPackageInput(input, packageRoot) {
+  const relative = path.relative(packageRoot, input)
+  return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+}
+
+/** Enforces both sides of the workflow runtime input manifest. */
+function assertRuntimeInputs(inputs, expectedInputs, packageRoots, srcDir) {
+  const missing = [...expectedInputs].find((modulePath) => !inputs.has(modulePath))
+  if (missing !== undefined) {
+    reject('BUILD_ORPHAN_MODULE', `${path.relative(srcDir, missing)} is absent from the runtime bundle`)
+  }
+  const unexpected = [...inputs].find((input) =>
+    !expectedInputs.has(input) && !packageRoots.some((root) => isPackageInput(input, root)))
+  if (unexpected !== undefined) {
+    reject('BUILD_ORPHAN_MODULE', `${path.relative(srcDir, unexpected)} is bundled but absent from the runtime manifest`)
+  }
+}
+
 /** Builds or freshness-checks the canonical workflow artefact. */
 export async function buildWorkflow({
   srcDir = DEFAULT_SOURCE,
@@ -220,20 +239,7 @@ export async function buildWorkflow({
   const inputs = new Set(Object.keys(result.metafile.inputs).map((input) => path.resolve(input)))
   const expectedInputs = new Set([path.resolve(entry), ...runtimeModules.map((name) => path.resolve(srcDir, name))])
   const approvedPackageRoots = runtimePackages.map((name) => path.join(ROOT, 'node_modules', name))
-  const isApprovedPackageInput = (input) => approvedPackageRoots.some((packageRoot) => {
-    const relative = path.relative(packageRoot, input)
-    return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
-  })
-  for (const modulePath of expectedInputs) {
-    if (!inputs.has(modulePath)) {
-      reject('BUILD_ORPHAN_MODULE', `${path.relative(srcDir, modulePath)} is absent from the runtime bundle`)
-    }
-  }
-  for (const input of inputs) {
-    if (!expectedInputs.has(input) && !isApprovedPackageInput(input)) {
-      reject('BUILD_ORPHAN_MODULE', `${path.relative(srcDir, input)} is bundled but absent from the runtime manifest`)
-    }
-  }
+  assertRuntimeInputs(inputs, expectedInputs, approvedPackageRoots, srcDir)
   const bundle = result.outputFiles[0].text
   const artefact = [
     '/**',

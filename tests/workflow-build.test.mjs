@@ -112,6 +112,10 @@ test('rejects a bundled source module absent from the manifest', async (t) => {
   await expectCode({ ...options, runtimeModules: ['main.ts'] }, 'BUILD_ORPHAN_MODULE')
 })
 
+test('rejects a bundled package absent from the runtime package manifest', async () => {
+  await expectCode({ checkOnly: true, runtimePackages: [] }, 'BUILD_ORPHAN_MODULE')
+})
+
 test('rejects a missing workflow entry', async (t) => {
   const options = await fixture(t, { main: 'async function anotherEntry() {}\n' })
   await expectCode(options, 'BUILD_ENTRY_COUNT')
