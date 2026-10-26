@@ -6969,8 +6969,7 @@ var dakarRunSchema = object({
 var sarifOutputSchema = object({ runs: array(dakarRunSchema).optional() }).loose();
 var workflowOutputSchema = object({
   metrics: jsonRecordSchema.optional(),
-  recordInput: recordInputSchema.optional(),
-  sarif: sarifOutputSchema.optional()
+  recordInput: recordInputSchema.optional()
 }).loose();
 var preparedSnapshotSchema = object({
   headCommit: string2(),
@@ -7063,25 +7062,44 @@ function sumReportedTokens(lines) {
   }
   return totals;
 }
-function annotateReportedUsage(output, lines, totals) {
-  const parsed = workflowOutputSchema.safeParse(output);
-  if (!parsed.success) return output;
-  const annotated = parsed.data;
-  annotated.metrics = annotated.metrics || {};
-  annotated.metrics.reportedUsage = lines;
-  annotated.metrics.reportedTokens = totals;
-  const sarifDakar = annotated.sarif?.runs?.[0]?.properties?.dakar;
+function reportUsageValidation(operation) {
+  const event = { event: "reported_usage_validation", operation, category: "schema_validation" };
+  REPORTED_USAGE_BOUNDARY.report(`dakar-review: usage validation ${JSON.stringify(event)}
+`);
+}
+function failUsageValidation(output, operation) {
+  reportUsageValidation(operation);
+  return { ...output, ok: false, stage: "reported_usage", error: "workflow output failed reported usage validation" };
+}
+function annotateSarifUsage(output, lines, totals) {
+  if (output.sarif === void 0) return;
+  const parsed = sarifOutputSchema.safeParse(output.sarif);
+  if (!parsed.success) {
+    reportUsageValidation("reported_usage_sarif");
+    return;
+  }
+  output.sarif = parsed.data;
+  const sarifDakar = output.sarif.runs?.[0]?.properties?.dakar;
   if (sarifDakar !== void 0) {
     sarifDakar.reportedUsage = lines;
     sarifDakar.reportedTokens = totals;
   }
-  return annotated;
+}
+function annotateReportedUsage(output, lines, totals) {
+  const parsed = workflowOutputSchema.safeParse(output);
+  if (!parsed.success) return { output: failUsageValidation(output, "reported_usage_annotation"), ok: false };
+  const annotated = parsed.data;
+  annotated.metrics = annotated.metrics || {};
+  annotated.metrics.reportedUsage = lines;
+  annotated.metrics.reportedTokens = totals;
+  annotateSarifUsage(annotated, lines, totals);
+  return { output: annotated, ok: true };
 }
 function attachReportedUsage(output) {
   const result = consumeReportedUsageLog(usageLogFile, REPORTED_USAGE_BOUNDARY);
   reportUsageLogOutcome(result, REPORTED_USAGE_BOUNDARY.report);
   const { lines } = result;
-  if (lines.length === 0) return output;
+  if (lines.length === 0) return { output, ok: true };
   const totals = sumReportedTokens(lines);
   return annotateReportedUsage(output, lines, totals);
 }
@@ -7370,8 +7388,9 @@ function recordReview(output, trustedLocation, prepared) {
   return output;
 }
 function copyReportedMetricsToRecordInput(output) {
+  if (!output.recordInput) return output;
   const parsed = workflowOutputSchema.safeParse(output);
-  if (!parsed.success) return output;
+  if (!parsed.success) return failUsageValidation(output, "reported_usage_recording");
   const recordable = parsed.data;
   if (!recordable.recordInput) return recordable;
   const metrics = recordable.recordInput.metrics || {};
@@ -7381,8 +7400,9 @@ function copyReportedMetricsToRecordInput(output) {
   return recordable;
 }
 function finalizeWorkflowResult(output, workflowArgs) {
-  output = attachReportedUsage(output);
-  if (workflowArgs.dryRun) return output;
+  const usage2 = attachReportedUsage(output);
+  output = usage2.output;
+  if (!usage2.ok || workflowArgs.dryRun) return output;
   output = copyReportedMetricsToRecordInput(output);
   return recordReview(
     output,

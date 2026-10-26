@@ -453,14 +453,14 @@ export function createUsageScanner({ maxLineChars = MAX_TELEMETRY_LINE_CHARS } =
 function partitionReportedUsage(records) {
   const valid = []
   const malformed = []
-  records.forEach((record, index) => {
+  for (const [index, record] of records.entries()) {
     const outcome = classifyUsageValue(record)
     if (outcome.category === 'valid') {
       valid.push(outcome.value)
     } else {
       malformed.push({ line: index, category: outcome.category })
     }
-  })
+  }
   return { records: valid, malformed }
 }
 

@@ -189,8 +189,15 @@ function assertLoaderContract(banner, bundle, artefact) {
   }
 }
 
-/** Checks whether a bundled input lies within an approved package root. */
-function isPackageInput(input, packageRoot) {
+/**
+ * Checks whether a bundled input is a strict descendant of an approved package root.
+ *
+ * @param {string} input - the resolved path of a bundled input.
+ * @param {string} packageRoot - the root directory of an approved runtime package.
+ * @returns {boolean} true when `input` is beneath `packageRoot`, excluding the root itself.
+ * @internal
+ */
+export function isPackageInput(input, packageRoot) {
   const relative = path.relative(packageRoot, input)
   return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
 }

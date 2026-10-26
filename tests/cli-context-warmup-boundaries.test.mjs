@@ -51,6 +51,37 @@ test('all MCP indexing calls use the remaining shared deadline', () => {
     'the aggregate result reflects successful bounded indexing')
 })
 
+test('an MCP probe that consumes the deadline prevents indexing processes from starting', () => {
+  let now = 0
+  const calls = []
+  const reports = []
+  const boundary = {
+    ...CONTEXT_WARMUP_BOUNDARY,
+    clock: { now: () => now },
+    runGit: (args) => args.at(-1) === 'HEAD'
+      ? { status: 0, stdout: 'reviewed-head\n' }
+      : { status: 0, stdout: '' },
+    runMcp: (args) => {
+      calls.push(args)
+      if (args[0] === '--list') now = 30_000
+      return { status: 0 }
+    },
+    filesystem: { realpath: (path) => path, stat: () => ({ isFile: () => true }) },
+    environment: { shouldSkip: () => false, variables: () => ({}) },
+    report: (message) => reports.push(message),
+  }
+
+  warmReviewedContextIndex('/reviewed/repo', { headCommit: 'reviewed-head', changedFiles: [] }, boundary)
+
+  assert.deepEqual(calls, [['--list']],
+    'directory and Markdown MCP processes must not start after the probe consumes the deadline')
+  const events = reports.filter((line) => line.startsWith('dakar-review: warmup '))
+    .map((line) => JSON.parse(line.slice('dakar-review: warmup '.length)))
+  const summary = events.find((event) => event.type === 'summary')
+  assert.equal(summary?.outcome, 'timed_out', 'the summary records the exhausted warmup deadline')
+  assert.equal(summary?.deadlineExhausted, true, 'the summary marks the deadline as exhausted')
+})
+
 test('the environment skip is injectable and avoids checkout and MCP processes', () => {
   const reports = []
   const boundary = {

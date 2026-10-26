@@ -188,7 +188,7 @@ export function setUpRecordRepo() {
 // is inlined before the result is emitted (so a fake can append DAKAR_USAGE_LOG
 // lines first).
 /** Writes a faithful prepared-review echo executable. */
-export function writePreparedEchoOdw(path, { recordInputOverride = '{}', bodyPrefix = '', captureArgs = false } = {}) {
+export function writePreparedEchoOdw(path, { recordInputOverride = '{}', resultOverride = '{}', bodyPrefix = '', captureArgs = false } = {}) {
   writeFileSync(
     path,
     `#!/usr/bin/env node
@@ -224,6 +224,7 @@ const result = {
     metrics: { taskCount: 2 },
     ...${recordInputOverride},
   },
+  ...${resultOverride},
 }
 process.stdout.write(JSON.stringify(result))
 `,

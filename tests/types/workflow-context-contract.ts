@@ -61,4 +61,12 @@ const promptContext: PromptContext = {
 }
 taskPrompt(task, prepared, promptContext, workflowArgs.contextGuidance)
 
+void workflow('review', {
+  enabled: true,
+  nested: { count: 1 },
+  values: [null, 'ready'],
+})
+// @ts-expect-error workflow arguments must be JSON-compatible
+void workflow('review', () => undefined)
+
 void [highReasoning, invalidReasoning, defaultWorkflowArgs, optionalPromptGuidance, githubIdentityArgs, invalidLunaRole]

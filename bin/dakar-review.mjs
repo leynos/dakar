@@ -44,7 +44,6 @@ const sarifOutputSchema = z.object({ runs: z.array(dakarRunSchema).optional() })
 const workflowOutputSchema = z.object({
   metrics: jsonRecordSchema.optional(),
   recordInput: recordInputSchema.optional(),
-  sarif: sarifOutputSchema.optional(),
 }).loose()
 const preparedSnapshotSchema = z.object({
   headCommit: z.string(),
@@ -225,26 +224,51 @@ function sumReportedTokens(lines) {
   return totals
 }
 
+/** Reports a bounded usage-boundary failure without exposing workflow data. */
+function reportUsageValidation(operation) {
+  const event = { event: 'reported_usage_validation', operation, category: 'schema_validation' }
+  REPORTED_USAGE_BOUNDARY.report(`dakar-review: usage validation ${JSON.stringify(event)}\n`)
+}
+
+/** Refuses to record a review whose usage metrics cannot be safely attached. */
+function failUsageValidation(output, operation) {
+  reportUsageValidation(operation)
+  return { ...output, ok: false, stage: 'reported_usage', error: 'workflow output failed reported usage validation' }
+}
+
+/** Adds usage to SARIF when its optional metadata is well formed. */
+function annotateSarifUsage(output, lines, totals) {
+  if (output.sarif === undefined) return
+  const parsed = sarifOutputSchema.safeParse(output.sarif)
+  if (!parsed.success) {
+    reportUsageValidation('reported_usage_sarif')
+    return
+  }
+  output.sarif = parsed.data
+  const sarifDakar = output.sarif.runs?.[0]?.properties?.dakar
+  if (sarifDakar !== undefined) {
+    sarifDakar.reportedUsage = lines
+    sarifDakar.reportedTokens = totals
+  }
+}
+
 /**
  * Stamp reported usage and totals onto workflow metrics and its first SARIF run.
  *
  * @param {object} output - parsed workflow result to annotate in place.
  * @param {unknown[]} lines - parsed usage records retained on the result.
  * @param {{ input: number, output: number, cacheRead: number, cacheWrite: number }} totals - summed token counts.
+ * @returns {{ output: object, ok: boolean }} annotated output or a validation failure.
  */
 function annotateReportedUsage(output, lines, totals) {
   const parsed = workflowOutputSchema.safeParse(output)
-  if (!parsed.success) return output
+  if (!parsed.success) return { output: failUsageValidation(output, 'reported_usage_annotation'), ok: false }
   const annotated = parsed.data
   annotated.metrics = annotated.metrics || {}
   annotated.metrics.reportedUsage = lines
   annotated.metrics.reportedTokens = totals
-  const sarifDakar = annotated.sarif?.runs?.[0]?.properties?.dakar
-  if (sarifDakar !== undefined) {
-    sarifDakar.reportedUsage = lines
-    sarifDakar.reportedTokens = totals
-  }
-  return annotated
+  annotateSarifUsage(annotated, lines, totals)
+  return { output: annotated, ok: true }
 }
 
 /**
@@ -258,13 +282,13 @@ function annotateReportedUsage(output, lines, totals) {
  * estimates remain separate by design). The log file is removed afterwards.
  *
  * @param {object} output - the parsed workflow result to annotate.
- * @returns {object} the same output, annotated when usage lines exist.
+ * @returns {{ output: object, ok: boolean }} annotated output or a validation failure.
  */
 function attachReportedUsage(output) {
   const result = consumeReportedUsageLog(usageLogFile, REPORTED_USAGE_BOUNDARY)
   reportUsageLogOutcome(result, REPORTED_USAGE_BOUNDARY.report)
   const { lines } = result
-  if (lines.length === 0) return output
+  if (lines.length === 0) return { output, ok: true }
   const totals = sumReportedTokens(lines)
   return annotateReportedUsage(output, lines, totals)
 }
@@ -713,8 +737,9 @@ function recordReview(output, trustedLocation, prepared) {
  * @param {object} output - the parsed ODW workflow result.
  */
 function copyReportedMetricsToRecordInput(output) {
+  if (!output.recordInput) return output
   const parsed = workflowOutputSchema.safeParse(output)
-  if (!parsed.success) return output
+  if (!parsed.success) return failUsageValidation(output, 'reported_usage_recording')
   const recordable = parsed.data
   if (!recordable.recordInput) return recordable
   const metrics = recordable.recordInput.metrics || {}
@@ -737,10 +762,11 @@ function copyReportedMetricsToRecordInput(output) {
  * @returns {object} the annotated and (on success) recorded workflow result.
  */
 function finalizeWorkflowResult(output, workflowArgs) {
-  output = attachReportedUsage(output)
+  const usage = attachReportedUsage(output)
+  output = usage.output
   // A dry run never records: there is no prepared snapshot to validate against
   // and no completed head to append.
-  if (workflowArgs.dryRun) return output
+  if (!usage.ok || workflowArgs.dryRun) return output
   output = copyReportedMetricsToRecordInput(output)
   return recordReview(
     output,

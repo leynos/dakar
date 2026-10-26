@@ -50,8 +50,9 @@ dependency because both shipped JavaScript artefacts are bundled; it is inlined
 into those artefacts and adds no external runtime import. The workflow compiler
 permits the pinned `zod` package as its sole third-party runtime input and
 continues to reject all other inputs outside the explicit module manifest. The
-compiler encloses the flattened workflow body in a lexical block so its
-internal bindings cannot collide with the required literal `meta` declaration.
+compiler encloses the flattened workflow body in a lexical block to separate
+block-scoped bindings from the required literal `meta` declaration. Loader
+validation rejects any remaining incompatible binding collision.
 
 ## Options considered
 

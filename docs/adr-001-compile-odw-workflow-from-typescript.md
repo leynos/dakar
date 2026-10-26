@@ -4,6 +4,15 @@
 
 Accepted.
 
+Amended (2026-10-26): the compiler encloses the bundle body and generated
+footer in a lexical block, separating block-scoped package bindings from the
+required top-level metadata declaration. Loader validation rejects any
+remaining incompatible binding collision. Zod is the sole approved third-party
+runtime package: its pinned modules are bundled into the artefact, and the
+build rejects runtime inputs outside the source manifest and Zod package. This
+amendment accompanies the linting strategy in
+[ADR 003](adr-003-linting-strategy.md).
+
 ## Date
 
 2026-07-14.
@@ -134,13 +143,6 @@ The source of truth moves to `src/workflows/dakar-review/`. The compiler writes
 1. `meta.js`, concatenated verbatim.
 2. A flat esbuild ESM bundle rooted at `main.ts`, with tree shaking disabled.
 3. A generated `return await workflowMain()` footer.
-
-The bundle body is enclosed in a lexical block before the generated footer.
-This prevents internal package bindings from colliding with the required
-top-level metadata declaration. Zod is the sole approved third-party runtime
-input: the pinned package is flattened into the artefact, and the compiler
-rejects any other package module outside the source manifest. The shipped
-workflow therefore remains a single file with no external runtime imports.
 
 `main.ts` is the sole composition root and the sole module that calls injected
 ODW primitives. It imports subsystem functions and passes immutable

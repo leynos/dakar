@@ -295,8 +295,7 @@ function resolveReachableHead(reachableBases, recordedHead) {
 function reachableReviewBases(repoRoot, mergeBase, headCommit) {
   const output = git(repoRoot, ['rev-list', '--ancestry-path', `${mergeBase}..${headCommit}`])
   const ordered = output ? output.split('\n').filter(Boolean) : []
-  const rankByCommit = new Map()
-  ordered.forEach((commit, index) => rankByCommit.set(commit, index))
+  const rankByCommit = new Map(ordered.map((commit, index) => [commit, index]))
   if (!rankByCommit.has(mergeBase)) {
     rankByCommit.set(mergeBase, ordered.length)
   }
