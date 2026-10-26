@@ -27,7 +27,7 @@ import * as z from 'zod'
 
 const moduleDir = nodePath.dirname(fileURLToPath(import.meta.url))
 const corpusPath = nodePath.join(moduleDir, 'live-corpus.json')
-const plainJsonObjectSchema = z.record(z.string(), z.json())
+const plainObjectSchema = z.record(z.string(), z.unknown())
 /** Null is part of the stable JSON summary when a usage amount is unavailable. */
 const JSON_NULL = JSON.parse('null')
 const DAKAR_USAGE_MARKER = 'DAKAR-USAGE: '
@@ -43,7 +43,7 @@ const MAX_TELEMETRY_LINE_CHARS = 1024 * 1024
  * @returns {boolean} true only for plain objects.
  */
 function isPlainObject(value) {
-  return plainJsonObjectSchema.safeParse(value).success
+  return plainObjectSchema.safeParse(value).success
 }
 
 /**
@@ -641,7 +641,7 @@ export function summarize({ entry, resultJson, usages = [], malformedTelemetry =
 export function priceReportedUsage(records) {
   let total = JSON_NULL
   for (const record of records) {
-    if (!isPlainObject(record)) continue
+    if (classifyUsageValue(record).category !== 'valid') continue
     const usage = record.usage ?? record
     const band = DEFAULT_PRICING_TABLE.rates[`${record.model}:flex`]
     if (!band) continue

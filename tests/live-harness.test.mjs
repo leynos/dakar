@@ -484,6 +484,14 @@ test('priceReportedUsage skips unpriceable records rather than guessing', () => 
   assert.ok(Math.abs(priced - 0.0006) < 1e-12, `priced ${priced}`)
 })
 
+test('priceReportedUsage skips non-finite usage without losing valid records', () => {
+  const priced = priceReportedUsage([
+    { model: 'gpt-5.6-luna', usage: { input: Infinity } },
+    { model: 'gpt-5.6-luna', usage: { output: 1000 } },
+  ])
+  assert.ok(Math.abs(priced - 0.0006) < 1e-12, `priced ${priced}`)
+})
+
 test('summarize skips a malformed null record in metrics.reportedUsage', () => {
   const entry = { repo: 'leynos/frankie', pr: 102, tier: 'medium' }
   const resultJson = {
@@ -539,6 +547,19 @@ test('extractUsageLines categorises invalid numeric fields as invalid-fields', (
 
   assert.deepEqual(usages, [])
   assert.deepEqual(malformed, [{ line: 1, category: 'invalid-fields' }])
+})
+
+test('extractUsageLines classifies overflowing numeric fields as invalid-fields', () => {
+  const { usages, malformed } = extractUsageLines([
+    'DAKAR-USAGE: {"input":1e999}',
+    'DAKAR-USAGE: {"usage":{"output":1e999}}',
+  ].join('\n'))
+
+  assert.deepEqual(usages, [])
+  assert.deepEqual(malformed, [
+    { line: 1, category: 'invalid-fields' },
+    { line: 2, category: 'invalid-fields' },
+  ])
 })
 
 test('extractUsageLines ignores unmarked stderr lines and never counts them as malformed', () => {
