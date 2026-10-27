@@ -555,11 +555,11 @@ test('extractUsageLines classifies overflowing numeric fields as invalid-fields'
     'DAKAR-USAGE: {"usage":{"output":1e999}}',
   ].join('\n'))
 
-  assert.deepEqual(usages, [])
+  assert.deepEqual(usages, [], 'overflowing usage records must be rejected')
   assert.deepEqual(malformed, [
     { line: 1, category: 'invalid-fields' },
     { line: 2, category: 'invalid-fields' },
-  ])
+  ], 'top-level and nested overflow must be classified as invalid fields')
 })
 
 test('extractUsageLines ignores unmarked stderr lines and never counts them as malformed', () => {
