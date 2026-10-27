@@ -332,6 +332,12 @@ current `HEAD` has already been recorded, the CLI's host-side prepare step
 detects this before invoking ODW at all: it prints the skip result
 (`skipped: true`) directly and never launches a model call.
 
+If the workflow returns metrics that cannot accept reported usage, the CLI
+emits a bounded validation diagnostic on standard error, returns
+`stage: "reported_usage"`, and leaves the head unrecorded. Malformed optional
+SARIF usage metadata also produces a diagnostic; valid reported usage remains
+available in the result and review history.
+
 To isolate a trial run from normal review history, pass `stateRoot`:
 
 ```bash

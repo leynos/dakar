@@ -10,6 +10,6 @@
  * @param value - Value to stringify and quote without shell interpretation.
  * @returns A single-quoted shell word with embedded quotes escaped.
  */
-export function shellWord(value: unknown): string {
-  return `'${String(value).replace(/'/g, "'\"'\"'")}'`
+export function shellWord(value: string): string {
+  return `'${String(value).replaceAll('\'', "'\"'\"'")}'`
 }

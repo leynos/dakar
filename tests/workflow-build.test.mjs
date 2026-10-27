@@ -7,8 +7,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import fc from 'fast-check'
 import ts from 'typescript'
-import { buildWorkflow, WorkflowBuildError } from '../scripts/build-workflow.mjs'
+import { buildWorkflow, isPackageInput, WorkflowBuildError } from '../scripts/build-workflow.mjs'
 
 async function fixture(t, { meta = 'export const meta = {}\n', main, modules = {} }) {
   const directory = await mkdtemp(path.join(tmpdir(), 'dakar-workflow-build-'))
@@ -110,6 +111,87 @@ test('rejects a bundled source module absent from the manifest', async (t) => {
     modules: { 'helper.ts': 'export const helper = true\n' },
   })
   await expectCode({ ...options, runtimeModules: ['main.ts'] }, 'BUILD_ORPHAN_MODULE')
+})
+
+test('runtime module manifest ordering does not change the workflow artefact', async (t) => {
+  const options = await fixture(t, {
+    main: 'import { helper } from "./helper.ts"\nasync function workflowMain() { return helper }\n',
+    modules: { 'helper.ts': 'export const helper = "helper"\n' },
+  })
+  const mainFirst = await buildWorkflow({ ...options, runtimeModules: ['main.ts', 'helper.ts'] })
+  const helperFirst = await buildWorkflow({ ...options, runtimeModules: ['helper.ts', 'main.ts'] })
+
+  assert.equal(mainFirst, helperFirst)
+})
+
+test('runtime package manifest ordering does not change the workflow artefact', async (t) => {
+  const zodEntry = fileURLToPath(new URL('../node_modules/zod/index.js', import.meta.url))
+  const options = await fixture(t, {
+    main: `import { z } from ${JSON.stringify(zodEntry)}\nasync function workflowMain() { return z.string().parse('ok') }\n`,
+  })
+  const zodFirst = await buildWorkflow({ ...options, runtimePackages: ['zod', 'nonexistent'] })
+  const nonexistentFirst = await buildWorkflow({ ...options, runtimePackages: ['nonexistent', 'zod'] })
+
+  assert.equal(zodFirst, nonexistentFirst)
+})
+
+test('package input containment admits strict descendants and rejects independent boundary cases', () => {
+  const componentCharacters = fc.constantFrom('a', 'b', 'c', '0', '1', '-', '_')
+  const safePathComponent = fc.array(componentCharacters, { minLength: 1, maxLength: 8 }).map((characters) => characters.join(''))
+  const descendantComponents = fc.array(safePathComponent, { minLength: 1, maxLength: 4 })
+
+  fc.assert(
+    fc.property(safePathComponent, descendantComponents, (packageName, descendants) => {
+      const packageRoot = path.resolve('node_modules', packageName)
+      const strictDescendant = path.join(packageRoot, ...descendants)
+      assert.equal(isPackageInput(strictDescendant, packageRoot), true)
+      assert.equal(isPackageInput(packageRoot, packageRoot), false)
+      assert.equal(isPackageInput(path.dirname(packageRoot), packageRoot), false)
+      assert.equal(isPackageInput(path.join(`${packageRoot}-sibling`, ...descendants), packageRoot), false)
+      assert.equal(isPackageInput(path.join(packageRoot, '..', `${packageName}-sibling`, ...descendants), packageRoot), false)
+    }),
+  )
+
+  const packageRoot = path.resolve('node_modules', 'zod')
+  const parent = path.dirname(packageRoot)
+  const sibling = path.join(parent, 'zod-sibling', 'index.js')
+  const traversal = `${packageRoot}${path.sep}..${path.sep}zod-sibling${path.sep}index.js`
+  const unrelated = path.resolve('apps', 'dakar', 'node_modules', 'other', 'index.js')
+  const boundaryCases = [
+    { name: 'the package root itself', input: packageRoot, expected: false },
+    { name: 'the package parent', input: parent, expected: false },
+    { name: 'a shared-prefix sibling', input: sibling, expected: false },
+    { name: 'a path traversal to a sibling', input: traversal, expected: false },
+    { name: 'an unrelated package', input: unrelated, expected: false },
+  ]
+
+  for (const { name, input, expected } of boundaryCases) {
+    assert.equal(isPackageInput(input, packageRoot), expected, name)
+  }
+})
+
+test('rejects a bundled package absent from the runtime package manifest', async () => {
+  await expectCode({ checkOnly: true, runtimePackages: [] }, 'BUILD_ORPHAN_MODULE')
+})
+
+test('scopes a bundled meta function apart from the literal banner metadata', async (t) => {
+  const options = await fixture(t, {
+    main: "function meta() { return 'inner' }\nasync function workflowMain() { return meta() }\n",
+  })
+  const artefact = await buildWorkflow(options)
+  const wrappedArtefact = artefact.replace(/^export const meta\s*=/mu, 'const meta =')
+  const workflow = new Function(`return (async function __workflow_wrapped__() {\n${wrappedArtefact}\n})`)()
+
+  assert.notEqual(wrappedArtefact, artefact)
+  assert.equal(await workflow(), 'inner')
+})
+
+test('rejects a bundled var binding that collides with the literal banner metadata', async (t) => {
+  const options = await fixture(t, {
+    main: 'const meta = { value: true }\nasync function workflowMain() { return meta.value }\n',
+  })
+
+  await expectCode(options, 'BUILD_LOADER_PARSE')
 })
 
 test('rejects a missing workflow entry', async (t) => {

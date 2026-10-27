@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -190,6 +190,46 @@ appendFileSync(usageLog, JSON.stringify({ model: 'gpt-5.6-terra', usage: { input
   const stateText = readFileSync(output.stateFile, 'utf8')
   assert.match(stateText, /reportedTokens/u, 'persisted review history contains reported token metrics')
   assert.match(stateText, /41000/u, 'persisted review history contains the summed input token count')
+})
+
+test('CLI reports malformed usage boundaries without silently losing recorded metrics', async (t) => {
+  const usage = { model: 'fixture', usage: { input: 17 } }
+  const cases = [
+    { name: 'malformed SARIF', resultOverride: "{ sarif: { runs: [{ properties: { dakar: 'private-marker' } }] } }", recordInputOverride: '{}', withUsage: true, operation: 'reported_usage_sarif', records: true },
+    { name: 'malformed record metrics with usage', resultOverride: '{}', recordInputOverride: "{ metrics: ['private-marker'] }", withUsage: true, operation: 'reported_usage_annotation', records: false },
+    { name: 'malformed record metrics without usage', resultOverride: '{}', recordInputOverride: "{ metrics: ['private-marker'] }", withUsage: false, operation: 'reported_usage_recording', records: false },
+  ]
+  for (const scenario of cases) {
+    await t.test(scenario.name, (subtest) => {
+      const { tempRoot, targetRepo, base } = setUpRecordRepo()
+      subtest.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+      const stateRoot = join(tempRoot, 'state')
+      const fakeOdw = join(tempRoot, 'odw.mjs')
+      writePreparedEchoOdw(fakeOdw, {
+        resultOverride: scenario.resultOverride,
+        recordInputOverride: scenario.recordInputOverride,
+        bodyPrefix: scenario.withUsage
+          ? `appendFileSync(process.env.DAKAR_USAGE_LOG, ${JSON.stringify(`${JSON.stringify(usage)}\n`)})`
+          : '',
+      })
+      const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--state-root', stateRoot,
+        '--odw-bin', fakeOdw, '--runs-root', join(tempRoot, 'runs')])
+      const output = JSON.parse(completed.stdout)
+      assert.match(completed.stderr, new RegExp(`"operation":"${scenario.operation}","category":"schema_validation"`, 'u'))
+      assert.doesNotMatch(completed.stderr, /private-marker/u, 'validation diagnostics do not expose payloads')
+      if (scenario.records) {
+        assert.equal(completed.status, 0)
+        assert.equal(output.recordInput.metrics.reportedTokens.input, 17)
+        assert.match(readFileSync(output.stateFile, 'utf8'), /reportedTokens/u)
+      } else {
+        assert.equal(completed.status, 1)
+        assert.equal(output.stage, 'reported_usage')
+        assert.equal(output.ok, false)
+        const stateFiles = existsSync(stateRoot) ? readdirSync(stateRoot, { recursive: true }) : []
+        assert.equal(stateFiles.some((entry) => entry.endsWith('reviews.toml')), false, 'invalid metrics cannot be recorded silently')
+      }
+    })
+  }
 })
 
 test('CLI consumes usage logs and preserves record metrics across absent, empty, invalid, and mixed records', async (t) => {

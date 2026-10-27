@@ -46,6 +46,11 @@ test('deterministic jitter is reproducible for the same call id and attempt', ()
   }
 })
 
+test('deterministic jitter hashes astral Unicode by code point', () => {
+  // The rocket is one code point but two UTF-16 units; this independent FNV-1a vector is 479.
+  assert.equal(deterministicJitter('task-🚀', 2, 1000), 479)
+})
+
 test('two distinct call ids decorrelate somewhere across the attempt range', () => {
   const sequenceA = Array.from({ length: 6 }, (_, index) => deterministicJitter('luna-flex-1', index + 1, DEFAULTS.flexJitterSeconds))
   const sequenceB = Array.from({ length: 6 }, (_, index) => deterministicJitter('luna-flex-2', index + 1, DEFAULTS.flexJitterSeconds))

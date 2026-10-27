@@ -21,11 +21,13 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import nodePath from 'node:path'
 import { homedir } from 'node:os'
 import { stdin } from 'node:process'
 
 const APP_NAME = 'dakar'
+/** Invalid or ambiguous reviewed heads use null as the established sentinel. */
+const NULL_REACHABLE_HEAD = JSON.parse('null')
 
 /**
  * Parse a mixed positional/flag argument vector into a plain args object.
@@ -45,7 +47,7 @@ function parseArgs(argv) {
       continue
     }
     const key = token.slice(2)
-    const next = argv[index + 1]
+    const next = argv.at(index + 1)
     if (next === undefined || next.startsWith('--')) {
       throw new Error(`--${key} requires a value`)
     }
@@ -114,8 +116,8 @@ function git(repoRoot, args, allowFailure = false) {
 function slug(input) {
   return input
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'unknown'
+    .replaceAll(/[^a-z0-9]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '') || 'unknown'
 }
 
 /**
@@ -161,13 +163,13 @@ function remoteOwnerName(remoteUrl) {
  */
 function xdgStateRoot(explicitRoot) {
   if (explicitRoot) {
-    return resolve(explicitRoot)
+    return nodePath.resolve(explicitRoot)
   }
   const envRoot = process.env.XDG_STATE_HOME
   if (envRoot && envRoot.startsWith('/')) {
     return envRoot
   }
-  return join(homedir(), '.local', 'state')
+  return nodePath.join(homedir(), '.local', 'state')
 }
 
 /**
@@ -181,12 +183,12 @@ function xdgStateRoot(explicitRoot) {
  * @returns {string} absolute path to the `reviews.toml` state file.
  */
 function stateFilePath({ stateRoot, owner, name, branchSlug }) {
-  return join(stateRoot, APP_NAME, owner, name, branchSlug, 'reviews.toml')
+  return nodePath.join(stateRoot, APP_NAME, owner, name, branchSlug, 'reviews.toml')
 }
 
 /** Derives the state destination exclusively from trusted CLI location data. */
 function derivedStateFile(rawArgs) {
-  const repoRoot = resolve(optionString(rawArgs, 'repo-root', process.cwd()))
+  const repoRoot = nodePath.resolve(optionString(rawArgs, 'repo-root', process.cwd()))
   const remoteUrl = git(repoRoot, ['remote', 'get-url', 'origin'], true)
   const { owner, name } = remoteOwnerName(remoteUrl)
   const branch = git(repoRoot, ['branch', '--show-current'], true) || 'detached'
@@ -240,11 +242,11 @@ function parseReviewedHeads(tomlText) {
  *
  * @param {Map<string, number>} reachableBases - canonical SHA to ancestry rank.
  * @param {string} recordedHead - full or abbreviated recorded commit id.
- * @returns {ReachableHead | null} unique canonical match.
+ * @returns {ReachableHead | null} unique canonical match, or null when invalid/ambiguous.
  */
 function resolveReachableHead(reachableBases, recordedHead) {
   if (!/^[0-9a-f]{7,64}$/u.test(recordedHead)) {
-    return null
+    return NULL_REACHABLE_HEAD
   }
   if (reachableBases.has(recordedHead)) {
     return {
@@ -254,13 +256,13 @@ function resolveReachableHead(reachableBases, recordedHead) {
       rank: reachableBases.get(recordedHead),
     }
   }
-  let match = null
+  let match = NULL_REACHABLE_HEAD
   for (const [head, rank] of reachableBases) {
     if (!head.startsWith(recordedHead)) {
       continue
     }
-    if (match !== null) {
-      return null
+    if (match !== NULL_REACHABLE_HEAD) {
+      return NULL_REACHABLE_HEAD
     }
     match = {
       /** Canonical commit id whose prefix matches the recorded abbreviated head. */
@@ -293,8 +295,7 @@ function resolveReachableHead(reachableBases, recordedHead) {
 function reachableReviewBases(repoRoot, mergeBase, headCommit) {
   const output = git(repoRoot, ['rev-list', '--ancestry-path', `${mergeBase}..${headCommit}`])
   const ordered = output ? output.split('\n').filter(Boolean) : []
-  const rankByCommit = new Map()
-  ordered.forEach((commit, index) => rankByCommit.set(commit, index))
+  const rankByCommit = new Map(ordered.map((commit, index) => [commit, index]))
   if (!rankByCommit.has(mergeBase)) {
     rankByCommit.set(mergeBase, ordered.length)
   }
@@ -316,7 +317,7 @@ function commitList(repoRoot, baseCommit, headCommit) {
  */
 function changedFiles(repoRoot, baseCommit, headCommit) {
   const output = git(repoRoot, ['diff', '--name-only', `${baseCommit}..${headCommit}`])
-  return output ? output.split('\n').filter(Boolean).sort() : []
+  return output ? output.split('\n').filter(Boolean).toSorted() : []
 }
 
 /**
@@ -340,14 +341,14 @@ function diffStat(repoRoot, baseCommit, headCommit) {
  * @returns {object} review-range descriptor consumed by the workflow.
  */
 function prepare(rawArgs) {
-  const repoRoot = resolve(optionString(rawArgs, 'repo-root', process.cwd()))
+  const repoRoot = nodePath.resolve(optionString(rawArgs, 'repo-root', process.cwd()))
   const remoteUrl = git(repoRoot, ['remote', 'get-url', 'origin'], true)
   const { owner, name } = remoteOwnerName(remoteUrl)
   const branch = git(repoRoot, ['branch', '--show-current'], true) || 'detached'
   const branchSlug = slug(optionString(rawArgs, 'branch', branch))
   const stateRoot = xdgStateRoot(optionString(rawArgs, 'state-root'))
   const stateFile = rawArgs['state-file']
-    ? resolve(optionString(rawArgs, 'state-file'))
+    ? nodePath.resolve(optionString(rawArgs, 'state-file'))
     : stateFilePath({ stateRoot, owner, name, branchSlug })
   const headRef = optionString(rawArgs, 'head', 'HEAD')
   const baseRef = optionString(rawArgs, 'base', 'origin/main')
@@ -362,10 +363,10 @@ function prepare(rawArgs) {
   // Advance the review base to the recorded head that is furthest along the
   // ancestry path (smallest rank = closest to HEAD), independent of the order
   // in which reviews happened to be recorded. mergeBase remains the fallback.
-  let furthestReachable = null
+  let furthestReachable
   for (const entry of reviewed) {
     const resolvedHead = resolveReachableHead(reachableBases, entry.head)
-    if (resolvedHead && (furthestReachable === null || resolvedHead.rank < furthestReachable.rank)) {
+    if (resolvedHead && (furthestReachable === undefined || resolvedHead.rank < furthestReachable.rank)) {
       furthestReachable = resolvedHead
     }
   }
@@ -434,15 +435,15 @@ const STALE_LOCK_MS = 30_000
  * Extract the owner process id from a lock sentinel.
  *
  * @param {string} marker - lock sentinel contents.
- * @returns {number | null} positive owner pid, or null for an invalid marker.
+ * @returns {number | undefined} positive owner pid, or undefined for an invalid marker.
  */
 function lockOwnerPid(marker) {
   const match = String(marker).match(/^(\d+)\s+/u)
   if (!match) {
-    return null
+    return
   }
   const pid = Number(match[1])
-  return Number.isSafeInteger(pid) && pid > 0 ? pid : null
+  if (Number.isSafeInteger(pid) && pid > 0) return pid
 }
 
 /**
@@ -507,7 +508,7 @@ function reapStaleLock(
     return false
   }
   const ownerPid = lockOwnerPid(marker)
-  if (ownerPid === null || ownerAlive(ownerPid)) {
+  if (ownerPid === undefined || ownerAlive(ownerPid)) {
     return false
   }
   let freshMarker
@@ -650,7 +651,7 @@ function withStateLock(stateFile, mutate) {
  * @returns {string} TOML-quoted string including surrounding double quotes.
  */
 function tomlString(value) {
-  return `"${String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`
+  return `"${String(value ?? '').replaceAll('\\', String.raw`\\`).replaceAll('"', String.raw`\"`).replaceAll('\n', String.raw`\n`)}"`
 }
 
 /**
@@ -678,7 +679,7 @@ function fieldValue(input, ...keys) {
       return input[key]
     }
   }
-  return undefined
+  return
 }
 
 /**
@@ -747,10 +748,10 @@ function integerField(input, camelKey, snakeKey) {
  *
  * @param {object} input - record input; must include `headCommit`, `commitCount`, and `findingsTotal`. It must include
  * `stateFile` only when `trustedLocation` is absent.
- * @param {object | null} [trustedLocation] - trusted repository and state-root arguments used to derive the state file.
+ * @param {object} [trustedLocation] - trusted repository and state-root arguments used to derive the state file.
  * @returns {AppendReviewResult} confirmation that the head commit is recorded, whether newly appended or already present with no status or `completed`.
  */
-function appendReview(input, trustedLocation = null) {
+function appendReview(input, trustedLocation) {
   const rawStateFile = input.stateFile || input.state_file
   if (!trustedLocation && !rawStateFile) {
     throw new Error('record input must include stateFile')
@@ -758,8 +759,8 @@ function appendReview(input, trustedLocation = null) {
   const headCommit = reviewHeadCommit(input)
   const commitCount = integerField(input, 'commitCount', 'commit_count')
   const findingsTotal = integerField(input, 'findingsTotal', 'findings_total')
-  const stateFile = trustedLocation ? derivedStateFile(trustedLocation) : resolve(String(rawStateFile))
-  mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 })
+  const stateFile = trustedLocation ? derivedStateFile(trustedLocation) : nodePath.resolve(String(rawStateFile))
+  mkdirSync(nodePath.dirname(stateFile), { recursive: true, mode: 0o700 })
   const now = new Date().toISOString()
   const entry = [
     '[[reviews]]',
@@ -823,22 +824,25 @@ async function main() {
   const [command, ...rest] = process.argv.slice(2)
   const rawArgs = parseArgs(rest)
   if (command === 'prepare') {
-    console.log(JSON.stringify(prepare(rawArgs), null, 2))
+    console.log(JSON.stringify(prepare(rawArgs), undefined, 2))
     return
   }
   if (command === 'record') {
-    const trustedLocation = Object.hasOwn(rawArgs, 'repo-root') || Object.hasOwn(rawArgs, 'state-root') ? rawArgs : null
-    console.log(JSON.stringify(appendReview(await readStdinJson(), trustedLocation), null, 2))
+    const trustedLocation = Object.hasOwn(rawArgs, 'repo-root') || Object.hasOwn(rawArgs, 'state-root') ? rawArgs : undefined
+    const input = await readStdinJson()
+    console.log(JSON.stringify(appendReview(input, trustedLocation), undefined, 2))
     return
   }
   throw new Error('usage: review-state.mjs prepare|record [--repo-root DIR] [--state-root DIR]')
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
+  try {
+    await main()
+  } catch (error) {
     console.error(error.message)
     process.exit(1)
-  })
+  }
 }
 
 export {

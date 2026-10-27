@@ -43,6 +43,9 @@ document for a task, then follow the inline links.
 - [ADR 002: Deterministic review stages and Flex-tier residual judgement](adr-002-deterministic-tiered-review-cost.md)
   — why deterministic host logic runs first and residual judgement uses
   Flex-tier models under a cost budget.
+- [ADR 003: Add Oxlint application rules](adr-003-linting-strategy.md) — the
+  pinned Unicorn and deslop profiles, application lint scope, and their one
+  documented rule conflict.
 
 ## Reference
 

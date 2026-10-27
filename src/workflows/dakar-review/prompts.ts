@@ -3,7 +3,7 @@
  *
  * @module
  */
-import type { Candidate, Discarded, PreparedReview, PromptContext, ReviewTask } from './types.ts'
+import type { Candidate, PreparedReview, PromptContext, ReviewTask } from './types.ts'
 import { policyGuidanceBlock } from './policy.ts'
 import { shellWord } from './shell.ts'
 
@@ -23,7 +23,6 @@ export function agentInstructionsBlock(context: PromptContext): string {
     instructions.content,
   ].filter(Boolean).join('\n')
 }
-
 /**
  * Builds a finder prompt restricted to one scheduled task and reviewed range.
  *
@@ -99,7 +98,7 @@ export function auditPrompt(
   const seenPaths = new Set<string>()
   for (const candidate of candidates) {
     const path = candidate.path
-    if (typeof path !== 'string' || path === '' || seenPaths.has(path)) continue
+    if (path === '' || seenPaths.has(path)) continue
     seenPaths.add(path)
     candidatePaths.push(path)
   }
@@ -123,7 +122,7 @@ export function auditPrompt(
     '8. Return exactly one verdict per candidate id below. Never invent candidate ids; every candidateId must come from the supplied list.',
     '9. Use only these statuses: accepted, duplicate, out_of_scope, not_applicable, insufficient_evidence, speculative, tool_false_positive, severity_downgraded, needs_human.',
     '10. For severity_downgraded, acceptedSeverity must be strictly less severe than the candidate severity.', '',
-    `Candidate findings JSON:\n${JSON.stringify(candidates, null, 2)}`, '',
+    `Candidate findings JSON:\n${JSON.stringify(candidates, undefined, 2)}`, '',
     `Changed files: ${changedFiles}`,
     `Repository root: ${context.repoRoot}`,
     `Review range: ${prepared.reviewBase}..${prepared.headCommit}`,
@@ -133,6 +132,3 @@ export function auditPrompt(
     remainingBudgetNote,
   ].join('\n')
 }
-
-/** Names discarded audit entries for prompt-facing consumers. */
-export type PromptDiscarded = Discarded

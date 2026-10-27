@@ -88,3 +88,35 @@ pre_merge_checks:
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('gate evidence redacts every Bearer and sk credential occurrence', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dakar-gates-repeated-secrets-'))
+  const config = join(root, '.coderabbit.yaml')
+  const bearerTokens = [
+    'alphaBearerToken123456',
+    'betaBearerToken654321',
+  ]
+  const apiKeys = [
+    'sk-abcdefghijklmnop',
+    'sk-ponmlkjihgfedcba',
+  ]
+  const stdout = [...bearerTokens.map((token) => `Bearer ${token}`), ...apiKeys].join(' ')
+  try {
+    writeFileSync(config, `
+pre_merge_checks:
+  custom_checks:
+    - mode: error
+      name: Repeated credential redaction
+      command: node -e "process.stdout.write('${stdout}')"
+`)
+    const [result] = loadAndRunDeterministicGates(config, root)
+
+    assert.equal(result.stdout, 'Bearer [REDACTED] Bearer [REDACTED] [REDACTED] [REDACTED]')
+    const serializedResult = JSON.stringify(result)
+    for (const secret of [...bearerTokens, ...apiKeys]) {
+      assert.ok(!serializedResult.includes(secret), `serialized result retained ${secret}`)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

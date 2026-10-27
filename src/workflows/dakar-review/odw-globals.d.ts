@@ -4,7 +4,12 @@
  * @module
  */
 
-type JsonSchema = Readonly<Record<string, unknown>>
+type JsonValue = null | boolean | number | string | readonly JsonValue[] | JsonObject
+interface JsonObject {
+  readonly [key: string]: JsonValue
+}
+type JsonSchema = Readonly<JsonObject>
+type WorkflowArguments = Readonly<JsonObject>
 
 interface AgentOptions {
   readonly adapter?: string
@@ -49,4 +54,4 @@ declare function sleep(milliseconds: number): Promise<void>
 /** Validates source text with the injected ODW workflow validator. */
 declare function validate(source: string): ValidationResult
 /** Invokes another ODW workflow by reference with optional serializable arguments. */
-declare function workflow<T = unknown>(reference: string, workflowArgs?: unknown): Promise<T>
+declare function workflow<T = unknown>(reference: string, workflowArgs?: WorkflowArguments): Promise<T>

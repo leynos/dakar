@@ -31,6 +31,14 @@ export interface FlexFinderConfig {
   maxFindings: number
 }
 
+/** Carries the bounded finder packs and explicit files outside the plan. */
+export interface FlexFinderPlan {
+  /** Bounded, deterministic finder packs ready for dispatch. */
+  packs: ReviewTask[]
+  /** Changed files left outside the coverage window and thus not packed. */
+  truncatedFiles: string[]
+}
+
 /** Fixed kind order that keeps Flex finder packs deterministic and homogeneous. */
 const FLEX_PACK_KIND_ORDER = ['source', 'tests', 'config', 'docs'] as const
 
@@ -90,7 +98,7 @@ export function chunk<T>(values: T[], size: number): T[][] {
  * @throws {TypeError} When the selected model has no valid identifier.
  */
 export function taskSpec(kind: string, files: string[], index: number, config: TaskGraphConfig): ReviewTask {
-  const role = kind === 'source' ? 'high' : kind === 'tests' ? 'medium' : kind === 'docs' || kind === 'config' ? 'mini' : 'spark'
+  const role = roleForTaskKind(kind)
   const assigned = modelForRole(role, config.reviewModels)
   return {
     taskId: `${kind}-${index + 1}`, kind, files, assignedModel: modelName(assigned),
@@ -99,6 +107,14 @@ export function taskSpec(kind: string, files: string[], index: number, config: T
     maxFindings: Math.max(1, Math.min(config.maxFindings, kind === 'source' ? 6 : 3)),
     verificationPolicy: role === 'high' ? 'verify-all' : 'verify-non-low-and-sampled-low',
   }
+}
+
+/** Maps the task kind to its configured model role. */
+function roleForTaskKind(kind: string): string {
+  if (kind === 'source') return 'high'
+  if (kind === 'tests') return 'medium'
+  if (kind === 'docs' || kind === 'config') return 'mini'
+  return 'spark'
 }
 
 /**
@@ -127,6 +143,29 @@ export function distributeTaskSlots(groups: Array<{ kind: string; files: string[
   return slots
 }
 
+/** Groups changed files by their review task kind. */
+function groupReviewFiles(changedFiles: string[]): Map<string, string[]> {
+  const groups = new Map<string, string[]>()
+  for (const file of changedFiles) {
+    const kind = classifyPath(file)
+    const key = kind === 'dependency' || kind === 'unknown' ? 'source' : kind
+    const files = groups.get(key) ?? []
+    files.push(file)
+    groups.set(key, files)
+  }
+  return groups
+}
+
+/** Selects nonempty file groups in the stable task ordering. */
+function populatedFileGroups(groups: Map<string, string[]>): Array<{ kind: string; files: string[] }> {
+  const populated: Array<{ kind: string; files: string[] }> = []
+  for (const kind of ['source', 'tests', 'config', 'docs']) {
+    const files = groups.get(kind) || []
+    if (files.length > 0) populated.push({ kind, files })
+  }
+  return populated
+}
+
 /**
  * Constructs complete changed-file coverage plus the mandatory summary task.
  *
@@ -136,17 +175,8 @@ export function distributeTaskSlots(groups: Array<{ kind: string; files: string[
  * @throws {Error} When the task budget cannot cover every group and the summary.
  */
 export function buildTaskGraph(prepared: PreparedReview, config: TaskGraphConfig): ReviewTask[] {
-  const groups = new Map<string, string[]>()
-  for (const file of prepared.changedFiles || []) {
-    const kind = classifyPath(file)
-    const key = kind === 'dependency' || kind === 'unknown' ? 'source' : kind
-    const files = groups.get(key) ?? []
-    files.push(file)
-    groups.set(key, files)
-  }
-  const populated = ['source', 'tests', 'config', 'docs']
-    .map((kind) => ({ kind, files: groups.get(kind) || [] }))
-    .filter((group) => group.files.length > 0)
+  const groups = groupReviewFiles(prepared.changedFiles || [])
+  const populated = populatedFileGroups(groups)
   const budget = Math.max(1, config.maxTasks) - 1
   if (populated.length > budget) {
     throw new Error(`maxTasks=${config.maxTasks} is too small: ${populated.length} changed-file groups plus a review summary cannot fit; raise maxTasks or narrow the review range`)
@@ -179,12 +209,7 @@ export function buildTaskGraph(prepared: PreparedReview, config: TaskGraphConfig
 export function buildFlexFinderPlan(
   prepared: PreparedReview,
   config: FlexFinderConfig,
-): {
-  /** Bounded, deterministic finder packs ready for dispatch. */
-  packs: ReviewTask[]
-  /** Changed files left outside the coverage window and thus not packed. */
-  truncatedFiles: string[]
-} {
+): FlexFinderPlan {
   const lane = flexLaneRole(config.lunaRole)
   const perPack = Math.max(1, config.transactionMaxFiles)
   const buckets = new Map<string, string[]>()

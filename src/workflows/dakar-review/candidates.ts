@@ -7,7 +7,16 @@
 import type { BoundCandidateResult, Candidate, Discarded, RawCandidate, Verdict } from './types.ts'
 
 /** Maps supported severities to stable ascending sort ranks. */
-export const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+export const SEVERITY_RANK: Readonly<Record<Candidate['severity'], number>> = { critical: 0, high: 1, medium: 2, low: 3 }
+
+/** Resolves unknown severity labels to the existing least-severe fallback rank. */
+function severityRank(severity: string | undefined): number {
+  if (severity === 'critical') return SEVERITY_RANK.critical
+  if (severity === 'high') return SEVERITY_RANK.high
+  if (severity === 'medium') return SEVERITY_RANK.medium
+  if (severity === 'low') return SEVERITY_RANK.low
+  return 4
+}
 
 /**
  * Builds the stable identity key used to deduplicate a raw candidate.
@@ -19,7 +28,7 @@ export function candidateKey(candidate: RawCandidate): string {
   const title = String(candidate.title || '')
     .normalize('NFKC')
     .toLocaleLowerCase('und')
-    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replaceAll(/[^\p{L}\p{N}]+/gu, '-')
   return [candidate.path || '', candidate.line || 0, title].join(':')
 }
 
@@ -40,7 +49,7 @@ export function bySeverity<T extends {
   /** Ranked via `SEVERITY_RANK`; unrecognized or missing severities sort last. */
   severity?: string
 }>(left: T, right: T): number {
-  const severity = (SEVERITY_RANK[left.severity || ''] ?? 4) - (SEVERITY_RANK[right.severity || ''] ?? 4)
+  const severity = severityRank(left.severity) - severityRank(right.severity)
   if (severity !== 0) return severity
   const leftPath = String(left.path || '')
   const rightPath = String(right.path || '')
@@ -49,7 +58,7 @@ export function bySeverity<T extends {
   if (line !== 0) return line
   const leftId = String(left.candidateId || '')
   const rightId = String(right.candidateId || '')
-  return leftId === rightId ? 0 : leftId < rightId ? -1 : 1
+  return leftId === rightId ? 0 : (leftId < rightId ? -1 : 1)
 }
 
 /**
@@ -60,7 +69,7 @@ export function bySeverity<T extends {
  * @returns Whether the path is safe and present in the whitelist.
  */
 export function isSafeCandidatePath(path: string, changedFiles: Set<string>): boolean {
-  if (typeof path !== 'string' || path === '') return false
+  if (path === '') return false
   if (path.startsWith('/') || path.startsWith('\\') || /^[a-zA-Z]:[\\/]/u.test(path)) return false
   if (path.split(/[\\/]+/u).some((segment) => segment === '..')) return false
   return changedFiles.has(path)
@@ -80,28 +89,27 @@ export function normalizeCandidates(
   maxCandidates: number,
 ): Candidate[] {
   const seen = new Set<string>()
-  const changed = new Set(changedFiles || [])
+  const changed = new Set(changedFiles)
   const candidates: Candidate[] = []
   for (const { result, task } of taskResults) {
     const validForTask: Candidate[] = []
-    for (const raw of result.candidates || []) {
+    for (const raw of result.candidates) {
       if (
-        typeof raw.title !== 'string' || raw.title.trim() === '' ||
-        typeof raw.path !== 'string' || typeof raw.detail !== 'string' || raw.detail.trim() === '' ||
-        typeof raw.evidence !== 'string' || raw.evidence.trim() === ''
+        raw.title.trim() === '' ||
+        raw.detail.trim() === '' ||
+        raw.evidence.trim() === ''
       ) continue
       const candidate: Candidate = {
         candidateId: `${task.taskId}:${candidateKey(raw)}`, taskId: task.taskId, taskKind: task.kind,
         sourceModel: task.assignedModel, verificationPolicy: task.verificationPolicy, title: raw.title,
-        severity: raw.severity, path: raw.path, line: raw.line || 0, detail: raw.detail,
-        evidence: raw.evidence, confidence: raw.confidence, policyRefs: raw.policyRefs || [],
+        severity: raw.severity, path: raw.path, line: raw.line ?? 0, detail: raw.detail,
+        evidence: raw.evidence, confidence: raw.confidence, policyRefs: raw.policyRefs ?? [],
       }
-      if (!candidate.title || !candidate.path) continue
       if (!task.files.includes(candidate.path) || !isSafeCandidatePath(candidate.path, changed)) continue
       validForTask.push(candidate)
     }
     let acceptedForTask = 0
-    for (const candidate of validForTask.sort(bySeverity)) {
+    for (const candidate of validForTask.toSorted(bySeverity)) {
       if (acceptedForTask >= task.maxFindings) break
       const key = candidateKey(candidate)
       if (seen.has(key)) continue
@@ -110,7 +118,7 @@ export function normalizeCandidates(
       acceptedForTask += 1
     }
   }
-  return candidates.sort(bySeverity).slice(0, maxCandidates)
+  return candidates.toSorted(bySeverity).slice(0, maxCandidates)
 }
 
 /**
@@ -142,15 +150,15 @@ export function candidatesForVerification(candidates: Candidate[]): Candidate[] 
  * @param maxAuditCandidates - Positive inclusive cap on audited candidates.
  * @returns The audited subset and the over-cap discards.
  */
-export function compactForAudit(
-  candidates: Candidate[],
-  maxAuditCandidates: number,
-): {
+export interface CompactedAuditCandidates {
   /** Severity-ordered candidates retained within the audit cap. */
   auditCandidates: Candidate[]
   /** Candidates beyond the cap, returned as explicit over-cap discards. */
   overCap: Discarded[]
-} {
+}
+
+/** Compacts the eligible set to the configured audit cap and records overflow. */
+export function compactForAudit(candidates: Candidate[], maxAuditCandidates: number): CompactedAuditCandidates {
   const seen = new Set<string>()
   const deduped: Candidate[] = []
   for (const candidate of candidates) {
@@ -159,7 +167,7 @@ export function compactForAudit(
     seen.add(key)
     deduped.push(candidate)
   }
-  const ordered = deduped.sort(bySeverity)
+  const ordered = deduped.toSorted(bySeverity)
   const auditCandidates = ordered.slice(0, maxAuditCandidates)
   const overCap = ordered.slice(maxAuditCandidates).map((candidate): Discarded => ({
     candidate,
@@ -176,8 +184,13 @@ export function compactForAudit(
  * @param discarded - Completed discard audit entries.
  * @returns A status-to-count record for synthesis and metrics.
  */
-export function discardReasonCounts(discarded: Discarded[]): Record<string, number> {
-  const counts: Record<string, number> = {}
+export interface DiscardReasonCounts {
+  [status: string]: number
+}
+
+/** Counts completed discard audit entries by status. */
+export function discardReasonCounts(discarded: Discarded[]): DiscardReasonCounts {
+  const counts: DiscardReasonCounts = {}
   for (const item of discarded) counts[item.status] = (counts[item.status] || 0) + 1
   return counts
 }
@@ -200,16 +213,16 @@ export function acceptedFromVerdicts(
     if (verdict.status !== 'accepted' && verdict.status !== 'severity_downgraded') continue
     accepted.push({
       ...candidate,
-      severity: verdict.status === 'severity_downgraded' && typeof verdict.acceptedSeverity === 'string' &&
-        (SEVERITY_RANK[verdict.acceptedSeverity] ?? -1) > (SEVERITY_RANK[candidate.severity || ''] ?? 4)
+      severity: verdict.status === 'severity_downgraded' && verdict.acceptedSeverity !== undefined &&
+        severityRank(verdict.acceptedSeverity) > severityRank(candidate.severity)
         ? verdict.acceptedSeverity : candidate.severity,
-      clusterId: typeof verdict.clusterId === 'string' && verdict.clusterId !== '' ? verdict.clusterId : candidate.clusterId,
+      clusterId: verdict.clusterId !== undefined && verdict.clusterId !== '' ? verdict.clusterId : candidate.clusterId,
       verificationStatus: verdict.status,
       verificationReason: verdict.reason,
       evidenceChecked: verdict.evidenceChecked,
     })
   }
-  return accepted.sort(bySeverity)
+  return accepted.toSorted(bySeverity)
 }
 
 /**
@@ -223,7 +236,7 @@ export function discardedFromVerdicts(candidates: Candidate[], verdicts: Verdict
   const byId = new Map(candidates.map((candidate): [string, Candidate] => [candidate.candidateId, candidate]))
   const discarded: Discarded[] = []
   for (const verdict of verdicts.filter(Boolean)) {
-    const candidate = typeof verdict.candidateId === 'string' ? byId.get(verdict.candidateId) : undefined
+    const candidate = byId.get(verdict.candidateId)
     if (!candidate) {
       discarded.push({ candidate: { candidateId: verdict.candidateId }, status: 'unknown_candidate',
         reason: `Verifier referenced an unknown candidate id: ${verdict.candidateId}`, evidenceChecked: verdict.evidenceChecked || '' })

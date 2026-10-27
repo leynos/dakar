@@ -12,7 +12,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import nodePath from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { deriveOdwConfig } from '../scripts/odw-config.mjs'
@@ -29,9 +29,28 @@ import {
   renderSarifMarkdown,
 } from '../src/workflows/dakar-review/sarif.ts'
 import { appendReview, prepare } from '../scripts/review-state.mjs'
+import * as z from 'zod'
 
 /** ODW's documented default per-model-call timeout in seconds. */
 const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
+const jsonReplacer = (_key, value) => value
+const prettyJson = (value) => JSON.stringify(value, jsonReplacer, 2)
+const jsonRecordSchema = z.record(z.string(), z.json())
+const recordInputSchema = z.object({ metrics: jsonRecordSchema.optional() }).loose()
+const dakarRunSchema = z.object({
+  properties: z.object({ dakar: jsonRecordSchema.optional() }).loose().optional(),
+}).loose()
+const sarifOutputSchema = z.object({ runs: z.array(dakarRunSchema).optional() }).loose()
+const workflowOutputSchema = z.object({
+  metrics: jsonRecordSchema.optional(),
+  recordInput: recordInputSchema.optional(),
+}).loose()
+const preparedSnapshotSchema = z.object({
+  headCommit: z.string(),
+  reviewBase: z.string(),
+  commitCount: z.number(),
+  changedFiles: z.array(z.string()),
+}).loose()
 
 /** Keep usage-log effects at the CLI boundary rather than inside parsing. */
 const REPORTED_USAGE_BOUNDARY = Object.freeze({
@@ -85,10 +104,10 @@ function clampLikeConfig(value, fallback, min, max) {
   return Number.isFinite(floored) && floored >= min ? Math.min(floored, max) : fallback
 }
 
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const workflowPath = join(packageRoot, 'workflows', 'dakar-review.js')
-const odwConfigPath = join(packageRoot, 'odw.config.json')
-const piAgentDir = join(packageRoot, 'adapters', 'pi')
+const packageRoot = nodePath.resolve(nodePath.dirname(fileURLToPath(import.meta.url)), '..')
+const workflowPath = nodePath.join(packageRoot, 'workflows', 'dakar-review.js')
+const odwConfigPath = nodePath.join(packageRoot, 'odw.config.json')
+const piAgentDir = nodePath.join(packageRoot, 'adapters', 'pi')
 
 /**
  * Write a per-run ODW config that stamps the per-call timeout on the pi Flex
@@ -105,8 +124,8 @@ const piAgentDir = join(packageRoot, 'adapters', 'pi')
 function writeDerivedOdwConfig(perCallTimeoutSeconds = DEFAULT_PER_CALL_TIMEOUT_SECONDS) {
   const baseConfig = JSON.parse(readFileSync(odwConfigPath, 'utf8'))
   const derived = deriveOdwConfig(baseConfig, perCallTimeoutSeconds)
-  const path = join(tmpdir(), `dakar-odw-config-${process.pid}-${Date.now()}.json`)
-  writeFileSync(path, JSON.stringify(derived, null, 2))
+  const path = nodePath.join(tmpdir(), `dakar-odw-config-${process.pid}-${Date.now()}.json`)
+  writeFileSync(path, prettyJson(derived))
   return path
 }
 
@@ -125,13 +144,16 @@ function writeDerivedOdwConfig(perCallTimeoutSeconds = DEFAULT_PER_CALL_TIMEOUT_
  * @returns {NodeJS.ProcessEnv} the parent environment plus the pi variables.
  */
 function odwEnv(usageLogPath = usageLogFile) {
-  const env = { ...process.env, PI_CODING_AGENT_DIR: piAgentDir, PI_SKIP_VERSION_CHECK: '1' }
-  env.TRACEPARENT = CONTEXT_WARMUP_BOUNDARY.trace.traceparent
-  if (usageLogPath) env.DAKAR_USAGE_LOG = usageLogPath
-  return env
+  return Object.fromEntries([
+    ...Object.entries(process.env),
+    ['PI_CODING_AGENT_DIR', piAgentDir],
+    ['PI_SKIP_VERSION_CHECK', '1'],
+    ['TRACEPARENT', CONTEXT_WARMUP_BOUNDARY.trace.traceparent],
+    ['DAKAR_USAGE_LOG', usageLogPath],
+  ].filter(([, value]) => value !== undefined))
 }
 
-const usageLogFile = join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`)
+const usageLogFile = nodePath.join(tmpdir(), `dakar-usage-${process.pid}-${Date.now()}.jsonl`)
 
 /**
  * Read and consume the pi extension's JSON-lines usage log.
@@ -202,22 +224,51 @@ function sumReportedTokens(lines) {
   return totals
 }
 
+/** Reports a bounded usage-boundary failure without exposing workflow data. */
+function reportUsageValidation(operation) {
+  const event = { event: 'reported_usage_validation', operation, category: 'schema_validation' }
+  REPORTED_USAGE_BOUNDARY.report(`dakar-review: usage validation ${JSON.stringify(event)}\n`)
+}
+
+/** Refuses to record a review whose usage metrics cannot be safely attached. */
+function failUsageValidation(output, operation) {
+  reportUsageValidation(operation)
+  return { ...output, ok: false, stage: 'reported_usage', error: 'workflow output failed reported usage validation' }
+}
+
+/** Adds usage to SARIF when its optional metadata is well formed. */
+function annotateSarifUsage(output, lines, totals) {
+  if (output.sarif === undefined) return
+  const parsed = sarifOutputSchema.safeParse(output.sarif)
+  if (!parsed.success) {
+    reportUsageValidation('reported_usage_sarif')
+    return
+  }
+  output.sarif = parsed.data
+  const sarifDakar = output.sarif.runs?.[0]?.properties?.dakar
+  if (sarifDakar !== undefined) {
+    sarifDakar.reportedUsage = lines
+    sarifDakar.reportedTokens = totals
+  }
+}
+
 /**
  * Stamp reported usage and totals onto workflow metrics and its first SARIF run.
  *
  * @param {object} output - parsed workflow result to annotate in place.
  * @param {unknown[]} lines - parsed usage records retained on the result.
  * @param {{ input: number, output: number, cacheRead: number, cacheWrite: number }} totals - summed token counts.
+ * @returns {{ output: object, ok: boolean }} annotated output or a validation failure.
  */
 function annotateReportedUsage(output, lines, totals) {
-  output.metrics = output.metrics || {}
-  output.metrics.reportedUsage = lines
-  output.metrics.reportedTokens = totals
-  const sarifDakar = output.sarif?.runs?.[0]?.properties?.dakar
-  if (sarifDakar && typeof sarifDakar === 'object') {
-    sarifDakar.reportedUsage = lines
-    sarifDakar.reportedTokens = totals
-  }
+  const parsed = workflowOutputSchema.safeParse(output)
+  if (!parsed.success) return { output: failUsageValidation(output, 'reported_usage_annotation'), ok: false }
+  const annotated = parsed.data
+  annotated.metrics = annotated.metrics || {}
+  annotated.metrics.reportedUsage = lines
+  annotated.metrics.reportedTokens = totals
+  annotateSarifUsage(annotated, lines, totals)
+  return { output: annotated, ok: true }
 }
 
 /**
@@ -231,18 +282,15 @@ function annotateReportedUsage(output, lines, totals) {
  * estimates remain separate by design). The log file is removed afterwards.
  *
  * @param {object} output - the parsed workflow result to annotate.
- * @returns {object} the same output, annotated when usage lines exist.
+ * @returns {{ output: object, ok: boolean }} annotated output or a validation failure.
  */
 function attachReportedUsage(output) {
   const result = consumeReportedUsageLog(usageLogFile, REPORTED_USAGE_BOUNDARY)
   reportUsageLogOutcome(result, REPORTED_USAGE_BOUNDARY.report)
   const { lines } = result
-  if (lines.length === 0) return output
-  if (typeof output !== 'object') return output
-  if (output === null) return output
+  if (lines.length === 0) return { output, ok: true }
   const totals = sumReportedTokens(lines)
-  annotateReportedUsage(output, lines, totals)
-  return output
+  return annotateReportedUsage(output, lines, totals)
 }
 
 const OPTION_SPECS = new Map([
@@ -365,7 +413,7 @@ function parseArgs(argv) {
 function numberValue(name, value) {
   const number = Number(value)
   if (!Number.isFinite(number)) {
-    throw new Error(`--${name} must be a number`)
+    throw new TypeError(`--${name} must be a number`)
   }
   return number
 }
@@ -419,14 +467,14 @@ function runTrustedInstructionGit(repoRoot, args, failureContext) {
 }
 
 /**
- * Read `AGENTS.md` from the trusted review base, returning null when absent.
+ * Read `AGENTS.md` from the trusted review base, returning undefined when absent.
  *
  * Content is truncated to 24,000 characters so large files do not overflow
  * the workflow argument budget.
  *
  * @param {string} repoRoot - absolute path to the repository root.
  * @param {string} baseRef - trusted Git revision preceding the reviewed range.
- * @returns {{ source: string, content: string, truncated: boolean } | null} parsed instructions, or null.
+ * @returns {{ source: string, content: string, truncated: boolean } | undefined} parsed instructions, or undefined.
  */
 function readAgentInstructions(repoRoot, baseRef) {
   const resolvedCommit = runTrustedInstructionGit(
@@ -439,7 +487,7 @@ function readAgentInstructions(repoRoot, baseRef) {
     ['ls-tree', '-z', resolvedCommit, '--', 'AGENTS.md'],
     { prefix: `cannot inspect ${resolvedCommit}:AGENTS.md`, fallback: 'git ls-tree failed' },
   )
-  if (entries === '') return null
+  if (entries === '') return
   const content = runTrustedInstructionGit(
     repoRoot,
     ['show', `${resolvedCommit}:AGENTS.md`],
@@ -532,7 +580,7 @@ function buildOdwRunArgs(options, workflowArgs, wait) {
   }
   odwArgs.push('--args', JSON.stringify(workflowArgs))
   if (options.runsRoot) {
-    odwArgs.splice(2, 0, '--runs-root', resolve(options.runsRoot))
+    odwArgs.splice(2, 0, '--runs-root', nodePath.resolve(options.runsRoot))
   }
   return odwArgs
 }
@@ -549,7 +597,7 @@ function buildOdwRunArgs(options, workflowArgs, wait) {
 function buildRunScopedArgs(command, options, runId, extraArgs = []) {
   const args = [command, runId]
   if (options.runsRoot) {
-    args.push('--runs-root', resolve(options.runsRoot))
+    args.push('--runs-root', nodePath.resolve(options.runsRoot))
   }
   args.push(...extraArgs)
   return args
@@ -563,9 +611,9 @@ function buildRunScopedArgs(command, options, runId, extraArgs = []) {
  */
 function printWorkflowOutput(output, format) {
   if (format === 'markdown') {
-    process.stdout.write(`${output.reportMarkdown || JSON.stringify(output, null, 2)}\n`)
+    process.stdout.write(`${output.reportMarkdown || prettyJson(output)}\n`)
   } else {
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    process.stdout.write(`${prettyJson(output)}\n`)
   }
 }
 
@@ -591,24 +639,27 @@ function changedFilesEqual(left, right) {
  *
  * @param {object} recordInput - the workflow-supplied snapshot to append.
  * @param {object} [prepared] - the CLI's trusted prepared review range.
- * @returns {string | null} a message naming the mismatched field, or null when consistent.
+ * @returns {string | undefined} a message naming the mismatched field, or undefined when consistent.
  */
 function snapshotMismatch(recordInput, prepared) {
-  if (!prepared || typeof prepared !== 'object') return null
+  if (prepared === undefined) return
+  const parsed = preparedSnapshotSchema.safeParse(prepared)
+  if (!parsed.success) return 'prepared review snapshot is invalid; refusing to record'
+  const preparedSnapshot = parsed.data
   const scalarChecks = [
-    ['headCommit', recordInput.headCommit, prepared.headCommit],
-    ['baseCommit', recordInput.baseCommit, prepared.reviewBase],
-    ['commitCount', recordInput.commitCount, prepared.commitCount],
+    ['headCommit', recordInput.headCommit, preparedSnapshot.headCommit],
+    ['baseCommit', recordInput.baseCommit, preparedSnapshot.reviewBase],
+    ['commitCount', recordInput.commitCount, preparedSnapshot.commitCount],
   ]
   for (const [field, actual, expected] of scalarChecks) {
     if (actual !== expected) {
       return `recordInput.${field} (${JSON.stringify(actual)}) does not match the prepared review snapshot (${JSON.stringify(expected)}); refusing to record`
     }
   }
-  if (!changedFilesEqual(recordInput.changedFiles, prepared.changedFiles)) {
+  if (!changedFilesEqual(recordInput.changedFiles, preparedSnapshot.changedFiles)) {
     return 'recordInput.changedFiles does not match the prepared review snapshot; refusing to record'
   }
-  return null
+  return
 }
 
 /**
@@ -686,12 +737,16 @@ function recordReview(output, trustedLocation, prepared) {
  * @param {object} output - the parsed ODW workflow result.
  */
 function copyReportedMetricsToRecordInput(output) {
-  if (!output) return
-  if (typeof output !== 'object') return
-  if (!output.recordInput) return
-  const metrics = (output.recordInput.metrics = output.recordInput.metrics || {})
-  if (output.metrics?.reportedUsage !== undefined) metrics.reportedUsage = output.metrics.reportedUsage
-  if (output.metrics?.reportedTokens !== undefined) metrics.reportedTokens = output.metrics.reportedTokens
+  if (!output.recordInput) return output
+  const parsed = workflowOutputSchema.safeParse(output)
+  if (!parsed.success) return failUsageValidation(output, 'reported_usage_recording')
+  const recordable = parsed.data
+  if (!recordable.recordInput) return recordable
+  const metrics = recordable.recordInput.metrics || {}
+  if (recordable.metrics?.reportedUsage !== undefined) metrics.reportedUsage = recordable.metrics.reportedUsage
+  if (recordable.metrics?.reportedTokens !== undefined) metrics.reportedTokens = recordable.metrics.reportedTokens
+  recordable.recordInput.metrics = metrics
+  return recordable
 }
 
 /**
@@ -707,11 +762,12 @@ function copyReportedMetricsToRecordInput(output) {
  * @returns {object} the annotated and (on success) recorded workflow result.
  */
 function finalizeWorkflowResult(output, workflowArgs) {
-  attachReportedUsage(output)
+  const usage = attachReportedUsage(output)
+  output = usage.output
   // A dry run never records: there is no prepared snapshot to validate against
   // and no completed head to append.
-  if (workflowArgs.dryRun) return output
-  copyReportedMetricsToRecordInput(output)
+  if (!usage.ok || workflowArgs.dryRun) return output
+  output = copyReportedMetricsToRecordInput(output)
   return recordReview(
     output,
     { 'repo-root': workflowArgs.repoRoot, 'state-root': workflowArgs.stateRoot },
@@ -740,7 +796,7 @@ function runOdwQuiet(options, workflowArgs) {
       status: result.status,
       error: result.stderr.trim() || result.stdout.trim() || 'ODW failed',
     }
-    process.stderr.write(`${JSON.stringify(error, null, 2)}\n`)
+    process.stderr.write(`${prettyJson(error)}\n`)
     return { status: result.status || 1 }
   }
 
@@ -807,7 +863,9 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
     if (Date.now() >= deadline) {
       break
     }
-    await sleep(Math.min(1000, Math.max(0, deadline - Date.now())))
+    const remainingMilliseconds = Math.max(0, deadline - Date.now())
+    const retryDelayMilliseconds = Math.min(1000, remainingMilliseconds)
+    await sleep(retryDelayMilliseconds)
   }
 
   throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`)
@@ -832,18 +890,14 @@ async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
     return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
   } catch (error) {
     process.stderr.write(
-      `${JSON.stringify(
-        {
-          ok: false,
-          stage: 'odw-logs',
-          runId,
-          error:
-            error.message ||
-            `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
-        },
-        null,
-        2,
-      )}\n`,
+      `${prettyJson({
+        ok: false,
+        stage: 'odw-logs',
+        runId,
+        error:
+          error.message ||
+          `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
+      })}\n`,
     )
     return { status: 1 }
   }
@@ -862,7 +916,7 @@ function reportOdwLaunchFailure(result) {
     status: result.status,
     error: result.stderr.trim() || result.stdout.trim() || 'ODW failed',
   }
-  process.stderr.write(`${JSON.stringify(error, null, 2)}\n`)
+  process.stderr.write(`${prettyJson(error)}\n`)
   return { status: result.status || 1 }
 }
 
@@ -913,7 +967,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
     return { output: await waitForOdwResult(options, workflowArgs, runId, Math.max(0, resultDeadline - Date.now())) }
   } catch (error) {
     process.stderr.write(
-      `${JSON.stringify({ ok: false, stage: 'odw-result', runId, error: error.message }, null, 2)}\n`,
+      `${JSON.stringify({ ok: false, stage: 'odw-result', runId, error: error.message }, jsonReplacer, 2)}\n`,
     )
     return { status: 1 }
   }
@@ -993,7 +1047,7 @@ function prepareReview(options, repoRoot, resolvedConfig) {
   try {
     prepared = prepare(prepareArgs)
   } catch (error) {
-    process.stderr.write(`${JSON.stringify({ ok: false, stage: 'prepare', error: error.message }, null, 2)}\n`)
+    process.stderr.write(`${JSON.stringify({ ok: false, stage: 'prepare', error: error.message }, jsonReplacer, 2)}\n`)
     return { status: 1 }
   }
   if (prepared.alreadyReviewed || prepared.commitCount === 0) {
@@ -1068,7 +1122,7 @@ function blockingGateResult(gates, config, prepared) {
  * @returns {string} trusted configuration text for deterministic gate parsing.
  */
 function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
-  const relativePath = relative(repoRoot, configPath)
+  const relativePath = nodePath.relative(repoRoot, configPath)
   if (isRepositoryRelativePath(relativePath)) {
     const revisionPath = relativePath.replaceAll('\\', '/')
     const revision = `${reviewBase}:${revisionPath}`
@@ -1097,7 +1151,7 @@ function readTrustedGateConfig(configPath, repoRoot, reviewBase) {
  * @param {string} repoRoot - Absolute path to the reviewed repository root.
  * @param {object} workflowArgs - Mutable workflow arguments for the ODW run.
  * @param {string} format - Requested final output format.
- * @returns {number | null} terminal exit code, or null after successful preflight.
+ * @returns {number | undefined} terminal exit code, or undefined after successful preflight.
  */
 function prepareLiveReview(options, repoRoot, workflowArgs, format) {
   const preparation = prepareReview(options, repoRoot, workflowArgs.config)
@@ -1146,14 +1200,14 @@ function prepareLiveReview(options, repoRoot, workflowArgs, format) {
       `dakar-review: --timeout ${options.timeout || 3600}s is below the retry schedule's worst case (${worstCase}s); the run may be killed before the workflow can defer.\n`,
     )
   }
-  return null
+  return
 }
 
 /**
  * Print a terminal meta-option response when the CLI should not start a review.
  *
  * @param {object} options - Parsed CLI options.
- * @returns {number | null} terminal exit code, or null when review work continues.
+ * @returns {number | undefined} terminal exit code, or undefined when review work continues.
  */
 function metaOptionExitCode(options) {
   if (options.help) {
@@ -1164,7 +1218,7 @@ function metaOptionExitCode(options) {
     process.stdout.write('0.1.0\n')
     return 0
   }
-  return null
+  return
 }
 
 /**
@@ -1220,15 +1274,15 @@ async function launchOdw(options, workflowArgs, format) {
 async function run(argv) {
   const options = parseArgs(argv)
   const metaExitCode = metaOptionExitCode(options)
-  if (metaExitCode !== null) return metaExitCode
+  if (metaExitCode !== undefined) return metaExitCode
 
-  const repoRoot = resolve(options.repoRoot || process.cwd())
+  const repoRoot = nodePath.resolve(options.repoRoot || process.cwd())
   const format = outputFormat(options)
 
   const workflowArgs = buildWorkflowArgs(options, repoRoot)
   if (!options.dryRun) {
     const preflightStatus = prepareLiveReview(options, repoRoot, workflowArgs, format)
-    if (preflightStatus !== null) return preflightStatus
+    if (preflightStatus !== undefined) return preflightStatus
   }
   return launchOdw(options, workflowArgs, format)
 }
@@ -1236,6 +1290,6 @@ async function run(argv) {
 try {
   process.exitCode = await run(process.argv.slice(2))
 } catch (error) {
-  process.stderr.write(`${JSON.stringify({ ok: false, stage: 'cli', error: error.message }, null, 2)}\n`)
+  process.stderr.write(`${JSON.stringify({ ok: false, stage: 'cli', error: error.message }, jsonReplacer, 2)}\n`)
   process.exitCode = 1
 }

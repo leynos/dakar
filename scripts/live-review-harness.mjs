@@ -18,14 +18,18 @@ import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import nodePath from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { fileURLToPath } from 'node:url'
 import { Writable } from 'node:stream'
 import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
+import * as z from 'zod'
 
-const moduleDir = dirname(fileURLToPath(import.meta.url))
-const corpusPath = join(moduleDir, 'live-corpus.json')
+const moduleDir = nodePath.dirname(fileURLToPath(import.meta.url))
+const corpusPath = nodePath.join(moduleDir, 'live-corpus.json')
+const plainObjectSchema = z.record(z.string(), z.unknown())
+/** Null is part of the stable JSON summary when a usage amount is unavailable. */
+const JSON_NULL = JSON.parse('null')
 const DAKAR_USAGE_MARKER = 'DAKAR-USAGE: '
 /** Token-count fields a usage payload may carry; each must be a finite number. */
 const USAGE_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite']
@@ -39,7 +43,7 @@ const MAX_TELEMETRY_LINE_CHARS = 1024 * 1024
  * @returns {boolean} true only for plain objects.
  */
 function isPlainObject(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+  return plainObjectSchema.safeParse(value).success
 }
 
 /**
@@ -71,9 +75,7 @@ function hasFiniteUsageFields(record) {
 function classifyUsageValue(value) {
   if (!isPlainObject(value)) return { category: 'non-object' }
   if (!hasFiniteUsageFields(value)) return { category: 'invalid-fields' }
-  if (value.usage !== undefined) {
-    if (!isPlainObject(value.usage) || !hasFiniteUsageFields(value.usage)) return { category: 'invalid-fields' }
-  }
+  if (value.usage !== undefined && (!isPlainObject(value.usage) || !hasFiniteUsageFields(value.usage))) return { category: 'invalid-fields' }
   return { category: 'valid', value }
 }
 
@@ -147,8 +149,8 @@ export function verifyPinnedHead(actualSha, entry) {
  * @returns {void}
  */
 function assertContained(base, target) {
-  const rel = relative(base, target)
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  const rel = nodePath.relative(base, target)
+  if (rel === '..' || rel.startsWith(`..${nodePath.sep}`) || nodePath.isAbsolute(rel)) {
     throw new Error(`state root escapes output directory: expected within ${base}, got ${target}`)
   }
 }
@@ -164,13 +166,13 @@ function assertContained(base, target) {
 function realpathOfExisting(target) {
   let existing = target
   while (!existsSync(existing)) {
-    const parent = dirname(existing)
+    const parent = nodePath.dirname(existing)
     if (parent === existing) return target
     existing = parent
   }
   const realExisting = realpathSync(existing)
-  const suffix = relative(existing, target)
-  return suffix === '' ? realExisting : resolve(realExisting, suffix)
+  const suffix = nodePath.relative(existing, target)
+  return suffix === '' ? realExisting : nodePath.resolve(realExisting, suffix)
 }
 
 /**
@@ -184,8 +186,8 @@ function realpathOfExisting(target) {
  * @returns {string} the resolved, created state-root path.
  */
 export function guardStateRoot(outDir, candidate) {
-  const resolvedOut = resolve(outDir)
-  const resolvedCandidate = resolve(candidate)
+  const resolvedOut = nodePath.resolve(outDir)
+  const resolvedCandidate = nodePath.resolve(candidate)
   // First a lexical containment check on the resolved paths.
   assertContained(resolvedOut, resolvedCandidate)
   // Then re-check on the realpaths of both, so a symlinked scratch ancestor
@@ -204,7 +206,7 @@ export function guardStateRoot(outDir, candidate) {
  * @returns {string} the resolved, created state-root path.
  */
 export function stateRootFor(outDir, name, pr) {
-  return guardStateRoot(outDir, join(outDir, 'state', `${name}-${pr}`))
+  return guardStateRoot(outDir, nodePath.join(outDir, 'state', `${name}-${pr}`))
 }
 
 /**
@@ -261,11 +263,11 @@ function assertCommitPresent(cloneDir, sha) {
  * @returns {Promise<string>} the resolved clone directory.
  */
 export async function prepareClone(entry, workDir) {
-  const resolvedWorkDir = resolve(workDir)
+  const resolvedWorkDir = nodePath.resolve(workDir)
   mkdirSync(resolvedWorkDir, { recursive: true })
   const name = repoName(entry.repo)
-  const cloneDir = join(resolvedWorkDir, name)
-  if (!existsSync(join(cloneDir, '.git'))) {
+  const cloneDir = nodePath.join(resolvedWorkDir, name)
+  if (!existsSync(nodePath.join(cloneDir, '.git'))) {
     process.stderr.write(`cloning ${entry.repo} into ${cloneDir}\n`)
     runGit(['clone', `https://github.com/${entry.repo}.git`, cloneDir])
   }
@@ -451,14 +453,14 @@ export function createUsageScanner({ maxLineChars = MAX_TELEMETRY_LINE_CHARS } =
 function partitionReportedUsage(records) {
   const valid = []
   const malformed = []
-  records.forEach((record, index) => {
+  for (const [index, record] of records.entries()) {
     const outcome = classifyUsageValue(record)
     if (outcome.category === 'valid') {
       valid.push(outcome.value)
     } else {
       malformed.push({ line: index, category: outcome.category })
     }
-  })
+  }
   return { records: valid, malformed }
 }
 
@@ -517,12 +519,12 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
   if (!apiKey) {
     throw new Error(`API key file is empty: ${keyPath}`)
   }
-  const resolvedOutDir = resolve(outDir)
+  const resolvedOutDir = nodePath.resolve(outDir)
   mkdirSync(resolvedOutDir, { recursive: true })
   const name = repoName(entry.repo)
-  const stderrPath = join(resolvedOutDir, `${name}-${entry.pr}.stderr.log`)
-  const resultPath = join(resolvedOutDir, `${name}-${entry.pr}.json`)
-  const dakarBin = join(packageRoot, 'bin', 'dakar-review.mjs')
+  const stderrPath = nodePath.join(resolvedOutDir, `${name}-${entry.pr}.stderr.log`)
+  const resultPath = nodePath.join(resolvedOutDir, `${name}-${entry.pr}.json`)
+  const dakarBin = nodePath.join(packageRoot, 'bin', 'dakar-review.mjs')
   const args = [
     dakarBin,
     '--repo-root', cloneDir,
@@ -610,7 +612,7 @@ export function summarize({ entry, resultJson, usages = [], malformedTelemetry =
     stage,
     findingsCount: Array.isArray(resultJson?.findings) ? resultJson.findings.length : 0,
     discardedCount: Array.isArray(resultJson?.discarded) ? resultJson.discarded.length : 0,
-    ledgerTotalEstimatedUsd: resultJson?.metrics?.ledgerTotalEstimatedUsd ?? null,
+    ledgerTotalEstimatedUsd: resultJson?.metrics?.ledgerTotalEstimatedUsd ?? JSON_NULL,
     ledgerEntryCount: Array.isArray(ledger) ? ledger.length : 0,
     reportedTokens: sumUsage(usagePayloads),
     reportedUsd: priceReportedUsage(reported.records),
@@ -637,9 +639,9 @@ export function summarize({ entry, resultJson, usages = [], malformedTelemetry =
  * @returns {number | null} the total reported USD, or null when nothing was priceable.
  */
 export function priceReportedUsage(records) {
-  let total = null
+  let total = JSON_NULL
   for (const record of records) {
-    if (!isPlainObject(record)) continue
+    if (classifyUsageValue(record).category !== 'valid') continue
     const usage = record.usage ?? record
     const band = DEFAULT_PRICING_TABLE.rates[`${record.model}:flex`]
     if (!band) continue
@@ -708,7 +710,7 @@ function assertCliValue(name, spec, value) {
 /**
  * Ensure the corpus-selection arguments required by the harness are present.
  *
- * @param {Record<string, boolean | string>} options - parsed option values.
+ * @param {Record<string, boolean | string | undefined>} options - parsed option values.
  * @returns {void}
  */
 function assertRequiredCliOptions(options) {
@@ -725,7 +727,7 @@ function assertRequiredCliOptions(options) {
  * @returns {object} parsed options, with `keyFile` defaulted to `~/dakar-api-key.txt`.
  */
 export function parseCliArgs(argv) {
-  const options = { keyFile: join(homedir(), 'dakar-api-key.txt') }
+  const options = { keyFile: nodePath.join(homedir(), 'dakar-api-key.txt') }
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]
     if (!token.startsWith('--')) {
@@ -754,7 +756,7 @@ export function parseCliArgs(argv) {
  */
 function splitExtraArgs(text) {
   const matches = text.match(/"[^"]*"|'[^']*'|\S+/gu) ?? []
-  return matches.map((token) => token.replace(/^['"]|['"]$/gu, ''))
+  return matches.map((token) => token.replaceAll(/^['"]|['"]$/gu, ''))
 }
 
 /**
@@ -768,7 +770,7 @@ async function main() {
   const entry = loadCorpusEntry(options.repo, Number(options.pr))
   const cloneDir = await prepareClone(entry, options.work)
   const name = repoName(entry.repo)
-  const resolvedOut = resolve(options.out)
+  const resolvedOut = nodePath.resolve(options.out)
   mkdirSync(resolvedOut, { recursive: true })
   const stateRoot = stateRootFor(resolvedOut, name, entry.pr)
 
@@ -777,7 +779,7 @@ async function main() {
     return
   }
 
-  const packageRoot = resolve(moduleDir, '..')
+  const packageRoot = nodePath.resolve(moduleDir, '..')
   const extraArgs = options.dakarArgs ? splitExtraArgs(options.dakarArgs) : []
   const { resultJson, usages, malformedTelemetry, resultPath, stderrPath } = await runReview({
     entry,
@@ -795,9 +797,11 @@ async function main() {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  main().catch((error) => {
+if (process.argv[1] && fileURLToPath(import.meta.url) === nodePath.resolve(process.argv[1])) {
+  try {
+    await main()
+  } catch (error) {
     process.stderr.write(`${error.stack || error.message}\n`)
     process.exitCode = 1
-  })
+  }
 }

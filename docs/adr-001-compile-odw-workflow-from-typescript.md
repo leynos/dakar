@@ -4,6 +4,15 @@
 
 Accepted.
 
+Amended (2026-10-26): the compiler encloses the bundle body and generated
+footer in a lexical block, separating block-scoped package bindings from the
+required top-level metadata declaration. Loader validation rejects any
+remaining incompatible binding collision. Zod is the sole approved third-party
+runtime package: its pinned modules are bundled into the artefact, and the
+build rejects runtime inputs outside the source manifest and Zod package. This
+amendment accompanies the linting strategy in
+[ADR 003](adr-003-linting-strategy.md).
+
 ## Date
 
 2026-07-14.
