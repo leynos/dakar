@@ -8967,7 +8967,7 @@ function discardedFromVerdicts(candidates, verdicts) {
       continue;
     }
     if (verdict.status !== "accepted" && verdict.status !== "severity_downgraded") {
-      discarded.push({ candidate, status: verdict.status || "unknown_status", reason: verdict.reason || "", evidenceChecked: verdict.evidenceChecked || "" });
+      discarded.push({ candidate, status: verdict.status, reason: verdict.reason || "", evidenceChecked: verdict.evidenceChecked || "" });
     }
   }
   return discarded;
@@ -9096,7 +9096,7 @@ var deterministicGateSchema = strictObject({
   stdout: string2(),
   stdoutSha256: string2()
 });
-var preparedReviewSchema = object({
+var preparedReviewSchema = looseObject({
   alreadyReviewed: boolean2().optional(),
   changedFiles: array(string2()).optional(),
   commitCount: number2().optional(),
@@ -9107,11 +9107,11 @@ var preparedReviewSchema = object({
   reviewBase: string2().optional(),
   stateFile: string2().optional(),
   warnings: array(string2()).optional()
-}).passthrough();
+});
 var numericArgumentField = optionalParsed(numericArgumentSchema);
 var stringArgumentField = optionalParsed(string2());
 var reasoningArgumentField = optionalParsed(reasoningSchema);
-var workflowArgsSchema = object({
+var workflowArgsSchema = looseObject({
   adapterOverheadTokens: numericArgumentField,
   agentInstructions: optionalParsed(agentInstructionsSchema),
   base: stringArgumentField,
@@ -9144,7 +9144,7 @@ var workflowArgsSchema = object({
   transactionMaxFiles: numericArgumentField,
   transactionMaxInputTokens: numericArgumentField,
   transactionMaxOutputTokens: numericArgumentField
-}).passthrough();
+});
 function positiveLimit(value, fallback, ceiling) {
   const parsed = Number(value);
   const floored = Math.floor(parsed);
@@ -9918,8 +9918,8 @@ function taskSpec(kind, files, index, config2) {
     kind,
     files,
     assignedModel: modelName(assigned),
-    adapter: adapterForReasoning(assigned.reasoning || "medium"),
-    model: baseModel(assigned.model || ""),
+    adapter: adapterForReasoning(assigned.reasoning),
+    model: baseModel(assigned.model),
     modelLabel: assigned.label,
     role,
     maxFindings: Math.max(1, Math.min(config2.maxFindings, kind === "source" ? 6 : 3)),

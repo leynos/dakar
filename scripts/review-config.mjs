@@ -23,9 +23,9 @@ const PRE_MERGE_KEYS = new Set(['custom_checks'])
 const PATH_INSTRUCTION_KEYS = new Set(['instructions', 'path'])
 const CUSTOM_CHECK_KEYS = new Set(['command', 'instructions', 'mode', 'name'])
 const mappingSchema = z.record(z.string(), z.json())
-const yamlErrorSchema = z.object({
-  mark: z.object({ line: z.number(), column: z.number() }).passthrough().optional(),
-}).passthrough()
+const yamlErrorSchema = z.looseObject({
+  mark: z.looseObject({ line: z.number(), column: z.number() }).optional(),
+})
 const jsonIndent = (value) => JSON.stringify(value, (_key, nested) => nested, 2)
 
 /** Tests whether a parsed YAML value is a mapping rather than an array. */
@@ -107,6 +107,7 @@ export function parseReviewPolicy(source, { configPath }) {
   }
   const rootResult = parseMapping(parsed === undefined ? {} : parsed)
   if (!rootResult.success) throw policyError(configPath, 'document', 'expected a mapping')
+  /** @type {Partial<z.infer<typeof mappingSchema>>} */
   const root = rootResult.data
 
   const ignoredKeys = []
@@ -117,6 +118,7 @@ export function parseReviewPolicy(source, { configPath }) {
   const reviews = root.reviews === undefined ? {} : root.reviews
   const reviewsResult = parseMapping(reviews)
   if (!reviewsResult.success) throw policyError(configPath, 'reviews', 'expected a mapping')
+  /** @type {Partial<z.infer<typeof mappingSchema>>} */
   const reviewMapping = reviewsResult.data
   collectIgnoredKeys(reviewMapping, REVIEW_KEYS, 'reviews', ignoredKeys)
   const profile = optionalString(reviewMapping, 'profile', configPath, 'reviews.profile')
@@ -140,6 +142,7 @@ export function parseReviewPolicy(source, { configPath }) {
   const preMergeChecks = root.pre_merge_checks === undefined ? {} : root.pre_merge_checks
   const checksResult = parseMapping(preMergeChecks)
   if (!checksResult.success) throw policyError(configPath, 'pre_merge_checks', 'expected a mapping')
+  /** @type {Partial<z.infer<typeof mappingSchema>>} */
   const checksMapping = checksResult.data
   collectIgnoredKeys(checksMapping, PRE_MERGE_KEYS, 'pre_merge_checks', ignoredKeys)
   const rawCustomChecks = checksMapping.custom_checks === undefined ? [] : checksMapping.custom_checks

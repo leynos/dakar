@@ -139,7 +139,7 @@ const unicornRecommendedRules = Object.fromEntries(
 );
 
 export default defineConfig({
-  plugins: ["unicorn"],
+  plugins: ["typescript", "unicorn"],
   jsPlugins: ["ai-deslop"],
   categories: {
     correctness: "off",

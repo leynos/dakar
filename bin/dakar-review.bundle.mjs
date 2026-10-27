@@ -37,7 +37,6 @@ function shellWord(value) {
 // scripts/context-tools.mjs
 function mcpPayload(payload) {
   const json2 = JSON.stringify(payload);
-  if (json2 === void 0) throw new Error("MCP payload must be serializable");
   return shellWord(json2);
 }
 function contextToolsBlock(repoRoot, repoSlug) {
@@ -7348,7 +7347,7 @@ function snapshotMismatch(recordInput, prepared) {
   return;
 }
 function recordReview(output, trustedLocation, prepared) {
-  if (!output || output.dryRun || output.skipped || output.ok !== true) {
+  if (output.dryRun || output.skipped || output.ok !== true) {
     return output;
   }
   if (output.recordWithheld && !output.recordInput) {
@@ -7454,25 +7453,23 @@ function followOdwLogs(odwBin, args, timeoutMs) {
 async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1e3) {
   const odwBin = options.odwBin || "odw";
   const deadline = Date.now() + timeoutMs;
-  let lastError = "";
-  while (true) {
-    const result = spawnSync2(odwBin, buildRunScopedArgs("result", options, runId), {
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      env: odwEnv()
-    });
+  const fetchResult = () => spawnSync2(odwBin, buildRunScopedArgs("result", options, runId), {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    env: odwEnv()
+  });
+  let result = fetchResult();
+  while (Date.now() < deadline) {
     if (result.status === 0) {
       return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
-    }
-    lastError = result.stderr.trim() || result.stdout.trim();
-    if (Date.now() >= deadline) {
-      break;
     }
     const remainingMilliseconds = Math.max(0, deadline - Date.now());
     const retryDelayMilliseconds = Math.min(1e3, remainingMilliseconds);
     await sleep(retryDelayMilliseconds);
+    result = fetchResult();
   }
-  throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`);
+  if (result.status === 0) return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
+  throw new Error(result.stderr.trim() || result.stdout.trim() || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`);
 }
 async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
   process.stderr.write(

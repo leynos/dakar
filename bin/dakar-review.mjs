@@ -683,7 +683,7 @@ function snapshotMismatch(recordInput, prepared) {
  * @returns {object} the (possibly updated) workflow result.
  */
 function recordReview(output, trustedLocation, prepared) {
-  if (!output || output.dryRun || output.skipped || output.ok !== true) {
+  if (output.dryRun || output.skipped || output.ok !== true) {
     return output
   }
   // A review that completed with partial planned coverage legitimately
@@ -844,31 +844,26 @@ function followOdwLogs(odwBin, args, timeoutMs) {
  * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
  * @returns {Promise<object>} the parsed and (on success) recorded workflow result.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: ODW may publish a result after log follow exits; retry result fetches until the bounded deadline while retaining the last fetch error.
 async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1000) {
   const odwBin = options.odwBin || 'odw'
   const deadline = Date.now() + timeoutMs
-  let lastError = ''
-
-  while (true) {
-    const result = spawnSync(odwBin, buildRunScopedArgs('result', options, runId), {
+  const fetchResult = () => spawnSync(odwBin, buildRunScopedArgs('result', options, runId), {
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
       env: odwEnv(),
     })
+  let result = fetchResult()
+  while (Date.now() < deadline) {
     if (result.status === 0) {
       return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs)
-    }
-    lastError = result.stderr.trim() || result.stdout.trim()
-    if (Date.now() >= deadline) {
-      break
     }
     const remainingMilliseconds = Math.max(0, deadline - Date.now())
     const retryDelayMilliseconds = Math.min(1000, remainingMilliseconds)
     await sleep(retryDelayMilliseconds)
+    result = fetchResult()
   }
-
-  throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`)
+  if (result.status === 0) return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs)
+  throw new Error(result.stderr.trim() || result.stdout.trim() || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`)
 }
 
 /**

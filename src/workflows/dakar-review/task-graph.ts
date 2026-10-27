@@ -102,7 +102,7 @@ export function taskSpec(kind: string, files: string[], index: number, config: T
   const assigned = modelForRole(role, config.reviewModels)
   return {
     taskId: `${kind}-${index + 1}`, kind, files, assignedModel: modelName(assigned),
-    adapter: adapterForReasoning(assigned.reasoning || 'medium'), model: baseModel(assigned.model || ''),
+    adapter: adapterForReasoning(assigned.reasoning), model: baseModel(assigned.model),
     modelLabel: assigned.label, role,
     maxFindings: Math.max(1, Math.min(config.maxFindings, kind === 'source' ? 6 : 3)),
     verificationPolicy: role === 'high' ? 'verify-all' : 'verify-non-low-and-sampled-low',

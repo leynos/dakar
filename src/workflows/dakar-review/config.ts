@@ -73,7 +73,8 @@ const deterministicGateSchema = z.strictObject({
   stdout: z.string(),
   stdoutSha256: z.string(),
 })
-const preparedReviewSchema = z.object({
+/** Prepared review boundary schema. @internal */
+export const preparedReviewSchema = z.looseObject({
   alreadyReviewed: z.boolean().optional(),
   changedFiles: z.array(z.string()).optional(),
   commitCount: z.number().optional(),
@@ -84,11 +85,12 @@ const preparedReviewSchema = z.object({
   reviewBase: z.string().optional(),
   stateFile: z.string().optional(),
   warnings: z.array(z.string()).optional(),
-}).passthrough()
+})
 const numericArgumentField = optionalParsed(numericArgumentSchema)
 const stringArgumentField = optionalParsed(z.string())
 const reasoningArgumentField = optionalParsed(reasoningSchema)
-const workflowArgsSchema = z.object({
+/** Workflow argument boundary schema. @internal */
+export const workflowArgsSchema = z.looseObject({
   adapterOverheadTokens: numericArgumentField,
   agentInstructions: optionalParsed(agentInstructionsSchema),
   base: stringArgumentField,
@@ -121,7 +123,7 @@ const workflowArgsSchema = z.object({
   transactionMaxFiles: numericArgumentField,
   transactionMaxInputTokens: numericArgumentField,
   transactionMaxOutputTokens: numericArgumentField,
-}).passthrough()
+})
 
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {

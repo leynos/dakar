@@ -579,12 +579,32 @@ export async function runReview({ entry, cloneDir, stateRoot, outDir, extraArgs 
 }
 
 /**
+ * Optional fields read from a completed review result.
+ * @internal
+ * @typedef {object} HarnessResult - Optional fields read from a completed review result.
+ * @property {boolean} [ok] - Whether the review succeeded.
+ * @property {string} [stage] - Result stage.
+ * @property {unknown} [findings] - Reported findings.
+ * @property {unknown} [discarded] - Discarded findings.
+ * @property {HarnessMetrics} [metrics] - Review metrics.
+ */
+
+/**
+ * Metrics consumed by the harness summary.
+ * @internal
+ * @typedef {object} HarnessMetrics - Metrics consumed by the harness summary.
+ * @property {unknown} [ledger] - Estimated usage ledger.
+ * @property {unknown} [reportedUsage] - Provider-reported usage records.
+ * @property {number | null} [ledgerTotalEstimatedUsd] - Estimated total cost.
+ */
+
+/**
  * Reduce a `dakar-review` result plus parsed usage telemetry to the harness's
  * final summary shape, printed as the operator-facing stdout JSON.
  *
  * @param {object} options - summarize inputs.
  * @param {{ repo: string, pr: number, tier: string }} options.entry - the pinned corpus entry.
- * @param {object} options.resultJson - the parsed `dakar-review` result.
+ * @param {HarnessResult | null | undefined} options.resultJson - the parsed `dakar-review` result.
  * @param {Array<Record<string, number>>} [options.usages] - valid `DAKAR-USAGE` payloads from the stderr scan.
  * @param {Array<{ line: number, category: string }>} [options.malformedTelemetry] - the stderr scan's malformed diagnostics.
  * @param {string} options.resultPath - path the raw result JSON was written to.
@@ -643,7 +663,8 @@ export function priceReportedUsage(records) {
   for (const record of records) {
     if (classifyUsageValue(record).category !== 'valid') continue
     const usage = record.usage ?? record
-    const band = DEFAULT_PRICING_TABLE.rates[`${record.model}:flex`]
+    const rates = /** @type {Partial<Record<string, import('../src/workflows/dakar-review/pricing.ts').PricingBand>>} */ (DEFAULT_PRICING_TABLE.rates)
+    const band = rates[`${record.model}:flex`]
     if (!band) continue
     const usd =
       ((usage.input ?? 0) * band.inputUsdPerMTok +

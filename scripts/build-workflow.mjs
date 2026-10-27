@@ -100,22 +100,51 @@ function isLiteralValue(node) {
   return false
 }
 
+/**
+ * Find the first matching node in a depth-first traversal of an AST.
+ * @param {import('typescript').Node} node - root node to inspect.
+ * @param {(node: import('typescript').Node) => boolean} predicate - matching condition.
+ * @returns {import('typescript').Node | undefined} first matching node, if present.
+ */
+function findNode(node, predicate) {
+  if (predicate(node)) return node
+  return ts.forEachChild(node, (child) => findNode(child, predicate))
+}
+
+/**
+ * Find the last matching node in the same depth-first traversal order.
+ * @param {import('typescript').Node} node - root node to inspect.
+ * @param {(node: import('typescript').Node) => boolean} predicate - matching condition.
+ * @returns {import('typescript').Node | undefined} last matching node, if present.
+ */
+function findLastNode(node, predicate) {
+  /** @type {import('typescript').Node[]} */
+  const children = []
+  ts.forEachChild(node, (child) => { children.push(child) })
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const match = findLastNode(children[index], predicate)
+    if (match) return match
+  }
+  return predicate(node) ? node : undefined
+}
+
+/**
+ * Whether an AST node contains a module syntax form rejected by ODW.
+ * @param {import('typescript').Node} node - node to inspect.
+ * @returns {boolean} true for disallowed module syntax.
+ */
+function isModuleSyntax(node) {
+  return ts.isImportDeclaration(node) ||
+    ts.isExportDeclaration(node) ||
+    ts.isExportAssignment(node) ||
+    (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+    (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword)
+}
+
 /** Rejects bundles that cannot execute under the restricted ODW loader. */
 function assertLoaderContract(banner, bundle, artefact) {
   const bannerFile = ts.createSourceFile('meta.js', banner, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
-  let bannerModuleSyntax = false
-  const visitBanner = (node) => {
-    if (
-      ts.isImportDeclaration(node) ||
-      ts.isExportDeclaration(node) ||
-      ts.isExportAssignment(node) ||
-      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
-      (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword)
-    ) bannerModuleSyntax = true
-    ts.forEachChild(node, visitBanner)
-  }
-  visitBanner(bannerFile)
-  if (bannerModuleSyntax) reject('BUILD_MODULE_SYNTAX', 'metadata banner contains rejected module syntax')
+  if (findNode(bannerFile, isModuleSyntax)) reject('BUILD_MODULE_SYNTAX', 'metadata banner contains rejected module syntax')
   const metaStatements = bannerFile.statements.filter((statement) => {
     if (!ts.isVariableStatement(statement)) return false
     const declarations = statement.declarationList.declarations
@@ -140,32 +169,13 @@ function assertLoaderContract(banner, bundle, artefact) {
   }
   const sourceFile = ts.createSourceFile('workflow-bundle.js', bundle, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
   const wrappers = new Set(['__esm', '__commonJS', '__toESM', '__require'])
-  /** @type {string | undefined} */
-  let wrapperCall
-  /** @type {boolean} */
-  let moduleSyntax = false
-  const visit = (node) => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && wrappers.has(node.expression.text)) {
-      wrapperCall = node.expression.text
-    }
-    if (
-      ts.isImportDeclaration(node) ||
-      ts.isExportDeclaration(node) ||
-      ts.isExportAssignment(node) ||
-      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
-      (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword)
-    ) {
-      moduleSyntax = true
-    }
-    if (ts.canHaveModifiers(node) && ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
-      moduleSyntax = true
-    }
-    ts.forEachChild(node, visit)
+  const wrapperCall = findLastNode(sourceFile, (node) =>
+    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && wrappers.has(node.expression.text))
+  if (wrapperCall && ts.isCallExpression(wrapperCall) && ts.isIdentifier(wrapperCall.expression)) {
+    reject('BUILD_MODULE_WRAPPER', `bundle contains module wrapper call ${wrapperCall.expression.text}()`)
   }
-  visit(sourceFile)
-  if (wrapperCall) {
-    reject('BUILD_MODULE_WRAPPER', `bundle contains module wrapper call ${wrapperCall}()`)
-  }
+  const moduleSyntax = findNode(sourceFile, (node) => isModuleSyntax(node) ||
+    (ts.canHaveModifiers(node) && ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true))
   if (moduleSyntax) {
     reject('BUILD_MODULE_SYNTAX', 'bundle contains module syntax rejected by ODW')
   }

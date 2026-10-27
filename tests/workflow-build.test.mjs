@@ -83,6 +83,17 @@ test('rejects module wrappers', async (t) => {
   await expectCode(options, 'BUILD_MODULE_WRAPPER')
 })
 
+test('reports the last module wrapper in depth-first traversal order', async (t) => {
+  const options = await fixture(t, {
+    main: 'function __esm(x: unknown) { return x }\nfunction __toESM() {}\nasync function workflowMain() { return __esm(__toESM()) }\n',
+  })
+  await assert.rejects(buildWorkflow(options), (error) =>
+    error instanceof WorkflowBuildError &&
+    error.code === 'BUILD_MODULE_WRAPPER' &&
+    error.message === 'bundle contains module wrapper call __toESM()',
+  'the nested last wrapper must be named in the rejection')
+})
+
 test('allows wrapper and module tokens inside inert strings', async (t) => {
   const options = await fixture(t, {
     main: 'const marker = "__esm( import( import.meta"\nasync function workflowMain() { return marker }\n',
