@@ -47,7 +47,10 @@ The `make lint` gate runs pinned Biome 1.9.4 and Oxlint. Biome enforces a
 maximum cognitive complexity of 9 on the authored CLI (`bin/dakar-review.mjs`)
 and SARIF (`src/workflows/dakar-review/sarif.ts`) sources. Oxlint applies the
 recommended Unicorn and deslop rules to `adapters`, `bin/dakar-review.mjs`,
-`scripts`, and `src`; its pinned versions and sole plugin-rule exception are
+`scripts`, and `src`. The native TypeScript plugin hosts deslop's type-aware
+rules; built-in categories remain off. The
+`adapters/pi/extensions/flex-tier.ts` file is linted but lies outside
+`tsconfig.json`. Pinned versions and the sole plugin-rule exception are
 recorded in [ADR 003](adr-003-linting-strategy.md). Generated bundles and tests
 are outside the Oxlint application target. The generated bundles are checked
 through their source gates and freshness checks, while tests run under
