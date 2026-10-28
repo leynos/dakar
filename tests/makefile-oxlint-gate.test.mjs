@@ -66,6 +66,35 @@ void escaped
   assert.ok(diagnostics.includes('unicorn/no-hex-escape'), diagnostics)
 })
 
+test('the configured Unicorn rules reject the four additional patterns', (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), 'dakar-oxlint-unicorn-'))
+  t.after(() => rmSync(scratch, { recursive: true, force: true }))
+  const fixture = join(scratch, 'additional-unicorn-rules.js')
+  writeFileSync(fixture, `const values = [1, 2]
+setTimeout(() => {})
+const result = String(Number(String(Number('42'))))
+const copy = values.with(-1, 3)
+const amount = parseFloat(result)
+void copy
+void amount
+`)
+
+  const oxlint = join(REPO_ROOT, 'node_modules', '.bin', 'oxlint')
+  const config = join(REPO_ROOT, 'oxlint.config.mjs')
+  const result = spawnSync(oxlint, ['--config', config, '--format', 'json', fixture], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  })
+
+  assert.ifError(result.error)
+  assert.equal(result.signal, null, 'the Unicorn lint process must not be interrupted')
+  assert.notEqual(result.status, 0, 'the additional Unicorn rules must reject the fixture')
+  const diagnostics = JSON.parse(result.stdout).diagnostics
+  for (const rule of ['explicit-timer-delay', 'max-nested-calls', 'no-confusing-array-with', 'prefer-number-coercion']) {
+    assert.ok(diagnostics.some((diagnostic) => diagnostic.code === `unicorn(${rule})`), `${rule} must report its violation`)
+  }
+})
+
 test('the configured TypeScript rules reject floating promises and accept awaited promises', (t) => {
   const oxlint = join(REPO_ROOT, 'node_modules', '.bin', 'oxlint')
   const config = join(REPO_ROOT, 'oxlint.config.mjs')

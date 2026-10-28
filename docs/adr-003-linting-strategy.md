@@ -42,10 +42,14 @@ Oxlint release and `ai-deslop`'s recommended configuration. The package pins are
 The native `typescript` plugin is enabled only to host deslop's `typescript/*`
 rules; all built-in categories remain off. Type-aware analysis is enabled by
 deslop's `typeAware` configuration and the pinned `oxlint-tsgolint`. The
-explicit Unicorn list tracks upstream `eslint-plugin-unicorn` recommended rules
-implemented by the pinned Oxlint. `adapters/pi/extensions/flex-tier.ts` is
-linted but lies outside `tsconfig.json`, so it is outside that TypeScript
-project for type-aware analysis.
+explicit Unicorn list tracks [upstream recommended rules][unicorn-rules]
+implemented by the [pinned Oxlint release][oxlint-rules].
+`adapters/pi/extensions/flex-tier.ts` is linted but lies outside
+`tsconfig.json`, so it is outside that TypeScript project for type-aware
+analysis.
+
+[unicorn-rules]: https://github.com/sindresorhus/eslint-plugin-unicorn/tree/v65.0.0#rules
+[oxlint-rules]: https://github.com/oxc-project/oxc/blob/oxlint_v1.82.0/npm/oxlint/configuration_schema.json
 
 Unicorn's `prefer-reflect-apply` and deslop's `no-reflect-apply` prescribe
 opposite implementations. Keep Unicorn's recommendation and disable only
