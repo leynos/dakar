@@ -48,7 +48,7 @@ implemented by the [pinned Oxlint release][oxlint-rules].
 `tsconfig.json`, so it is outside that TypeScript project for type-aware
 analysis.
 
-[unicorn-rules]: https://github.com/sindresorhus/eslint-plugin-unicorn/tree/v65.0.0#rules
+[unicorn-rules]: https://github.com/sindresorhus/eslint-plugin-unicorn/tree/v66.0.0#rules
 [oxlint-rules]: https://github.com/oxc-project/oxc/blob/oxlint_v1.82.0/npm/oxlint/configuration_schema.json
 
 Unicorn's `prefer-reflect-apply` and deslop's `no-reflect-apply` prescribe
