@@ -7469,7 +7469,7 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
     result = fetchResult();
   }
   if (result.status === 0) return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
-  throw new Error(result.stderr.trim() || result.stdout.trim() || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`);
+  throw new Error(result.error?.message || result.stderr.trim() || result.stdout.trim() || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`);
 }
 async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
   process.stderr.write(

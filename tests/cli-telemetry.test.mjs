@@ -185,6 +185,26 @@ if (mode === 'result') { process.stderr.write('result fetch failed\\n'); process
   assert.match(completed.stderr, /"error":\s*"result fetch failed"/u)
 })
 
+test('a missing ODW executable during result retrieval reports the spawn error', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+import { unlinkSync } from 'node:fs'
+const mode = process.argv[2]
+if (mode === 'run') process.stdout.write('started run 20260719-000000-fedcba\\n')
+if (mode === 'logs') unlinkSync(process.argv[1])
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
+    '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'])
+  assert.equal(completed.status, 1, 'a missing result executable must fail the CLI')
+  assert.equal(completed.stdout, '', 'a failed result fetch must not write a result')
+  assert.match(completed.stderr, /"stage":\s*"odw-result"/u, 'the failure must retain the result-stage envelope')
+  assert.match(completed.stderr, /ENOENT/u, 'the envelope must explain the missing executable')
+  assert.doesNotMatch(completed.stderr, /Cannot read properties of (?:null|undefined)/u, 'missing spawn streams must not mask the actual failure')
+})
+
 test('an outer timeout below the retry worst case warns on stderr', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
   t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
