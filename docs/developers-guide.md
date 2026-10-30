@@ -51,8 +51,9 @@ recommended Unicorn and deslop rules to `adapters`, `bin/dakar-review.mjs`,
 rules; built-in categories remain off. The
 `adapters/pi/extensions/flex-tier.ts` file is linted but lies outside
 `tsconfig.json`. Pinned versions and the sole plugin-rule exception are
-recorded in [ADR 003](adr-003-linting-strategy.md). Generated bundles and tests
-are outside the Oxlint application target. The generated bundles are checked
+recorded in [ADR 003](adr-003-linting-strategy.md), whose dated addendum
+records the TypeScript plugin configuration. Generated bundles and tests are
+outside the Oxlint application target. The generated bundles are checked
 through their source gates and freshness checks, while tests run under
 `make test`.
 

@@ -11,6 +11,13 @@ import assert from 'node:assert/strict'
 
 import { repoRoot, cliPath, spawnCli, spawnCliSync as spawnSync, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
 
+/** Parse the single bounded result-poll event the CLI reports on stderr. */
+function pollEvent(stderr) {
+  const line = stderr.split('\n').find((candidate) => candidate.includes('"event":"odw_result_poll"'))
+  assert.ok(line, 'the CLI must report a bounded result-poll event')
+  return JSON.parse(line)
+}
+
 test('a hung log follow still fetches and records the completed result', (t) => {
   const { tempRoot, targetRepo, base, head } = setUpRecordRepo()
   t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
@@ -105,6 +112,15 @@ if (mode === 'run') {
   assert.match(result.stderr, /log follow timed out after 1s; attempting one result fetch/u)
   assert.match(result.stderr, /"stage":\s*"odw-logs"/u)
   assert.match(result.stderr, /"error":\s*"grace fetch exploded"/u)
+  assert.match(result.stderr, /"terminal": "failed"/u, 'the failure envelope carries the terminal poll state')
+  assert.match(result.stderr, /"category": "nonzero_exit"/u, 'the failure envelope carries a bounded category')
+  const poll = pollEvent(result.stderr)
+  assert.equal(poll.terminal, 'failed')
+  assert.equal(poll.category, 'nonzero_exit')
+  assert.ok(poll.attempts >= 2, 'the grace window retries the result fetch')
+  assert.equal(poll.failures, poll.attempts)
+  assert.match(result.stderr, new RegExp(`"attempts": ${poll.attempts}\\b`, 'u'),
+    'the failure envelope carries the attempt count')
 })
 
 test('a timed-out log follow polls again when its first result fetch is unavailable', (t) => {
@@ -147,6 +163,11 @@ if (values[0] === 'run') {
   const output = JSON.parse(completed.stdout)
   assert.equal(output.recorded.ok, true)
   assert.equal(output.recorded.headCommit, head)
+  const poll = pollEvent(completed.stderr)
+  assert.equal(poll.attempts, 2, 'the successful poll reports every attempt')
+  assert.equal(poll.failures, 1, 'the successful poll reports the retried failure')
+  assert.equal(poll.terminal, 'completed')
+  assert.equal(poll.category, 'none')
 })
 
 test('a non-timeout log failure warns and still fetches a successful result', (t) => {
@@ -183,6 +204,15 @@ if (mode === 'result') { process.stderr.write('result fetch failed\\n'); process
   assert.equal(completed.stdout, '')
   assert.match(completed.stderr, /"stage":\s*"odw-result"/u)
   assert.match(completed.stderr, /"error":\s*"result fetch failed"/u)
+  assert.match(completed.stderr, /"terminal": "failed"/u, 'the failure envelope carries the terminal poll state')
+  assert.match(completed.stderr, /"category": "nonzero_exit"/u, 'the failure envelope carries a bounded category')
+  const poll = pollEvent(completed.stderr)
+  assert.equal(poll.terminal, 'failed')
+  assert.equal(poll.category, 'nonzero_exit')
+  assert.ok(poll.attempts >= 2, 'the poll retries until its deadline')
+  assert.equal(poll.failures, poll.attempts)
+  assert.match(completed.stderr, new RegExp(`"attempts": ${poll.attempts}\\b`, 'u'),
+    'the failure envelope reports the same attempt count as the event')
 })
 
 test('a missing ODW executable during result retrieval reports the spawn error', (t) => {
@@ -203,6 +233,11 @@ if (mode === 'logs') unlinkSync(process.argv[1])
   assert.match(completed.stderr, /"stage":\s*"odw-result"/u, 'the failure must retain the result-stage envelope')
   assert.match(completed.stderr, /ENOENT/u, 'the envelope must explain the missing executable')
   assert.doesNotMatch(completed.stderr, /Cannot read properties of (?:null|undefined)/u, 'missing spawn streams must not mask the actual failure')
+  assert.match(completed.stderr, /"category": "spawn_error"/u, 'a missing executable is classified as a spawn error')
+  const poll = pollEvent(completed.stderr)
+  assert.equal(poll.category, 'spawn_error')
+  assert.ok(poll.attempts >= 2, 'the spawn error is retried until its deadline')
+  assert.equal(poll.failures, poll.attempts)
 })
 
 test('an outer timeout below the retry worst case warns on stderr', (t) => {

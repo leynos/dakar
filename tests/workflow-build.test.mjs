@@ -9,7 +9,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import fc from 'fast-check'
 import ts from 'typescript'
-import { buildWorkflow, isPackageInput, WorkflowBuildError } from '../scripts/build-workflow.mjs'
+import {
+  buildWorkflow,
+  findLastNode,
+  findModuleWrapperName,
+  isPackageInput,
+  WorkflowBuildError,
+} from '../scripts/build-workflow.mjs'
 
 async function fixture(t, { meta = 'export const meta = {}\n', main, modules = {} }) {
   const directory = await mkdtemp(path.join(tmpdir(), 'dakar-workflow-build-'))
@@ -92,6 +98,61 @@ test('reports the last module wrapper in depth-first traversal order', async (t)
     error.code === 'BUILD_MODULE_WRAPPER' &&
     error.message === 'bundle contains module wrapper call __toESM()',
   'the nested last wrapper must be named in the rejection')
+})
+
+const WRAPPER_NAMES = ['__esm', '__commonJS', '__toESM', '__require']
+const PLAIN_NAMES = ['helper', 'wrap', 'transform']
+
+/** Arbitrary nested call expression, bounded by `depth`. */
+function callExpressionArb(depth) {
+  const leaf = fc.constantFrom('0', '1', 'name')
+  if (depth === 0) return leaf
+  return fc.oneof(
+    leaf,
+    fc.record({
+      name: fc.constantFrom(...WRAPPER_NAMES, ...PLAIN_NAMES),
+      args: fc.array(callExpressionArb(depth - 1), { maxLength: 3 }),
+    }).map(({ name, args }) => `${name}(${args.join(', ')})`),
+  )
+}
+
+/** Collect module-wrapper call names in pre-order depth-first traversal. */
+function wrapperNamesInDepthFirstOrder(node, found = []) {
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && WRAPPER_NAMES.includes(node.expression.text)) {
+    found.push(node.expression.text)
+  }
+  ts.forEachChild(node, (child) => { wrapperNamesInDepthFirstOrder(child, found) })
+  return found
+}
+
+/** Collect every node in pre-order depth-first traversal. */
+function nodesInDepthFirstOrder(node, found = []) {
+  found.push(node)
+  ts.forEachChild(node, (child) => { nodesInDepthFirstOrder(child, found) })
+  return found
+}
+
+/** Parse one generated expression as the body of a constant declaration. */
+function parseExpression(expression) {
+  return ts.createSourceFile('probe.js', `const value = ${expression}\n`, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+}
+
+test('findModuleWrapperName reports the last wrapper in reference depth-first order', () => {
+  fc.assert(fc.property(callExpressionArb(3), (expression) => {
+    const sourceFile = parseExpression(expression)
+    const expected = wrapperNamesInDepthFirstOrder(sourceFile).at(-1)
+    assert.equal(findModuleWrapperName(sourceFile), expected, `generated source: ${expression}`)
+  }), { numRuns: 200 })
+})
+
+test('findLastNode returns the last match in reference depth-first order', () => {
+  const matches = (node) => ts.isIdentifier(node) && node.text.startsWith('__')
+  fc.assert(fc.property(callExpressionArb(3), (expression) => {
+    const sourceFile = parseExpression(expression)
+    const expected = nodesInDepthFirstOrder(sourceFile).filter(matches).at(-1)
+    const actual = findLastNode(sourceFile, matches)
+    assert.equal(actual?.pos, expected?.pos, `generated source: ${expression}`)
+  }), { numRuns: 200 })
 })
 
 test('allows wrapper and module tokens inside inert strings', async (t) => {

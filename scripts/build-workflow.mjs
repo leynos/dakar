@@ -113,11 +113,13 @@ function findNode(node, predicate) {
 
 /**
  * Find the last matching node in the same depth-first traversal order.
+ *
+ * @internal Exported so the ordering invariant can be property-tested.
  * @param {import('typescript').Node} node - root node to inspect.
  * @param {(node: import('typescript').Node) => boolean} predicate - matching condition.
  * @returns {import('typescript').Node | undefined} last matching node, if present.
  */
-function findLastNode(node, predicate) {
+export function findLastNode(node, predicate) {
   /** @type {import('typescript').Node[]} */
   const children = []
   ts.forEachChild(node, (child) => { children.push(child) })
@@ -270,10 +272,12 @@ function moduleWrapperName(node) {
 /**
  * Find the last module wrapper call in depth-first traversal order, so the
  * reported name matches the innermost surviving wrapper.
+ *
+ * @internal Exported so the reported-wrapper contract can be property-tested.
  * @param {import('typescript').SourceFile} sourceFile - parsed workflow bundle.
  * @returns {string | undefined} the last wrapper name, if any survives.
  */
-function findModuleWrapperName(sourceFile) {
+export function findModuleWrapperName(sourceFile) {
   const call = findLastNode(sourceFile, (node) => moduleWrapperName(node) !== undefined)
   if (call === undefined) return
   return moduleWrapperName(call)
