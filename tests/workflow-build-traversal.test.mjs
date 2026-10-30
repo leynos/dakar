@@ -1,4 +1,8 @@
-/** @file Property-test the workflow bundle's depth-first AST traversal order. */
+/**
+ * @file Property-test the workflow bundle's depth-first AST traversal order.
+ *
+ * @module
+ */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'

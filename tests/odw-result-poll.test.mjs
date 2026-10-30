@@ -1,7 +1,12 @@
-/** @file Unit-test the injected kernel of the ODW result poller. */
+/**
+ * @file Unit-test the injected kernel of the ODW result poller.
+ *
+ * @module
+ */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import fc from 'fast-check'
 
 import { pollOdwResult } from '../scripts/odw-result-poll.mjs'
 
@@ -9,6 +14,18 @@ import { pollOdwResult } from '../scripts/odw-result-poll.mjs'
 const SUCCEEDED = { status: 0, signal: null, stdout: '{"ok":true}', stderr: '', error: undefined }
 /** A failed `odw result` fetch. */
 const REFUSED = { status: 3, signal: null, stdout: '', stderr: 'not ready', error: undefined }
+
+/** Arbitrary fetch sequence, each result carrying a distinct identity. */
+const fetchSequenceArb = fc.array(
+  fc.record({
+    status: fc.constantFrom(0, 3),
+    stdout: fc.constant(''),
+    stderr: fc.constant('not ready'),
+  }),
+  { maxLength: 20 },
+).map((results) => results.map((result, index) => ({
+  ...result, id: index, signal: null, error: undefined,
+})))
 
 /**
  * Run one poll against a controlled clock.
@@ -18,14 +35,19 @@ const REFUSED = { status: 3, signal: null, stdout: '', stderr: 'not ready', erro
  *
  * @param {Array<object>} fetchResults - fetch results to serve, in order.
  * @param {number} timeoutMs - polling deadline in milliseconds.
- * @returns {Promise<object>} the poll outcome plus the recorded sleep delays.
+ * @returns {Promise<object>} the poll outcome, the recorded sleep delays and the served fetches.
  */
 async function runPoll(fetchResults, timeoutMs) {
   const fetches = [...fetchResults]
   const delays = []
+  const served = []
   let milliseconds = 0
   const outcome = await pollOdwResult({
-    fetchResult: () => fetches.shift() ?? REFUSED,
+    fetchResult: () => {
+      const next = fetches.shift() ?? REFUSED
+      served.push(next)
+      return next
+    },
     now: () => milliseconds,
     sleepFn: async (delay) => {
       delays.push(delay)
@@ -33,7 +55,7 @@ async function runPoll(fetchResults, timeoutMs) {
     },
     timeoutMs,
   })
-  return { ...outcome, delays }
+  return { ...outcome, delays, served }
 }
 
 test('the first successful fetch is returned without sleeping', async () => {
@@ -63,4 +85,19 @@ test('a spawn error is counted as a failed attempt', async () => {
   assert.equal(result.error.message, 'ENOENT')
   assert.deepEqual(poll, { attempts: 1, failures: 1, startedAt: 0 })
   assert.deepEqual(delays, [], 'an expired deadline forbids further attempts')
+})
+
+test('the polling invariants hold over generated deadlines and fetch sequences', async () => {
+  await fc.assert(fc.asyncProperty(fetchSequenceArb, fc.nat({ max: 60_000 }), async (fetchResults, timeoutMs) => {
+    const { result, poll, delays, served } = await runPoll(fetchResults, timeoutMs)
+    let totalDelay = 0
+    for (const delay of delays) totalDelay += delay
+
+    assert.ok(poll.attempts >= 1, 'the first attempt is always made')
+    assert.ok(poll.failures <= poll.attempts, 'failures cannot exceed attempts')
+    assert.equal(served.length, poll.attempts, 'every attempt performs exactly one fetch')
+    assert.equal(result, served.at(-1), 'the returned result is the final fetch served')
+    assert.ok(delays.every((delay) => delay >= 0 && delay <= 1000), 'each delay is bounded by one second')
+    assert.ok(totalDelay <= timeoutMs, 'sleeping never outlasts the deadline')
+  }), { numRuns: 200 })
 })

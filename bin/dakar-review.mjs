@@ -873,21 +873,11 @@ function resultFailureCategory(result) {
  * Emit one bounded structured event for a finished result poll.
  *
  * @param {string} runId - ODW run identifier.
- * @param {{ attempts: number, failures: number, startedAt: number }} poll - poll counters.
- * @param {'completed' | 'failed'} terminal - terminal state of the poll.
- * @param {string} category - fixed failure category, or `none` on success.
+ * @param {object} metrics - the outcome's poll metrics, already built once.
  * @returns {void}
  */
-function reportResultPoll(runId, poll, terminal, category) {
-  process.stderr.write(`${JSON.stringify({
-    event: 'odw_result_poll',
-    runId,
-    attempts: poll.attempts,
-    failures: poll.failures,
-    elapsedMs: Date.now() - poll.startedAt,
-    terminal,
-    category,
-  })}\n`)
+function reportResultPoll(runId, metrics) {
+  process.stderr.write(`${JSON.stringify({ event: 'odw_result_poll', runId, ...metrics })}\n`)
 }
 
 /**
@@ -904,18 +894,23 @@ function resultFailureMessage(result, options, runId) {
 }
 
 /**
- * Build the bounded poll metrics carried by a failed retrieval.
+ * Build one outcome's bounded poll metrics.
+ *
+ * The caller builds these once per terminal outcome and reuses the same object
+ * for the poll event and any failure envelope, so the two outputs cannot
+ * disagree about `elapsedMs` or the counters.
  *
  * @param {{ attempts: number, failures: number, startedAt: number }} poll - poll counters.
- * @param {string} category - fixed failure category.
- * @returns {{ attempts: number, failures: number, elapsedMs: number, terminal: string, category: string }} the failure metrics.
+ * @param {'completed' | 'failed'} terminal - terminal state of the poll.
+ * @param {string} category - fixed failure category, or `none` on success.
+ * @returns {{ attempts: number, failures: number, elapsedMs: number, terminal: string, category: string }} the outcome metrics.
  */
-function failedPollMetrics(poll, category) {
+function pollMetrics(poll, terminal, category) {
   return {
     attempts: poll.attempts,
     failures: poll.failures,
     elapsedMs: Date.now() - poll.startedAt,
-    terminal: 'failed',
+    terminal,
     category,
   }
 }
@@ -949,19 +944,20 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
     timeoutMs,
   })
   if (result.status !== 0) {
-    const category = resultFailureCategory(result)
-    reportResultPoll(runId, poll, 'failed', category)
-    throw new OdwResultError(resultFailureMessage(result, options, runId), failedPollMetrics(poll, category))
+    const metrics = pollMetrics(poll, 'failed', resultFailureCategory(result))
+    reportResultPoll(runId, metrics)
+    throw new OdwResultError(resultFailureMessage(result, options, runId), metrics)
   }
   let output
   try {
     output = finalizeWorkflowResult(extractJson(result.stdout), workflowArgs)
   } catch (error) {
     poll.failures += 1
-    reportResultPoll(runId, poll, 'failed', 'invalid_output')
-    throw new OdwResultError(`invalid ODW result: ${error.message}`, failedPollMetrics(poll, 'invalid_output'))
+    const metrics = pollMetrics(poll, 'failed', 'invalid_output')
+    reportResultPoll(runId, metrics)
+    throw new OdwResultError(`invalid ODW result: ${error.message}`, metrics)
   }
-  reportResultPoll(runId, poll, 'completed', 'none')
+  reportResultPoll(runId, pollMetrics(poll, 'completed', 'none'))
   return output
 }
 

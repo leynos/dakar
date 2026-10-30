@@ -7492,27 +7492,19 @@ function resultFailureCategory(result) {
   if (result.signal) return "terminated";
   return "nonzero_exit";
 }
-function reportResultPoll(runId, poll, terminal, category) {
-  process.stderr.write(`${JSON.stringify({
-    event: "odw_result_poll",
-    runId,
-    attempts: poll.attempts,
-    failures: poll.failures,
-    elapsedMs: Date.now() - poll.startedAt,
-    terminal,
-    category
-  })}
+function reportResultPoll(runId, metrics) {
+  process.stderr.write(`${JSON.stringify({ event: "odw_result_poll", runId, ...metrics })}
 `);
 }
 function resultFailureMessage(result, options, runId) {
   return result.error?.message || result.stderr.trim() || result.stdout.trim() || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`;
 }
-function failedPollMetrics(poll, category) {
+function pollMetrics(poll, terminal, category) {
   return {
     attempts: poll.attempts,
     failures: poll.failures,
     elapsedMs: Date.now() - poll.startedAt,
-    terminal: "failed",
+    terminal,
     category
   };
 }
@@ -7529,19 +7521,20 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
     timeoutMs
   });
   if (result.status !== 0) {
-    const category = resultFailureCategory(result);
-    reportResultPoll(runId, poll, "failed", category);
-    throw new OdwResultError(resultFailureMessage(result, options, runId), failedPollMetrics(poll, category));
+    const metrics = pollMetrics(poll, "failed", resultFailureCategory(result));
+    reportResultPoll(runId, metrics);
+    throw new OdwResultError(resultFailureMessage(result, options, runId), metrics);
   }
   let output;
   try {
     output = finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
   } catch (error2) {
     poll.failures += 1;
-    reportResultPoll(runId, poll, "failed", "invalid_output");
-    throw new OdwResultError(`invalid ODW result: ${error2.message}`, failedPollMetrics(poll, "invalid_output"));
+    const metrics = pollMetrics(poll, "failed", "invalid_output");
+    reportResultPoll(runId, metrics);
+    throw new OdwResultError(`invalid ODW result: ${error2.message}`, metrics);
   }
-  reportResultPoll(runId, poll, "completed", "none");
+  reportResultPoll(runId, pollMetrics(poll, "completed", "none"));
   return output;
 }
 function resultFailureEnvelope(stage, runId, error2) {
