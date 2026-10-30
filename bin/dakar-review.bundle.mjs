@@ -404,6 +404,28 @@ function warmReviewedContextIndex(repoRoot, prepared, boundary = CONTEXT_WARMUP_
 
 // bin/dakar-review.mjs
 import { runDeterministicGates } from "../scripts/deterministic-gates.mjs";
+
+// scripts/odw-result-poll.mjs
+function recordResultFetch(poll, result) {
+  poll.attempts += 1;
+  if (result.status !== 0) poll.failures += 1;
+  return result;
+}
+async function pollOdwResult({ fetchResult, now, sleepFn, timeoutMs }) {
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
+  const poll = { attempts: 0, failures: 0, startedAt };
+  let result = recordResultFetch(poll, fetchResult());
+  while (result.status !== 0 && now() < deadline) {
+    const remainingMilliseconds = deadline - now();
+    const delayMilliseconds = Math.min(1e3, Math.max(0, remainingMilliseconds));
+    await sleepFn(delayMilliseconds);
+    result = recordResultFetch(poll, fetchResult());
+  }
+  return { result, poll };
+}
+
+// bin/dakar-review.mjs
 import { parseReviewPolicy, resolveReviewConfig } from "../scripts/review-config.mjs";
 
 // src/workflows/dakar-review/pricing.ts
@@ -7465,11 +7487,6 @@ var OdwResultError = class extends Error {
     this.poll = poll;
   }
 };
-function recordResultFetch(poll, result) {
-  poll.attempts += 1;
-  if (result.status !== 0) poll.failures += 1;
-  return result;
-}
 function resultFailureCategory(result) {
   if (result.error) return "spawn_error";
   if (result.signal) return "terminated";
@@ -7490,34 +7507,42 @@ function reportResultPoll(runId, poll, terminal, category) {
 function resultFailureMessage(result, options, runId) {
   return result.error?.message || result.stderr.trim() || result.stdout.trim() || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`;
 }
-async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1e3) {
-  const odwBin = options.odwBin || "odw";
-  const deadline = Date.now() + timeoutMs;
-  const poll = { attempts: 0, failures: 0, startedAt: Date.now() };
-  const fetchResult = () => recordResultFetch(poll, spawnSync2(odwBin, buildRunScopedArgs("result", options, runId), {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    env: odwEnv()
-  }));
-  let result = fetchResult();
-  while (result.status !== 0 && Date.now() < deadline) {
-    const remainingMilliseconds = Math.max(0, deadline - Date.now());
-    await sleep(Math.min(1e3, remainingMilliseconds));
-    result = fetchResult();
-  }
-  if (result.status === 0) {
-    reportResultPoll(runId, poll, "completed", "none");
-    return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
-  }
-  const category = resultFailureCategory(result);
-  reportResultPoll(runId, poll, "failed", category);
-  throw new OdwResultError(resultFailureMessage(result, options, runId), {
+function failedPollMetrics(poll, category) {
+  return {
     attempts: poll.attempts,
     failures: poll.failures,
     elapsedMs: Date.now() - poll.startedAt,
     terminal: "failed",
     category
+  };
+}
+async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1e3) {
+  const odwBin = options.odwBin || "odw";
+  const { result, poll } = await pollOdwResult({
+    fetchResult: () => spawnSync2(odwBin, buildRunScopedArgs("result", options, runId), {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: odwEnv()
+    }),
+    now: Date.now,
+    sleepFn: sleep,
+    timeoutMs
   });
+  if (result.status !== 0) {
+    const category = resultFailureCategory(result);
+    reportResultPoll(runId, poll, "failed", category);
+    throw new OdwResultError(resultFailureMessage(result, options, runId), failedPollMetrics(poll, category));
+  }
+  let output;
+  try {
+    output = finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
+  } catch (error2) {
+    poll.failures += 1;
+    reportResultPoll(runId, poll, "failed", "invalid_output");
+    throw new OdwResultError(`invalid ODW result: ${error2.message}`, failedPollMetrics(poll, "invalid_output"));
+  }
+  reportResultPoll(runId, poll, "completed", "none");
+  return output;
 }
 function resultFailureEnvelope(stage, runId, error2) {
   const poll = error2 instanceof OdwResultError ? error2.poll : {};

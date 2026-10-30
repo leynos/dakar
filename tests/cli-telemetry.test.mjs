@@ -240,6 +240,36 @@ if (mode === 'logs') unlinkSync(process.argv[1])
   assert.equal(poll.failures, poll.attempts)
 })
 
+test('a zero-exit result with malformed JSON reports one failed outcome', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const mode = process.argv[2]
+if (mode === 'run') process.stdout.write('started run 20260719-000000-fedcba\\n')
+if (mode === 'result') process.stdout.write('this is not the result JSON\\n')
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
+    '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'])
+  assert.equal(completed.status, 1, 'an unusable result payload must fail the CLI')
+  assert.equal(completed.stdout, '', 'an unusable result payload must not write a result')
+  assert.match(completed.stderr, /"stage":\s*"odw-result"/u)
+  assert.match(completed.stderr, /"error":\s*"invalid ODW result:/u,
+    'the envelope explains that the payload could not be parsed')
+  assert.match(completed.stderr, /"terminal": "failed"/u, 'the envelope carries the failed poll state')
+  assert.match(completed.stderr, /"category": "invalid_output"/u, 'a malformed payload is its own category')
+  const poll = pollEvent(completed.stderr)
+  assert.equal(poll.terminal, 'failed', 'the event must not claim a completed poll')
+  assert.equal(poll.category, 'invalid_output')
+  assert.equal(poll.attempts, 1, 'a zero-exit fetch is not retried')
+  assert.equal(poll.failures, 1, 'the parse failure counts as one failed retrieval')
+  assert.match(completed.stderr, new RegExp(`"attempts": ${poll.attempts}\\b`, 'u'),
+    'the failure envelope reports the same attempt count as the event')
+  assert.match(completed.stderr, new RegExp(`"failures": ${poll.failures}\\b`, 'u'),
+    'the failure envelope reports the same failure count as the event')
+})
+
 test('an outer timeout below the retry worst case warns on stderr', (t) => {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
   t.after(() => rmSync(tempRoot, { recursive: true, force: true }))

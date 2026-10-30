@@ -683,10 +683,13 @@ the CLI follows the log stream and then polls `odw result`, retrying at most
 once per second until `--timeout` expires and performing a final fetch at the
 deadline. It reports one bounded `odw_result_poll` event on standard error with
 the run id, attempt and failure counts, elapsed time, terminal state, and a
-fixed failure category (`spawn_error`, `terminated`, or `nonzero_exit`; `none`
-on success). If no result is available, the CLI exits non-zero with a JSON
-error carrying `stage: "odw-result"`, the same poll metrics, and the underlying
-process error, such as `ENOENT` when the ODW executable is missing. A log
+fixed failure category (`spawn_error`, `terminated`, `nonzero_exit`, or
+`invalid_output`; `none` on success). A `result` invocation that exits zero but
+returns malformed or unusable JSON is a failed retrieval, reported with the
+`invalid_output` category rather than a completed poll. If no result is
+available, the CLI exits non-zero with a JSON error carrying
+`stage: "odw-result"`, the same poll metrics, and the underlying process or
+parsing error, such as `ENOENT` when the ODW executable is missing. A log
 stream that hangs until the timeout receives a five-second result-recovery
 fetch instead; if that also fails, the stage is `odw-logs`.
 
