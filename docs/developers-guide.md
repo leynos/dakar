@@ -354,6 +354,31 @@ standard error, then fetches `odw result <run-id>` for the final output. Keep
 all progress, run ids, and log-follow warnings on standard error so standard
 output remains reserved for JSON or Markdown result data.
 
+### ODW result polling
+
+Result retrieval is split across two units with an explicit boundary.
+`pollOdwResult()` in `scripts/odw-result-poll.mjs` is the read-only polling
+kernel: it receives the result fetcher, a millisecond clock and a sleeper as
+injected dependencies, so it spawns no process, reads no wall clock, emits no
+telemetry and builds no failure envelope. It always performs one immediate
+fetch, retries at most once a second while the fetch fails, clamps the final
+delay to the remaining time, and stops at the deadline. It returns the final
+fetch alongside bounded metrics (`attempts`, `failures`, `startedAt`).
+
+`waitForOdwResult()` in `bin/dakar-review.mjs` is the command unit. It supplies
+the `odw result` fetcher and the real clock and sleeper, finalizes the payload,
+and owns everything the kernel must not do: it builds one metrics object per
+terminal outcome, emits the single `odw_result_poll` event from it, and reuses
+the same object in the failure envelope so the event and the envelope cannot
+disagree about `elapsedMs`. A zero exit status with an unusable payload fails
+the retrieval with `category: "invalid_output"` rather than reporting a
+completed poll.
+
+Keep the seam testable: polling regressions belong in
+`tests/odw-result-poll.test.mjs`, which combines boundary tables with a bounded
+`fast-check` property over the injected clock and sleeper, while command
+recording and telemetry regressions belong in `tests/cli-telemetry.test.mjs`.
+
 A CLI test that exercises a review must run against its own fixture repository,
 never the checkout under test. `setUpRecordRepo` in
 `tests/cli-test-support.mjs` builds one: a base commit, a second commit ahead

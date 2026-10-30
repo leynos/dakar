@@ -34,7 +34,15 @@ import * as z from 'zod'
 
 /** ODW's documented default per-model-call timeout in seconds. */
 const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
+/** JSON replacer that leaves every value unchanged. */
 const jsonReplacer = (_key, value) => value
+
+/**
+ * Serialise a value as two-space-indented JSON.
+ *
+ * @param {unknown} value - value to serialise.
+ * @returns {string} the indented JSON text.
+ */
 const prettyJson = (value) => JSON.stringify(value, jsonReplacer, 2)
 const jsonRecordSchema = z.record(z.string(), z.json())
 const recordInputSchema = z.object({ metrics: jsonRecordSchema.optional() }).loose()

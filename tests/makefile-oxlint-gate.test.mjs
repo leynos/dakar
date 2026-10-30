@@ -98,6 +98,13 @@ void amount
 test('the configured TypeScript rules reject floating promises and accept awaited promises', (t) => {
   const oxlint = join(REPO_ROOT, 'node_modules', '.bin', 'oxlint')
   const config = join(REPO_ROOT, 'oxlint.config.mjs')
+  /**
+   * Run Oxlint over one TypeScript fixture in a scratch project.
+   *
+   * @param {string} name - fixture file name within the scratch project.
+   * @param {string} source - TypeScript source to lint.
+   * @returns {import('node:child_process').SpawnSyncReturns<string>} the Oxlint result.
+   */
   const runFixture = (name, source) => {
     const scratch = mkdtempSync(join(tmpdir(), 'dakar-oxlint-typescript-'))
     t.after(() => rmSync(scratch, { recursive: true, force: true }))

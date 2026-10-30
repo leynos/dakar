@@ -52,6 +52,12 @@ const modelSpecSchema = z.strictObject({
   reasoning: reasoningSchema,
   role: z.string().optional(),
 })
+/**
+ * Treat an omitted value as absent and discard an invalid one.
+ *
+ * @param schema - schema applied to a supplied value.
+ * @returns a preprocessed optional schema.
+ */
 function optionalParsed<Schema extends z.ZodType>(schema: Schema) {
   return z.preprocess((candidate) => {
     const parsed = schema.safeParse(candidate)
@@ -300,17 +306,18 @@ const EMPTY_REVIEW_POLICY: Readonly<NormalizedReviewPolicy> = Object.freeze({
   ignoredKeys: Object.freeze([]),
 })
 
+/** A validated review policy and the flag recording whether the hand-off was usable. */
+interface ConfiguredReviewPolicy {
+  policy: Readonly<NormalizedReviewPolicy>
+  valid: boolean
+}
+
 /**
  * Validate the normalized review-policy hand-off supplied by the CLI.
  *
  * @param value - untrusted workflow argument.
  * @returns Frozen policy and a validity flag; omission is a valid empty policy.
  */
-interface ConfiguredReviewPolicy {
-  policy: Readonly<NormalizedReviewPolicy>
-  valid: boolean
-}
-
 function configuredReviewPolicy(value: JsonValue | undefined): ConfiguredReviewPolicy {
   if (value === undefined) return { policy: EMPTY_REVIEW_POLICY, valid: true }
   const parsed = reviewPolicySchema.safeParse(value)

@@ -388,6 +388,13 @@ export function createUsageScanner({ maxLineChars = MAX_TELEMETRY_LINE_CHARS } =
   let overflowing = false
   let overflowContainsMarker = false
 
+    /**
+   * Consume one stream fragment, splitting complete lines and tracking overflow.
+   *
+   * @param {string} text - fragment decoded from the stream.
+   * @param {boolean} [final] - whether the stream has ended.
+   * @returns {void}
+   */
   const consume = (text, final = false) => {
     const fragments = text.split('\n')
     const completeCount = final ? fragments.length : fragments.length - 1

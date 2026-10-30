@@ -26,6 +26,12 @@ const mappingSchema = z.record(z.string(), z.json())
 const yamlErrorSchema = z.looseObject({
   mark: z.looseObject({ line: z.number(), column: z.number() }).optional(),
 })
+/**
+ * Serialise a value as two-space-indented JSON.
+ *
+ * @param {unknown} value - value to serialise.
+ * @returns {string} the indented JSON text.
+ */
 const jsonIndent = (value) => JSON.stringify(value, (_key, nested) => nested, 2)
 
 /** Tests whether a parsed YAML value is a mapping rather than an array. */

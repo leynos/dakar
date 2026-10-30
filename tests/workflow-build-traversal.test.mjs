@@ -69,6 +69,7 @@ test('findModuleWrapperName reports the last wrapper in reference depth-first or
 })
 
 test('findLastNode returns the last match in reference depth-first order', () => {
+  /** Whether a node is a `__`-prefixed identifier. */
   const matches = (node) => ts.isIdentifier(node) && node.text.startsWith('__')
   fc.assert(fc.property(callExpressionArb(3), (expression) => {
     const sourceFile = parseExpression(expression)

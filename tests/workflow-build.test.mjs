@@ -11,6 +11,13 @@ import fc from 'fast-check'
 import ts from 'typescript'
 import { buildWorkflow, isPackageInput, WorkflowBuildError } from '../scripts/build-workflow.mjs'
 
+/**
+ * Write a throwaway workflow source tree and return build options for it.
+ *
+ * @param {import('node:test').TestContext} t - test context owning cleanup.
+ * @param {{ meta?: string, main: string, modules?: Record<string, string> }} source - fixture sources.
+ * @returns {Promise<object>} build options pointing at the fixture.
+ */
 async function fixture(t, { meta = 'export const meta = {}\n', main, modules = {} }) {
   const directory = await mkdtemp(path.join(tmpdir(), 'dakar-workflow-build-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
@@ -28,6 +35,13 @@ async function fixture(t, { meta = 'export const meta = {}\n', main, modules = {
   }
 }
 
+/**
+ * Assert that the build rejects with a specific error code.
+ *
+ * @param {object} options - build options.
+ * @param {string} code - expected `WorkflowBuildError` code.
+ * @returns {Promise<void>}
+ */
 async function expectCode(options, code) {
   await assert.rejects(
     buildWorkflow(options),
@@ -285,6 +299,12 @@ test('compiler CLI writes, checks, and reports a missing artefact', async (t) =>
   }
 })
 
+/**
+ * Collect runtime sources under a directory, excluding the entry and declarations.
+ *
+ * @param {URL} directory - directory to walk.
+ * @returns {Promise<Array<URL>>} the runtime source files found.
+ */
 async function runtimeSourceFiles(directory) {
   const files = []
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -308,6 +328,13 @@ test('only main.ts calls injected ODW primitives', async () => {
   }
 })
 
+/**
+ * Find calls to injected ODW primitives, following identifier aliases.
+ *
+ * @param {string} file - source file to analyse.
+ * @param {Set<string>} primitives - primitive names that must stay unbound.
+ * @returns {Array<string>} the primitive calls found.
+ */
 function primitiveCalls(file, primitives) {
   const program = ts.createProgram([file], { allowJs: true, noResolve: true, target: ts.ScriptTarget.Latest })
   const checker = program.getTypeChecker()
@@ -315,6 +342,12 @@ function primitiveCalls(file, primitives) {
   const aliases = new Set()
   const aliasEdges = []
   const calls = []
+  /**
+   * Strip parentheses, assertions and comma expressions to the underlying expression.
+   *
+   * @param {import('typescript').Node} node - node to unwrap.
+   * @returns {import('typescript').Node} the unwrapped node.
+   */
   const unwrapped = (node) => {
     let current = node
     while (
@@ -331,6 +364,12 @@ function primitiveCalls(file, primitives) {
     }
     return current
   }
+  /**
+   * Record local aliases of ODW primitive identifiers.
+   *
+   * @param {import('typescript').Node} node - node to inspect.
+   * @returns {void}
+   */
   const visitAliases = (node) => {
     if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
       const initializer = unwrapped(node.initializer)
@@ -371,6 +410,12 @@ function primitiveCalls(file, primitives) {
       }
     }
   }
+  /**
+   * Record calls that resolve to an unbound primitive or one of its aliases.
+   *
+   * @param {import('typescript').Node} node - node to inspect.
+   * @returns {void}
+   */
   const visitCalls = (node) => {
     if (ts.isCallExpression(node)) {
       const expression = unwrapped(node.expression)
