@@ -116,19 +116,32 @@ function callExpressionArb(depth) {
   )
 }
 
+/** Visit every node in pre-order depth-first order. */
+function visitDepthFirst(node, visit) {
+  visit(node)
+  ts.forEachChild(node, (child) => { visitDepthFirst(child, visit) })
+}
+
+/** Whether a node calls one of the module-wrapper helpers. */
+function isWrapperCall(node) {
+  if (!ts.isCallExpression(node)) return false
+  if (!ts.isIdentifier(node.expression)) return false
+  return WRAPPER_NAMES.includes(node.expression.text)
+}
+
 /** Collect module-wrapper call names in pre-order depth-first traversal. */
-function wrapperNamesInDepthFirstOrder(node, found = []) {
-  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && WRAPPER_NAMES.includes(node.expression.text)) {
-    found.push(node.expression.text)
-  }
-  ts.forEachChild(node, (child) => { wrapperNamesInDepthFirstOrder(child, found) })
+function wrapperNamesInDepthFirstOrder(node) {
+  const found = []
+  visitDepthFirst(node, (current) => {
+    if (isWrapperCall(current)) found.push(current.expression.text)
+  })
   return found
 }
 
 /** Collect every node in pre-order depth-first traversal. */
-function nodesInDepthFirstOrder(node, found = []) {
-  found.push(node)
-  ts.forEachChild(node, (child) => { nodesInDepthFirstOrder(child, found) })
+function nodesInDepthFirstOrder(node) {
+  const found = []
+  visitDepthFirst(node, (current) => found.push(current))
   return found
 }
 
