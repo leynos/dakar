@@ -141,54 +141,189 @@ function isModuleSyntax(node) {
     (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword)
 }
 
-/** Rejects bundles that cannot execute under the restricted ODW loader. */
-function assertLoaderContract(banner, bundle, artefact) {
-  const bannerFile = ts.createSourceFile('meta.js', banner, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
-  if (findNode(bannerFile, isModuleSyntax)) reject('BUILD_MODULE_SYNTAX', 'metadata banner contains rejected module syntax')
-  const metaStatements = bannerFile.statements.filter((statement) => {
+/**
+ * Parse JavaScript text into a TypeScript AST without type checking.
+ * @param {string} fileName - name used in diagnostics.
+ * @param {string} text - the JavaScript source to parse.
+ * @returns {import('typescript').SourceFile} the parsed source file.
+ */
+function parseJavaScript(fileName, text) {
+  return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+}
+
+/**
+ * Whether an AST node carries an `export` modifier.
+ * @param {import('typescript').Node} node - node to inspect.
+ * @returns {boolean} true when the node is exported.
+ */
+function hasExportModifier(node) {
+  return ts.canHaveModifiers(node) &&
+    ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true
+}
+
+/**
+ * Collect the banner statements that declare a single `meta` binding.
+ * @param {import('typescript').SourceFile} sourceFile - parsed metadata banner.
+ * @returns {import('typescript').VariableStatement[]} matching statements.
+ */
+function findMetaStatements(sourceFile) {
+  return sourceFile.statements.filter((statement) => {
     if (!ts.isVariableStatement(statement)) return false
     const declarations = statement.declarationList.declarations
-    return declarations.length === 1 && ts.isIdentifier(declarations[0].name) && declarations[0].name.text === 'meta'
+    return declarations.length === 1 &&
+      ts.isIdentifier(declarations[0].name) &&
+      declarations[0].name.text === 'meta'
   })
-  const metaStatement = metaStatements.at(0)
-  const metaDeclaration = metaStatement?.declarationList.declarations.at(0)
-  const isLiteralMeta =
-    bannerFile.parseDiagnostics.length === 0 &&
+}
+
+/**
+ * Whether a variable statement declares an exported `const` with a static
+ * object literal initialiser.
+ * @param {import('typescript').VariableStatement} statement - candidate declaration.
+ * @returns {boolean} true for `export const name = { ... }` with literal values.
+ */
+function isLiteralMetaStatement(statement) {
+  const declaration = statement.declarationList.declarations.at(0)
+  return (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+    hasExportModifier(statement) &&
+    declaration !== undefined &&
+    declaration.initializer !== undefined &&
+    ts.isObjectLiteralExpression(declaration.initializer) &&
+    isLiteralValue(declaration.initializer)
+}
+
+/**
+ * Whether a parsed banner is exactly one literal `export const meta = { ... }`.
+ * @param {import('typescript').SourceFile} bannerFile - parsed metadata banner.
+ * @param {import('typescript').VariableStatement} metaStatement - the candidate statement.
+ * @returns {boolean} true when the banner holds exactly the required statement.
+ */
+function isLiteralMetaBanner(bannerFile, metaStatement) {
+  return bannerFile.parseDiagnostics.length === 0 &&
     bannerFile.statements.length === 1 &&
-    metaStatements.length === 1 &&
-    metaStatement !== undefined &&
-    (metaStatement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
-    ts.canHaveModifiers(metaStatement) &&
-    ts.getModifiers(metaStatement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true &&
-    metaDeclaration !== undefined &&
-    metaDeclaration.initializer !== undefined &&
-    ts.isObjectLiteralExpression(metaDeclaration.initializer) &&
-    isLiteralValue(metaDeclaration.initializer)
-  if (!isLiteralMeta) {
+    isLiteralMetaStatement(metaStatement)
+}
+
+/**
+ * Assert the banner is exactly one literal `export const meta = { ... }`.
+ * @param {import('typescript').SourceFile} bannerFile - parsed metadata banner.
+ * @returns {import('typescript').VariableStatement} the validated metadata statement.
+ */
+function assertLiteralMeta(bannerFile) {
+  const metaStatements = findMetaStatements(bannerFile)
+  const metaStatement = metaStatements.at(0)
+  if (
+    metaStatement === undefined ||
+    metaStatements.length !== 1 ||
+    !isLiteralMetaBanner(bannerFile, metaStatement)
+  ) {
     reject('BUILD_META_COUNT', 'expected exactly one literal `export const meta = { ... }` statement')
   }
-  const sourceFile = ts.createSourceFile('workflow-bundle.js', bundle, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
-  const wrappers = new Set(['__esm', '__commonJS', '__toESM', '__require'])
-  const wrapperCall = findLastNode(sourceFile, (node) =>
-    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && wrappers.has(node.expression.text))
-  if (wrapperCall && ts.isCallExpression(wrapperCall) && ts.isIdentifier(wrapperCall.expression)) {
-    reject('BUILD_MODULE_WRAPPER', `bundle contains module wrapper call ${wrapperCall.expression.text}()`)
+  return metaStatement
+}
+
+/**
+ * Reject module syntax anywhere in the metadata banner.
+ * @param {import('typescript').SourceFile} bannerFile - parsed metadata banner.
+ * @returns {void}
+ */
+function assertBannerIsInert(bannerFile) {
+  if (findNode(bannerFile, isModuleSyntax) !== undefined) {
+    reject('BUILD_MODULE_SYNTAX', 'metadata banner contains rejected module syntax')
   }
-  const moduleSyntax = findNode(sourceFile, (node) => isModuleSyntax(node) ||
-    (ts.canHaveModifiers(node) && ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true))
-  if (moduleSyntax) {
+}
+
+/**
+ * Whether a node is module syntax rejected in the bundled runtime.
+ * @param {import('typescript').Node} node - node to inspect.
+ * @returns {boolean} true for imports, exports, or dynamic imports.
+ */
+function isBundleModuleSyntax(node) {
+  return isModuleSyntax(node) || hasExportModifier(node)
+}
+
+/**
+ * Reject surviving module syntax and exports in the bundle.
+ * @param {import('typescript').SourceFile} sourceFile - parsed workflow bundle.
+ * @returns {void}
+ */
+function assertBundleIsInert(sourceFile) {
+  if (findNode(sourceFile, isBundleModuleSyntax) !== undefined) {
     reject('BUILD_MODULE_SYNTAX', 'bundle contains module syntax rejected by ODW')
   }
-  const entryCount = sourceFile.statements.filter(
-    (statement) =>
-      ts.isFunctionDeclaration(statement) &&
-      statement.name?.text === 'workflowMain' &&
-      ts.canHaveModifiers(statement) &&
-      ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword),
-  ).length
+}
+
+/** Names of esbuild's interop wrappers, which the ODW loader cannot provide. */
+const MODULE_WRAPPERS = new Set(['__esm', '__commonJS', '__toESM', '__require'])
+
+/**
+ * Read the wrapper name when a node is a call to an esbuild module wrapper.
+ * @param {import('typescript').Node} node - node to inspect.
+ * @returns {string | undefined} the wrapper name, if the node invokes one.
+ */
+function moduleWrapperName(node) {
+  if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return
+  if (!MODULE_WRAPPERS.has(node.expression.text)) return
+  return node.expression.text
+}
+
+/**
+ * Find the last module wrapper call in depth-first traversal order, so the
+ * reported name matches the innermost surviving wrapper.
+ * @param {import('typescript').SourceFile} sourceFile - parsed workflow bundle.
+ * @returns {string | undefined} the last wrapper name, if any survives.
+ */
+function findModuleWrapperName(sourceFile) {
+  const call = findLastNode(sourceFile, (node) => moduleWrapperName(node) !== undefined)
+  if (call === undefined) return
+  return moduleWrapperName(call)
+}
+
+/**
+ * Reject any surviving esbuild module wrapper call.
+ * @param {import('typescript').SourceFile} sourceFile - parsed workflow bundle.
+ * @returns {void}
+ */
+function assertNoModuleWrapper(sourceFile) {
+  const name = findModuleWrapperName(sourceFile)
+  if (name !== undefined) {
+    reject('BUILD_MODULE_WRAPPER', `bundle contains module wrapper call ${name}()`)
+  }
+}
+
+/**
+ * Whether a statement declares the async `workflowMain` entry point.
+ * @param {import('typescript').Statement} statement - statement to inspect.
+ * @returns {boolean} true for `async function workflowMain`.
+ */
+function isWorkflowMain(statement) {
+  return ts.isFunctionDeclaration(statement) &&
+    statement.name?.text === 'workflowMain' &&
+    ts.canHaveModifiers(statement) &&
+    ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true
+}
+
+/**
+ * Reject bundles without exactly one async `workflowMain` declaration.
+ * @param {import('typescript').SourceFile} sourceFile - parsed workflow bundle.
+ * @returns {void}
+ */
+function assertSingleWorkflowMain(sourceFile) {
+  const entryCount = sourceFile.statements.filter(isWorkflowMain).length
   if (entryCount !== 1) {
     reject('BUILD_ENTRY_COUNT', `expected one workflowMain declaration, found ${entryCount}`)
   }
+}
+
+/**
+ * Reject a bundle that cannot parse inside the ODW loader wrapper.
+ * @param {string} banner - the raw metadata banner.
+ * @param {string} bundle - the bundled runtime source.
+ * @param {import('typescript').VariableStatement} metaStatement - the validated metadata statement.
+ * @param {import('typescript').SourceFile} bannerFile - parsed metadata banner.
+ * @returns {void}
+ */
+function assertParsesUnderLoader(banner, bundle, metaStatement, bannerFile) {
   const metaStart = metaStatement.getStart(bannerFile)
   const wrappedBanner = `${banner.slice(0, metaStart)}${banner.slice(metaStart).replace(/^export const meta\s*=/u, 'const meta =')}`
   const wrapped = `${wrappedBanner.trimEnd()}\n{\n${bundle.trimEnd()}\nreturn await workflowMain()\n}\n`
@@ -197,6 +332,23 @@ function assertLoaderContract(banner, bundle, artefact) {
   } catch (error) {
     reject('BUILD_LOADER_PARSE', `artefact does not parse under the ODW loader: ${error.message}`)
   }
+}
+
+/**
+ * Reject bundles that cannot execute under the restricted ODW loader.
+ * @param {string} banner - the raw metadata banner.
+ * @param {string} bundle - the bundled runtime source.
+ * @returns {void}
+ */
+function assertLoaderContract(banner, bundle) {
+  const bannerFile = parseJavaScript('meta.js', banner)
+  assertBannerIsInert(bannerFile)
+  const metaStatement = assertLiteralMeta(bannerFile)
+  const sourceFile = parseJavaScript('workflow-bundle.js', bundle)
+  assertNoModuleWrapper(sourceFile)
+  assertBundleIsInert(sourceFile)
+  assertSingleWorkflowMain(sourceFile)
+  assertParsesUnderLoader(banner, bundle, metaStatement, bannerFile)
 }
 
 /**
@@ -275,7 +427,7 @@ export async function buildWorkflow({
     '}',
     '',
   ].join('\n')
-  assertLoaderContract(bannerText, bundle, artefact)
+  assertLoaderContract(bannerText, bundle)
 
   if (checkOnly) {
     let current
