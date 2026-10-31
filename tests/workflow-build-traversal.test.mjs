@@ -1,5 +1,5 @@
 /**
- * @file Property-test the workflow bundle's depth-first AST traversal order.
+ * Property-test the workflow bundle's depth-first AST traversal order.
  *
  * @module
  */
