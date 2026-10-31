@@ -410,6 +410,16 @@ Stdout contains only the final result in JSON by default or `reportMarkdown`
 when `--format markdown` is selected. Stderr contains progress, ODW run ids,
 telemetry, and process-level errors.
 
+In the inbound direction the CLI passes one JSON argument object to the
+compiled workflow. `workflowArgsSchema` in `config.ts` validates that object,
+including the review range, limits, routing, and policy hand-off, and
+`preparedReviewSchema` validates its `prepared` member. Both are
+`z.looseObject()` schemas: unknown top-level and nested keys are retained for
+forward-compatible hand-offs, omitted or invalid field values fall back to the
+documented defaults through `optionalParsed()`, and a payload that fails to
+parse altogether is treated as an empty object, so the workflow always receives
+a usable configuration.
+
 The workflow result contains (post-ADR 002; see the superseded notes in §4, §7,
 and §8 for what changed):
 

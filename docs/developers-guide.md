@@ -176,6 +176,21 @@ only shell-word quoting interface. Runtime JSON Schemas are exported from
 These modules are pure; `main.ts` alone calls the ambient ODW primitives, the
 `sleep()` retry helper, and owns phase sequencing.
 
+The host-to-workflow argument boundary lives in `config.ts`.
+`workflowArgsSchema` validates the JSON argument object the CLI passes to the
+compiled workflow, and `preparedReviewSchema` validates its `prepared` member,
+which carries the resolved review range and the deterministic gate results.
+Both are `z.looseObject()` schemas, so unknown top-level and nested keys
+survive parsing and reach the workflow, keeping the hand-off forward
+compatible. Individual fields are wrapped in `optionalParsed()`, which drops a
+value that fails its field schema; an omitted or invalid value therefore falls
+back to the documented default rather than failing the run.
+`resolveWorkflowConfig()` applies the same contract to the payload as a whole:
+a parse failure yields an empty argument object, so a malformed hand-off
+degrades to defaults instead of aborting. Both schemas are `@internal`, because
+they describe the internal host boundary rather than the workflow result
+contract.
+
 The live Flex lane registry is `model-routing.ts::FLEX_LANE_ROLES`. The
 `isReasoning()` guard accepts `low`, `medium`, or `high` values;
 `lunaFlexLaneRole()` maps the validated Luna setting to `luna`, `luna-medium`,

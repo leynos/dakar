@@ -87,17 +87,29 @@ test('a spawn error is counted as a failed attempt', async () => {
   assert.deepEqual(delays, [], 'an expired deadline forbids further attempts')
 })
 
-test('the polling invariants hold over generated deadlines and fetch sequences', async () => {
-  await fc.assert(fc.asyncProperty(fetchSequenceArb, fc.nat({ max: 60_000 }), async (fetchResults, timeoutMs) => {
-    const { result, poll, delays, served } = await runPoll(fetchResults, timeoutMs)
-    let totalDelay = 0
-    for (const delay of delays) totalDelay += delay
+/**
+ * Assert every poll invariant for one generated deadline and fetch sequence.
+ *
+ * @param {Array<object>} fetchResults - generated fetches to serve, in order.
+ * @param {number} timeoutMs - generated polling deadline in milliseconds.
+ * @returns {Promise<void>} resolves once every invariant holds.
+ */
+async function assertPollInvariants(fetchResults, timeoutMs) {
+  const { result, poll, delays, served } = await runPoll(fetchResults, timeoutMs)
+  let totalDelay = 0
+  for (const delay of delays) totalDelay += delay
 
-    assert.ok(poll.attempts >= 1, 'the first attempt is always made')
-    assert.ok(poll.failures <= poll.attempts, 'failures cannot exceed attempts')
-    assert.equal(served.length, poll.attempts, 'every attempt performs exactly one fetch')
-    assert.equal(result, served.at(-1), 'the returned result is the final fetch served')
-    assert.ok(delays.every((delay) => delay >= 0 && delay <= 1000), 'each delay is bounded by one second')
-    assert.ok(totalDelay <= timeoutMs, 'sleeping never outlasts the deadline')
-  }), { numRuns: 200 })
+  assert.ok(poll.attempts >= 1, 'the first attempt is always made')
+  assert.ok(poll.failures <= poll.attempts, 'failures cannot exceed attempts')
+  assert.equal(served.length, poll.attempts, 'every attempt performs exactly one fetch')
+  assert.equal(result, served.at(-1), 'the returned result is the final fetch served')
+  assert.ok(delays.every((delay) => delay >= 0 && delay <= 1000), 'each delay is bounded by one second')
+  assert.ok(totalDelay <= timeoutMs, 'sleeping never outlasts the deadline')
+}
+
+test('the polling invariants hold over generated deadlines and fetch sequences', async () => {
+  await fc.assert(
+    fc.asyncProperty(fetchSequenceArb, fc.nat({ max: 60_000 }), assertPollInvariants),
+    { numRuns: 200 },
+  )
 })
