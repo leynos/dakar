@@ -422,7 +422,7 @@ async function pollOdwResult({ fetchResult, now, sleepFn, timeoutMs }) {
     await sleepFn(delayMilliseconds);
     result = recordResultFetch(poll, fetchResult());
   }
-  return { result, poll };
+  return { result, poll, elapsedMs: now() - startedAt };
 }
 
 // bin/dakar-review.mjs
@@ -7500,18 +7500,18 @@ function reportResultPoll(runId, metrics) {
 function resultFailureMessage(result, options, runId) {
   return result.error?.message || result.stderr.trim() || result.stdout.trim() || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`;
 }
-function pollMetrics(poll, terminal, category) {
+function pollMetrics(poll, elapsedMs, terminal, category) {
   return {
     attempts: poll.attempts,
     failures: poll.failures,
-    elapsedMs: Date.now() - poll.startedAt,
+    elapsedMs,
     terminal,
     category
   };
 }
 async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1e3) {
   const odwBin = options.odwBin || "odw";
-  const { result, poll } = await pollOdwResult({
+  const { result, poll, elapsedMs } = await pollOdwResult({
     fetchResult: () => spawnSync2(odwBin, buildRunScopedArgs("result", options, runId), {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
@@ -7522,7 +7522,7 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
     timeoutMs
   });
   if (result.status !== 0) {
-    const metrics = pollMetrics(poll, "failed", resultFailureCategory(result));
+    const metrics = pollMetrics(poll, elapsedMs, "failed", resultFailureCategory(result));
     reportResultPoll(runId, metrics);
     throw new OdwResultError(resultFailureMessage(result, options, runId), metrics);
   }
@@ -7535,11 +7535,11 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
     output = finalizeWorkflowResult(rawOutput, workflowArgs);
   } catch (error2) {
     poll.failures += 1;
-    const metrics = pollMetrics(poll, "failed", "invalid_output");
+    const metrics = pollMetrics(poll, elapsedMs, "failed", "invalid_output");
     reportResultPoll(runId, metrics);
     throw new OdwResultError(`invalid ODW result: ${error2.message}`, metrics);
   }
-  reportResultPoll(runId, pollMetrics(poll, "completed", "none"));
+  reportResultPoll(runId, pollMetrics(poll, elapsedMs, "completed", "none"));
   return output;
 }
 function resultFailureEnvelope(stage, runId, error2) {

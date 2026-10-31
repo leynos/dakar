@@ -59,16 +59,18 @@ async function runPoll(fetchResults, timeoutMs) {
 }
 
 test('the first successful fetch is returned without sleeping', async () => {
-  const { result, poll, delays } = await runPoll([SUCCEEDED], 60_000)
+  const { result, poll, delays, elapsedMs } = await runPoll([SUCCEEDED], 60_000)
   assert.equal(result.status, 0)
   assert.deepEqual(poll, { attempts: 1, failures: 0, startedAt: 0 })
+  assert.equal(elapsedMs, 0, 'the elapsed time comes from the injected clock')
   assert.deepEqual(delays, [], 'a successful first attempt must not delay')
 })
 
 test('a retried fetch counts every attempt and failure', async () => {
-  const { result, poll, delays } = await runPoll([REFUSED, REFUSED, SUCCEEDED], 60_000)
+  const { result, poll, delays, elapsedMs } = await runPoll([REFUSED, REFUSED, SUCCEEDED], 60_000)
   assert.equal(result.status, 0)
   assert.deepEqual(poll, { attempts: 3, failures: 2, startedAt: 0 })
+  assert.equal(elapsedMs, 2000, 'the elapsed time is measured only by the injected clock')
   assert.deepEqual(delays, [1000, 1000], 'retries wait one second between attempts')
 })
 
@@ -95,11 +97,12 @@ test('a spawn error is counted as a failed attempt', async () => {
  * @returns {Promise<void>} resolves once every invariant holds.
  */
 async function assertPollInvariants(fetchResults, timeoutMs) {
-  const { result, poll, delays, served } = await runPoll(fetchResults, timeoutMs)
+  const { result, poll, delays, served, elapsedMs } = await runPoll(fetchResults, timeoutMs)
   let totalDelay = 0
   for (const delay of delays) totalDelay += delay
 
   assert.ok(poll.attempts >= 1, 'the first attempt is always made')
+  assert.equal(elapsedMs, totalDelay, 'elapsed time is the time spent sleeping on the injected clock')
   assert.ok(poll.failures <= poll.attempts, 'failures cannot exceed attempts')
   assert.equal(served.length, poll.attempts, 'every attempt performs exactly one fetch')
   assert.equal(result, served.at(-1), 'the returned result is the final fetch served')

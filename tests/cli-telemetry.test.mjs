@@ -306,6 +306,33 @@ if (mode === 'logs') unlinkSync(process.argv[1])
   assert.equal(poll.failures, poll.attempts)
 })
 
+test('a result process terminated by a signal reports the terminated category', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const fakeOdw = join(tempRoot, 'odw.mjs')
+  writeFileSync(fakeOdw, `#!/usr/bin/env node
+const mode = process.argv[2]
+if (mode === 'run') process.stdout.write('started run 20260719-000000-fedcba\\n')
+if (mode === 'result') process.kill(process.pid, 'SIGTERM')
+`)
+  chmodSync(fakeOdw, 0o755)
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
+    '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'])
+  assert.equal(completed.status, 1, 'a signal-terminated result must fail the CLI')
+  assert.equal(completed.stdout, '', 'a terminated result fetch must not write a result')
+  assert.match(completed.stderr, /"stage":\s*"odw-result"/u, 'the failure must retain the result-stage envelope')
+  assert.match(completed.stderr, /"category": "terminated"/u, 'a signal-terminated fetch is its own category')
+  const poll = pollEvent(completed.stderr)
+  assert.equal(poll.category, 'terminated')
+  assert.equal(poll.terminal, 'failed', 'the event must not claim a completed poll')
+  assert.ok(poll.attempts >= 2, 'the terminated fetch is retried until its deadline')
+  assert.equal(poll.failures, poll.attempts)
+  assert.ok(Number.isInteger(poll.elapsedMs) && poll.elapsedMs >= 0,
+    'the event reports elapsed time from the poller clock')
+  assert.match(completed.stderr, new RegExp(`"elapsedMs": ${poll.elapsedMs}\\b`, 'u'),
+    'the failure envelope carries the same elapsed time as the event')
+})
+
 test('a zero-exit result with malformed JSON reports one failed outcome', (t) => {
   const { completed } = runZeroExitResult(t, 'this is not the result JSON\n')
   assertInvalidOutput(completed, {

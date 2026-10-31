@@ -387,16 +387,19 @@ fetch, retries at most once a second while the fetch fails, and clamps the
 final delay to the remaining time so the last attempt starts at the deadline.
 The injected fetcher can then continue beyond that deadline, because the CLI
 spawns `odw result` without a process timeout. It returns the final fetch
-alongside bounded metrics (`attempts`, `failures`, `startedAt`).
+alongside bounded metrics (`attempts`, `failures`, `startedAt`) and
+`elapsedMs`, which it measures with the same injected clock that enforces the
+deadline, so the command unit never mixes a wall-clock reading into injected
+time.
 
 `waitForOdwResult()` in `bin/dakar-review.mjs` is the command unit. It supplies
 the `odw result` fetcher and the real clock and sleeper, finalizes the payload,
 and owns everything the kernel must not do: it builds one metrics object per
-terminal outcome, emits the single `odw_result_poll` event from it, and reuses
-the same object in the failure envelope so the event and the envelope cannot
-disagree about `elapsedMs`. A zero exit status with an unusable payload fails
-the retrieval with `category: "invalid_output"` rather than reporting a
-completed poll.
+terminal outcome from the poller's counters and elapsed time, emits the single
+`odw_result_poll` event from it, and reuses the same object in the failure
+envelope so the event and the envelope cannot disagree about `elapsedMs`. A
+zero exit status with an unusable payload fails the retrieval with
+`category: "invalid_output"` rather than reporting a completed poll.
 
 Keep the seam testable: polling regressions belong in
 `tests/odw-result-poll.test.mjs`, which combines boundary tables with a bounded
