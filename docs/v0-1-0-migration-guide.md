@@ -29,3 +29,25 @@ Luna de-escalation adapter; the Terra audit remains high reasoning.
 The default output-token estimates are now 2,000 per finder pack and 5,000 for
 the audit call. These estimates account for reasoning tokens being billed as
 output. Existing explicit token-limit options continue to override the defaults.
+
+## Result retrieval and telemetry
+
+`--telemetry` now follows the ODW log stream and then polls `odw result` until
+the review result is available. The CLI retries at most once per second until
+`--timeout` expires, performs a final fetch at the deadline, and gives a hung
+log stream a five-second result-recovery polling deadline before giving up.
+That deadline bounds the polling loop only: each `odw result` attempt is
+spawned without a process timeout, so an individual fetch can outlast it.
+
+Each retrieval reports one bounded `odw_result_poll` event on standard error
+with the run id, attempt and failure counts, elapsed time, terminal state, and
+one fixed failure category: `spawn_error`, `terminated`, `nonzero_exit`, or
+`invalid_output` (`none` on success). A `result` invocation that exits zero but
+returns malformed or unusable JSON is a failed retrieval with category
+`invalid_output`, not a completed poll. When no result is available, the CLI
+exits non-zero with a JSON error carrying `stage: "odw-result"` and the same
+poll metrics; a hung log stream whose recovery fetch also fails reports
+`stage: "odw-logs"`.
+
+No invocation needs to change: standard output still carries only the final
+JSON or Markdown result, and the new events stay on standard error.

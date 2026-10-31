@@ -243,7 +243,7 @@ export function discardedFromVerdicts(candidates: Candidate[], verdicts: Verdict
       continue
     }
     if (verdict.status !== 'accepted' && verdict.status !== 'severity_downgraded') {
-      discarded.push({ candidate, status: verdict.status || 'unknown_status', reason: verdict.reason || '', evidenceChecked: verdict.evidenceChecked || '' })
+      discarded.push({ candidate, status: verdict.status, reason: verdict.reason || '', evidenceChecked: verdict.evidenceChecked || '' })
     }
   }
   return discarded

@@ -410,6 +410,18 @@ Stdout contains only the final result in JSON by default or `reportMarkdown`
 when `--format markdown` is selected. Stderr contains progress, ODW run ids,
 telemetry, and process-level errors.
 
+In the inbound direction the CLI passes one JSON argument object to the
+compiled workflow. `workflowArgsSchema` in `config.ts` validates that object,
+including the review range, limits, routing, and policy hand-off, and
+`preparedReviewSchema` validates its `prepared` member. Both are
+`z.looseObject()` schemas: unknown keys at those two boundaries are retained
+for forward-compatible hand-offs, omitted or invalid field values fall back to
+the documented defaults through `optionalParsed()`, and a payload that fails to
+parse altogether is treated as an empty object, so the workflow always receives
+a usable configuration. Nested values follow their own schemas' unknown-key
+rules instead of inheriting the boundary's, so a value such as
+`modelSpecSchema` still rejects extra fields.
+
 The workflow result contains (post-ADR 002; see the superseded notes in §4, §7,
 and §8 for what changed):
 
@@ -463,8 +475,28 @@ discards remain only at the CLI compatibility/debug boundary.
   workflow fails closed with `stage: "audit"` so nothing is recorded.
 - The CLI's own append to review history fails: the result carries
   `stage: "record"` with `recordInput` preserved for manual retry.
-- Telemetry follow times out: the CLI exits non-zero and leaves the ODW run
-  inspectable by run id.
+- Telemetry follow times out: the CLI gives the possibly completed (and
+  already billed) run a five-second result-recovery polling deadline. Each
+  fetch is spawned without a process timeout, so the deadline bounds the
+  retries rather than the duration of one fetch. A usable result is finalized
+  and recorded as usual; otherwise the CLI reports `stage: "odw-logs"` with the
+  same poll metrics, exits non-zero, and leaves the ODW run inspectable by run
+  id.
+- Result retrieval fails: `pollOdwResult()` in `scripts/odw-result-poll.mjs`
+  is the read-only kernel that performs one immediate `odw result` fetch and
+  retries at most once a second until the deadline, with the result fetcher,
+  clock and sleeper injected so it never spawns, reads the wall clock, emits
+  telemetry or builds an envelope. `waitForOdwResult()` in
+  `bin/dakar-review.mjs` is the command unit: it reports one `odw_result_poll`
+  event from a single metrics object and reuses that object in the failure
+  envelope. A spawn error, a terminated fetch, a non-zero exit, or a zero exit
+  whose payload is unparsable or lacks a boolean `ok` fails the retrieval with
+  `stage: "odw-result"` and the matching `category` (`spawn_error`,
+  `terminated`, `nonzero_exit` or `invalid_output`), and the head is not
+  recorded.
+- The final `odw result` fetch outlasts the polling deadline: the deadline
+  bounds when the last attempt starts, not how long that attempt runs, because
+  the CLI spawns the fetch without a process timeout.
 
 ## 12. Verification targets
 

@@ -10,7 +10,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import nodePath from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -19,6 +19,7 @@ import { deriveOdwConfig } from '../scripts/odw-config.mjs'
 import { addContextGuidance, CONTEXT_WARMUP_BOUNDARY, warmReviewedContextIndex } from '../scripts/context-warmup.mjs'
 import { isRepositoryRelativePath } from '../scripts/repository-paths.mjs'
 import { runDeterministicGates } from '../scripts/deterministic-gates.mjs'
+import { pollOdwResult } from '../scripts/odw-result-poll.mjs'
 import { parseReviewPolicy, resolveReviewConfig } from '../scripts/review-config.mjs'
 import { DEFAULT_PRICING_TABLE } from '../src/workflows/dakar-review/pricing.ts'
 import { worstCaseReviewSeconds } from '../src/workflows/dakar-review/retry.ts'
@@ -33,7 +34,15 @@ import * as z from 'zod'
 
 /** ODW's documented default per-model-call timeout in seconds. */
 const DEFAULT_PER_CALL_TIMEOUT_SECONDS = 300
+/** JSON replacer that leaves every value unchanged. */
 const jsonReplacer = (_key, value) => value
+
+/**
+ * Serialise a value as two-space-indented JSON.
+ *
+ * @param {unknown} value - value to serialise.
+ * @returns {string} the indented JSON text.
+ */
 const prettyJson = (value) => JSON.stringify(value, jsonReplacer, 2)
 const jsonRecordSchema = z.record(z.string(), z.json())
 const recordInputSchema = z.object({ metrics: jsonRecordSchema.optional() }).loose()
@@ -41,6 +50,9 @@ const dakarRunSchema = z.object({
   properties: z.object({ dakar: jsonRecordSchema.optional() }).loose().optional(),
 }).loose()
 const sarifOutputSchema = z.object({ runs: z.array(dakarRunSchema).optional() }).loose()
+
+/** Require the workflow's boolean verdict flag at the result boundary. */
+const workflowVerdictSchema = z.object({ ok: z.boolean() }).loose()
 const workflowOutputSchema = z.object({
   metrics: jsonRecordSchema.optional(),
   recordInput: recordInputSchema.optional(),
@@ -683,7 +695,7 @@ function snapshotMismatch(recordInput, prepared) {
  * @returns {object} the (possibly updated) workflow result.
  */
 function recordReview(output, trustedLocation, prepared) {
-  if (!output || output.dryRun || output.skipped || output.ok !== true) {
+  if (output.dryRun || output.skipped || output.ok !== true) {
     return output
   }
   // A review that completed with partial planned coverage legitimately
@@ -837,42 +849,156 @@ function followOdwLogs(odwBin, args, timeoutMs) {
 }
 
 /**
- * Poll `odw result` until the run completes or the deadline is reached.
+ * A failure to retrieve an ODW result within its polling deadline.
  *
- * @param {object} options - parsed CLI options.
- * @param {string} runId - ODW run identifier to query.
- * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
- * @returns {Promise<object>} the parsed and (on success) recorded workflow result.
+ * Carries the bounded poll metrics the CLI reports in its structured failure
+ * envelope, so a failed retrieval stays measurable without unbounded labels.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: ODW may publish a result after log follow exits; retry result fetches until the bounded deadline while retaining the last fetch error.
-async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1000) {
-  const odwBin = options.odwBin || 'odw'
-  const deadline = Date.now() + timeoutMs
-  let lastError = ''
-
-  while (true) {
-    const result = spawnSync(odwBin, buildRunScopedArgs('result', options, runId), {
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-      env: odwEnv(),
-    })
-    if (result.status === 0) {
-      return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs)
-    }
-    lastError = result.stderr.trim() || result.stdout.trim()
-    if (Date.now() >= deadline) {
-      break
-    }
-    const remainingMilliseconds = Math.max(0, deadline - Date.now())
-    const retryDelayMilliseconds = Math.min(1000, remainingMilliseconds)
-    await sleep(retryDelayMilliseconds)
+class OdwResultError extends Error {
+  /**
+   * @param {string} message - human-readable failure description.
+   * @param {{ attempts: number, failures: number, elapsedMs: number, terminal: string, category: string }} poll - bounded poll metrics.
+   */
+  constructor(message, poll) {
+    super(message)
+    /** Always `'OdwResultError'`, distinguishing it from other retrieval failures. */
+    this.name = 'OdwResultError'
+    /** Bounded poll metrics for the failure envelope. */
+    this.poll = poll
   }
-
-  throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`)
 }
 
 /**
- * Give a timed-out log follow a separate five-second result-recovery window.
+ * Classify a failed result fetch into one bounded telemetry category.
+ *
+ * @param {import('node:child_process').SpawnSyncReturns<string>} result - the final fetch result.
+ * @returns {'spawn_error' | 'terminated' | 'nonzero_exit'} the failure category.
+ */
+function resultFailureCategory(result) {
+  if (result.error) return 'spawn_error'
+  if (result.signal) return 'terminated'
+  return 'nonzero_exit'
+}
+
+/**
+ * Emit one bounded structured event for a finished result poll.
+ *
+ * @param {string} runId - ODW run identifier.
+ * @param {object} metrics - the outcome's poll metrics, already built once.
+ * @returns {void}
+ */
+function reportResultPoll(runId, metrics) {
+  process.stderr.write(`${JSON.stringify({ event: 'odw_result_poll', runId, ...metrics })}\n`)
+}
+
+/**
+ * Describe why the final result fetch failed.
+ *
+ * @param {import('node:child_process').SpawnSyncReturns<string>} result - the final fetch result.
+ * @param {object} options - parsed CLI options.
+ * @param {string} runId - ODW run identifier.
+ * @returns {string} the most specific available failure explanation.
+ */
+function resultFailureMessage(result, options, runId) {
+  return result.error?.message || result.stderr.trim() || result.stdout.trim() ||
+    `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`
+}
+
+/**
+ * Build one outcome's bounded poll metrics.
+ *
+ * The caller builds these once per terminal outcome and reuses the same object
+ * for the poll event and any failure envelope, so the two outputs cannot
+ * disagree about `elapsedMs` or the counters.
+ *
+ * @param {{ attempts: number, failures: number, startedAt: number }} poll - poll counters.
+ * @param {number} elapsedMs - elapsed time measured by the poller's injected clock.
+ * @param {'completed' | 'failed'} terminal - terminal state of the poll.
+ * @param {string} category - fixed failure category, or `none` on success.
+ * @returns {{ attempts: number, failures: number, elapsedMs: number, terminal: string, category: string }} the outcome metrics.
+ */
+function pollMetrics(poll, elapsedMs, terminal, category) {
+  return {
+    attempts: poll.attempts,
+    failures: poll.failures,
+    elapsedMs,
+    terminal,
+    category,
+  }
+}
+
+/**
+ * Retrieve, finalize and record the ODW result, reporting one bounded poll event.
+ *
+ * The command unit owns finalization, telemetry and the failure envelope, while
+ * {@link pollOdwResult} stays a read-only polling seam. A zero exit status does
+ * not guarantee a usable payload, so malformed JSON or an invalid result shape
+ * fails the retrieval and reports the same `invalid_output` outcome in the poll
+ * event and the failure envelope.
+ *
+ * @param {object} options - parsed CLI options.
+ * @param {object} workflowArgs - workflow arguments to pass via `--args`.
+ * @param {string} runId - ODW run identifier to query.
+ * @param {number} [timeoutMs] - polling deadline in milliseconds (default: `timeout` option × 1000).
+ * @returns {Promise<object>} the parsed and (on success) recorded workflow result.
+ * @throws {OdwResultError} when no usable result is available within the deadline.
+ */
+async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1000) {
+  const odwBin = options.odwBin || 'odw'
+  const { result, poll, elapsedMs } = await pollOdwResult({
+    fetchResult: () => spawnSync(odwBin, buildRunScopedArgs('result', options, runId), {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      env: odwEnv(),
+    }),
+    now: Date.now,
+    sleepFn: sleep,
+    timeoutMs,
+  })
+  if (result.status !== 0) {
+    const metrics = pollMetrics(poll, elapsedMs, 'failed', resultFailureCategory(result))
+    reportResultPoll(runId, metrics)
+    throw new OdwResultError(resultFailureMessage(result, options, runId), metrics)
+  }
+  let output
+  try {
+    // Validate the raw payload: finalisation normalizes unusable results (for
+    // example a malformed `recordInput`) into an `ok: false` envelope and
+    // consumes the usage log, so checking afterwards would both accept a
+    // shapeless result and discard the only reported-usage channel.
+    const rawOutput = extractJson(result.stdout)
+    if (!workflowVerdictSchema.safeParse(rawOutput).success) {
+      throw new Error('ODW result must contain a boolean `ok`')
+    }
+    output = finalizeWorkflowResult(rawOutput, workflowArgs)
+  } catch (error) {
+    poll.failures += 1
+    const metrics = pollMetrics(poll, elapsedMs, 'failed', 'invalid_output')
+    reportResultPoll(runId, metrics)
+    throw new OdwResultError(`invalid ODW result: ${error.message}`, metrics)
+  }
+  reportResultPoll(runId, pollMetrics(poll, elapsedMs, 'completed', 'none'))
+  return output
+}
+
+/**
+ * Build the structured result-retrieval failure envelope.
+ *
+ * @param {string} stage - CLI stage reporting the failure.
+ * @param {string} runId - ODW run identifier.
+ * @param {Error} error - the caught result-retrieval failure.
+ * @returns {object} the JSON-serialisable failure envelope.
+ */
+function resultFailureEnvelope(stage, runId, error) {
+  const poll = error instanceof OdwResultError ? error.poll : {}
+  return { ok: false, stage, runId, ...poll, error: error.message }
+}
+
+/**
+ * Give a timed-out log follow a five-second result-recovery polling deadline.
+ *
+ * The deadline bounds only the retry loop; each fetch is spawned without a
+ * process timeout, so one fetch may outlast it.
  *
  * @param {object} options - parsed CLI options.
  * @param {object} workflowArgs - workflow arguments to pass via `--args`.
@@ -889,16 +1015,7 @@ async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
   try {
     return { output: await waitForOdwResult(options, workflowArgs, runId, 5000) }
   } catch (error) {
-    process.stderr.write(
-      `${prettyJson({
-        ok: false,
-        stage: 'odw-logs',
-        runId,
-        error:
-          error.message ||
-          `timed out following ODW run after ${options.timeout || 3600}s and no result was available`,
-      })}\n`,
-    )
+    process.stderr.write(`${prettyJson(resultFailureEnvelope('odw-logs', runId, error))}\n`)
     return { status: 1 }
   }
 }
@@ -966,9 +1083,7 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   try {
     return { output: await waitForOdwResult(options, workflowArgs, runId, Math.max(0, resultDeadline - Date.now())) }
   } catch (error) {
-    process.stderr.write(
-      `${JSON.stringify({ ok: false, stage: 'odw-result', runId, error: error.message }, jsonReplacer, 2)}\n`,
-    )
+    process.stderr.write(`${prettyJson(resultFailureEnvelope('odw-result', runId, error))}\n`)
     return { status: 1 }
   }
 }

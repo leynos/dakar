@@ -15,7 +15,7 @@ var __export = (target, all) => {
 
 // bin/dakar-review.mjs
 import { spawn, spawnSync as spawnSync2 } from "node:child_process";
-import { existsSync as existsSync2, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import nodePath3 from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -35,8 +35,11 @@ function shellWord(value) {
 }
 
 // scripts/context-tools.mjs
+function serializeJson(value) {
+  return JSON.stringify(value);
+}
 function mcpPayload(payload) {
-  const json2 = JSON.stringify(payload);
+  const json2 = serializeJson(payload);
   if (json2 === void 0) throw new Error("MCP payload must be serializable");
   return shellWord(json2);
 }
@@ -401,6 +404,28 @@ function warmReviewedContextIndex(repoRoot, prepared, boundary = CONTEXT_WARMUP_
 
 // bin/dakar-review.mjs
 import { runDeterministicGates } from "../scripts/deterministic-gates.mjs";
+
+// scripts/odw-result-poll.mjs
+function recordResultFetch(poll, result) {
+  poll.attempts += 1;
+  if (result.status !== 0) poll.failures += 1;
+  return result;
+}
+async function pollOdwResult({ fetchResult, now, sleepFn, timeoutMs }) {
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
+  const poll = { attempts: 0, failures: 0, startedAt };
+  let result = recordResultFetch(poll, fetchResult());
+  while (result.status !== 0 && now() < deadline) {
+    const remainingMilliseconds = deadline - now();
+    const delayMilliseconds = Math.min(1e3, Math.max(0, remainingMilliseconds));
+    await sleepFn(delayMilliseconds);
+    result = recordResultFetch(poll, fetchResult());
+  }
+  return { result, poll, elapsedMs: now() - startedAt };
+}
+
+// bin/dakar-review.mjs
 import { parseReviewPolicy, resolveReviewConfig } from "../scripts/review-config.mjs";
 
 // src/workflows/dakar-review/pricing.ts
@@ -6967,6 +6992,7 @@ var dakarRunSchema = object({
   properties: object({ dakar: jsonRecordSchema.optional() }).loose().optional()
 }).loose();
 var sarifOutputSchema = object({ runs: array(dakarRunSchema).optional() }).loose();
+var workflowVerdictSchema = object({ ok: boolean2() }).loose();
 var workflowOutputSchema = object({
   metrics: jsonRecordSchema.optional(),
   recordInput: recordInputSchema.optional()
@@ -7348,7 +7374,7 @@ function snapshotMismatch(recordInput, prepared) {
   return;
 }
 function recordReview(output, trustedLocation, prepared) {
-  if (!output || output.dryRun || output.skipped || output.ok !== true) {
+  if (output.dryRun || output.skipped || output.ok !== true) {
     return output;
   }
   if (output.recordWithheld && !output.recordInput) {
@@ -7451,28 +7477,74 @@ function followOdwLogs(odwBin, args, timeoutMs) {
     });
   });
 }
+var OdwResultError = class extends Error {
+  /**
+   * @param {string} message - human-readable failure description.
+   * @param {{ attempts: number, failures: number, elapsedMs: number, terminal: string, category: string }} poll - bounded poll metrics.
+   */
+  constructor(message, poll) {
+    super(message);
+    this.name = "OdwResultError";
+    this.poll = poll;
+  }
+};
+function resultFailureCategory(result) {
+  if (result.error) return "spawn_error";
+  if (result.signal) return "terminated";
+  return "nonzero_exit";
+}
+function reportResultPoll(runId, metrics) {
+  process.stderr.write(`${JSON.stringify({ event: "odw_result_poll", runId, ...metrics })}
+`);
+}
+function resultFailureMessage(result, options, runId) {
+  return result.error?.message || result.stderr.trim() || result.stdout.trim() || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`;
+}
+function pollMetrics(poll, elapsedMs, terminal, category) {
+  return {
+    attempts: poll.attempts,
+    failures: poll.failures,
+    elapsedMs,
+    terminal,
+    category
+  };
+}
 async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (options.timeout || 3600) * 1e3) {
   const odwBin = options.odwBin || "odw";
-  const deadline = Date.now() + timeoutMs;
-  let lastError = "";
-  while (true) {
-    const result = spawnSync2(odwBin, buildRunScopedArgs("result", options, runId), {
+  const { result, poll, elapsedMs } = await pollOdwResult({
+    fetchResult: () => spawnSync2(odwBin, buildRunScopedArgs("result", options, runId), {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
       env: odwEnv()
-    });
-    if (result.status === 0) {
-      return finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
-    }
-    lastError = result.stderr.trim() || result.stdout.trim();
-    if (Date.now() >= deadline) {
-      break;
-    }
-    const remainingMilliseconds = Math.max(0, deadline - Date.now());
-    const retryDelayMilliseconds = Math.min(1e3, remainingMilliseconds);
-    await sleep(retryDelayMilliseconds);
+    }),
+    now: Date.now,
+    sleepFn: sleep,
+    timeoutMs
+  });
+  if (result.status !== 0) {
+    const metrics = pollMetrics(poll, elapsedMs, "failed", resultFailureCategory(result));
+    reportResultPoll(runId, metrics);
+    throw new OdwResultError(resultFailureMessage(result, options, runId), metrics);
   }
-  throw new Error(lastError || `timed out waiting for ODW run ${runId} after ${options.timeout || 3600}s`);
+  let output;
+  try {
+    const rawOutput = extractJson(result.stdout);
+    if (!workflowVerdictSchema.safeParse(rawOutput).success) {
+      throw new Error("ODW result must contain a boolean `ok`");
+    }
+    output = finalizeWorkflowResult(rawOutput, workflowArgs);
+  } catch (error2) {
+    poll.failures += 1;
+    const metrics = pollMetrics(poll, elapsedMs, "failed", "invalid_output");
+    reportResultPoll(runId, metrics);
+    throw new OdwResultError(`invalid ODW result: ${error2.message}`, metrics);
+  }
+  reportResultPoll(runId, pollMetrics(poll, elapsedMs, "completed", "none"));
+  return output;
+}
+function resultFailureEnvelope(stage, runId, error2) {
+  const poll = error2 instanceof OdwResultError ? error2.poll : {};
+  return { ok: false, stage, runId, ...poll, error: error2.message };
 }
 async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
   process.stderr.write(
@@ -7482,15 +7554,8 @@ async function recoverOdwResultAfterLogTimeout(options, workflowArgs, runId) {
   try {
     return { output: await waitForOdwResult(options, workflowArgs, runId, 5e3) };
   } catch (error2) {
-    process.stderr.write(
-      `${prettyJson({
-        ok: false,
-        stage: "odw-logs",
-        runId,
-        error: error2.message || `timed out following ODW run after ${options.timeout || 3600}s and no result was available`
-      })}
-`
-    );
+    process.stderr.write(`${prettyJson(resultFailureEnvelope("odw-logs", runId, error2))}
+`);
     return { status: 1 };
   }
 }
@@ -7542,10 +7607,8 @@ async function runOdwWithTelemetry(options, workflowArgs) {
   try {
     return { output: await waitForOdwResult(options, workflowArgs, runId, Math.max(0, resultDeadline - Date.now())) };
   } catch (error2) {
-    process.stderr.write(
-      `${JSON.stringify({ ok: false, stage: "odw-result", runId, error: error2.message }, jsonReplacer, 2)}
-`
-    );
+    process.stderr.write(`${prettyJson(resultFailureEnvelope("odw-result", runId, error2))}
+`);
     return { status: 1 };
   }
 }

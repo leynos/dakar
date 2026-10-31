@@ -8967,7 +8967,7 @@ function discardedFromVerdicts(candidates, verdicts) {
       continue;
     }
     if (verdict.status !== "accepted" && verdict.status !== "severity_downgraded") {
-      discarded.push({ candidate, status: verdict.status || "unknown_status", reason: verdict.reason || "", evidenceChecked: verdict.evidenceChecked || "" });
+      discarded.push({ candidate, status: verdict.status, reason: verdict.reason || "", evidenceChecked: verdict.evidenceChecked || "" });
     }
   }
   return discarded;
@@ -9077,10 +9077,19 @@ var modelSpecSchema = strictObject({
   role: string2().optional()
 });
 function optionalParsed(schema) {
-  return preprocess((candidate) => {
-    const parsed = schema.safeParse(candidate);
-    if (parsed.success) return parsed.data;
-  }, schema.optional());
+  return preprocess(
+    /**
+     * Keep a supplied value only when its own schema accepts it.
+     *
+     * @param candidate - raw value supplied for the field.
+     * @returns the parsed value, or `undefined` to treat the field as absent.
+     */
+    (candidate) => {
+      const parsed = schema.safeParse(candidate);
+      if (parsed.success) return parsed.data;
+    },
+    schema.optional()
+  );
 }
 var modelCandidateSchema = optionalParsed(modelSpecSchema);
 var deterministicGateSchema = strictObject({
@@ -9096,7 +9105,7 @@ var deterministicGateSchema = strictObject({
   stdout: string2(),
   stdoutSha256: string2()
 });
-var preparedReviewSchema = object({
+var preparedReviewSchema = looseObject({
   alreadyReviewed: boolean2().optional(),
   changedFiles: array(string2()).optional(),
   commitCount: number2().optional(),
@@ -9107,11 +9116,11 @@ var preparedReviewSchema = object({
   reviewBase: string2().optional(),
   stateFile: string2().optional(),
   warnings: array(string2()).optional()
-}).passthrough();
+});
 var numericArgumentField = optionalParsed(numericArgumentSchema);
 var stringArgumentField = optionalParsed(string2());
 var reasoningArgumentField = optionalParsed(reasoningSchema);
-var workflowArgsSchema = object({
+var workflowArgsSchema = looseObject({
   adapterOverheadTokens: numericArgumentField,
   agentInstructions: optionalParsed(agentInstructionsSchema),
   base: stringArgumentField,
@@ -9144,7 +9153,7 @@ var workflowArgsSchema = object({
   transactionMaxFiles: numericArgumentField,
   transactionMaxInputTokens: numericArgumentField,
   transactionMaxOutputTokens: numericArgumentField
-}).passthrough();
+});
 function positiveLimit(value, fallback, ceiling) {
   const parsed = Number(value);
   const floored = Math.floor(parsed);
@@ -9918,8 +9927,8 @@ function taskSpec(kind, files, index, config2) {
     kind,
     files,
     assignedModel: modelName(assigned),
-    adapter: adapterForReasoning(assigned.reasoning || "medium"),
-    model: baseModel(assigned.model || ""),
+    adapter: adapterForReasoning(assigned.reasoning),
+    model: baseModel(assigned.model),
     modelLabel: assigned.label,
     role,
     maxFindings: Math.max(1, Math.min(config2.maxFindings, kind === "source" ? 6 : 3)),
@@ -10005,20 +10014,29 @@ function buildFlexFinderPlan(prepared, config2) {
   const effectiveCap = Math.max(1, Math.min(config2.maxTasks, config2.maxLunaFlexCalls));
   const admittedChunks = orderedChunks.slice(0, effectiveCap);
   const truncatedFiles = orderedChunks.slice(effectiveCap).flatMap((entry) => entry.files);
-  const packs = admittedChunks.map((entry, index) => ({
-    taskId: `luna-flex-${index + 1}`,
-    kind: entry.kind,
-    files: entry.files,
-    assignedModel: modelName({ model: lane.model, reasoning: lane.reasoning }),
-    adapter: lane.adapter,
-    model: lane.model,
-    modelLabel: lane.adapter,
-    role: lane.role,
-    serviceTier: lane.serviceTier,
-    reasoningEffort: lane.reasoning,
-    maxFindings: Math.max(1, Math.min(config2.maxFindings, entry.kind === "source" ? 6 : 3)),
-    verificationPolicy: "verify-all"
-  }));
+  const packs = admittedChunks.map(
+    /**
+     * Project one admitted finder chunk into a dispatchable Luna task.
+     *
+     * @param entry - chunk kind and the files it covers.
+     * @param index - position within the admitted order.
+     * @returns the task carrying the lane routing and the per-kind finding cap.
+     */
+    (entry, index) => ({
+      taskId: `luna-flex-${index + 1}`,
+      kind: entry.kind,
+      files: entry.files,
+      assignedModel: modelName({ model: lane.model, reasoning: lane.reasoning }),
+      adapter: lane.adapter,
+      model: lane.model,
+      modelLabel: lane.adapter,
+      role: lane.role,
+      serviceTier: lane.serviceTier,
+      reasoningEffort: lane.reasoning,
+      maxFindings: Math.max(1, Math.min(config2.maxFindings, entry.kind === "source" ? 6 : 3)),
+      verificationPolicy: "verify-all"
+    })
+  );
   return { packs, truncatedFiles };
 }
 function defaultTaskGraph(config2) {

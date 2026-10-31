@@ -8,8 +8,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import fc from 'fast-check'
 
-import { resolveWorkflowConfig } from '../src/workflows/dakar-review/config.ts'
+import { preparedReviewSchema, resolveWorkflowConfig, workflowArgsSchema } from '../src/workflows/dakar-review/config.ts'
 import { DEFAULT_REVIEW_MODELS } from '../src/workflows/dakar-review/model-routing.ts'
+
+test('workflow boundary schemas retain unknown keys', () => {
+  const extra = { futureField: { nested: true } }
+  assert.deepEqual(preparedReviewSchema.parse(extra), extra, 'prepared review retains unknown fields')
+  assert.deepEqual(workflowArgsSchema.parse(extra), extra, 'workflow arguments retain unknown fields')
+})
 
 test('resolveWorkflowConfig supplies the documented workflow defaults', () => {
   const config = resolveWorkflowConfig(undefined)

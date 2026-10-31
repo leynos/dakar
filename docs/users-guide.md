@@ -678,6 +678,25 @@ history fails after a completed review, the result carries `stage: "record"`
 with `recordInput` preserved for manual retry, and the same commit range will
 be reviewed again on the next run.
 
+Result retrieval has its own stages. After launching ODW with `--telemetry`,
+the CLI follows the log stream and then polls `odw result`, retrying at most
+once per second until `--timeout` expires and performing a final fetch at the
+deadline. It reports one bounded `odw_result_poll` event on standard error with
+the run id, attempt and failure counts, elapsed time, terminal state, and a
+fixed failure category (`spawn_error`, `terminated`, `nonzero_exit`, or
+`invalid_output`; `none` on success). A `result` invocation that exits zero but
+returns malformed or unusable JSON is a failed retrieval, reported with the
+`invalid_output` category rather than a completed poll. If no result is
+available, the CLI exits non-zero with a JSON error carrying
+`stage: "odw-result"`, the same poll metrics, and the underlying process or
+parsing error, such as `ENOENT` when the ODW executable is missing. A log
+stream that hangs until the timeout receives a five-second result-recovery
+polling deadline instead; that deadline bounds the retries only, because each
+`odw result` fetch is spawned without a process timeout and can outlast it. If
+recovery also fails, the stage is `odw-logs`. The
+[0.1.0 behaviour migration guide](v0-1-0-migration-guide.md) summarizes this
+change at release level.
+
 If `origin/main` is not available, pass a different `base`. If prepare reports
 that the workspace is not a git repository, pass `repoRoot` as an absolute path
 to the real checkout.

@@ -19,7 +19,8 @@ document for a task, then follow the inline links.
 ## Migration
 
 - [0.1.0 behaviour migration guide](v0-1-0-migration-guide.md) — changes to
-  optional context tools, reasoning defaults, and token estimates.
+  optional context tools, reasoning defaults, token estimates, and result
+  retrieval telemetry.
 - [0.1 installation migration guide](migration-0.1.md) — migrate from direct
   Bun global installation to `./install.sh`, including prerequisites and safe
   installer-lock recovery.

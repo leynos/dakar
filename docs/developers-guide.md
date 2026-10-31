@@ -47,9 +47,13 @@ The `make lint` gate runs pinned Biome 1.9.4 and Oxlint. Biome enforces a
 maximum cognitive complexity of 9 on the authored CLI (`bin/dakar-review.mjs`)
 and SARIF (`src/workflows/dakar-review/sarif.ts`) sources. Oxlint applies the
 recommended Unicorn and deslop rules to `adapters`, `bin/dakar-review.mjs`,
-`scripts`, and `src`; its pinned versions and sole plugin-rule exception are
-recorded in [ADR 003](adr-003-linting-strategy.md). Generated bundles and tests
-are outside the Oxlint application target. The generated bundles are checked
+`scripts`, and `src`. The native TypeScript plugin hosts deslop's type-aware
+rules; built-in categories remain off. The
+`adapters/pi/extensions/flex-tier.ts` file is linted but lies outside
+`tsconfig.json`. Pinned versions and the sole plugin-rule exception are
+recorded in [ADR 003](adr-003-linting-strategy.md), whose dated addendum
+records the TypeScript plugin configuration. Generated bundles and tests are
+outside the Oxlint application target. The generated bundles are checked
 through their source gates and freshness checks, while tests run under
 `make test`.
 
@@ -103,6 +107,13 @@ hand-edit `workflows/dakar-review.js`. Edit the source tree, run
 `make workflow-build`, and commit source and artefact together. Run
 `make workflow-freshness` to prove that the committed artefact matches its
 inputs without rewriting it.
+
+`scripts/build-workflow.mjs` also exports `findLastNode` and
+`findModuleWrapperName` for the depth-first traversal property tests only; they
+are test seams over the bundle's AST checks, not a supported build API.
+`scripts/odw-result-poll.mjs` is listed in the `Makefile`'s `NODE_MODULES`
+target so that the ordinary Node syntax check covers it alongside the other
+CLI-side modules.
 
 The source tree has these responsibilities:
 
@@ -164,6 +175,25 @@ only shell-word quoting interface. Runtime JSON Schemas are exported from
 `schemas.ts`, while shared compile-time shapes are exported from `types.ts`.
 These modules are pure; `main.ts` alone calls the ambient ODW primitives, the
 `sleep()` retry helper, and owns phase sequencing.
+
+The host-to-workflow argument boundary lives in `config.ts`.
+`workflowArgsSchema` validates the JSON argument object the CLI passes to the
+compiled workflow, and `preparedReviewSchema` validates its `prepared` member,
+which carries the resolved review range and the deterministic gate results.
+Both are `z.looseObject()` schemas, so unknown keys at those two boundaries
+survive parsing and reach the workflow, keeping the hand-off forward
+compatible. Nested values keep their own schemas' rules rather than inheriting
+the boundary's: `agentInstructionsSchema` uses `z.object()` and so strips
+unknown keys, while `modelSpecSchema`, reached through `modelCandidateSchema`,
+uses `z.strictObject()` and rejects them, which lets `optionalParsed()` discard
+that model entry. Individual fields are wrapped in `optionalParsed()`, which
+drops a value that fails its field schema; an omitted or invalid value
+therefore falls back to the documented default rather than failing the run.
+`resolveWorkflowConfig()` applies the same contract to the payload as a whole:
+a parse failure yields an empty argument object, so a malformed hand-off
+degrades to defaults instead of aborting. Both schemas are `@internal`, because
+they describe the internal host boundary rather than the workflow result
+contract.
 
 The live Flex lane registry is `model-routing.ts::FLEX_LANE_ROLES`. The
 `isReasoning()` guard accepts `low`, `medium`, or `high` values;
@@ -349,6 +379,36 @@ background, follows `odw logs <run-id> --follow`, writes that stream to
 standard error, then fetches `odw result <run-id>` for the final output. Keep
 all progress, run ids, and log-follow warnings on standard error so standard
 output remains reserved for JSON or Markdown result data.
+
+### ODW result polling
+
+Result retrieval is split across two units with an explicit boundary.
+`pollOdwResult()` in `scripts/odw-result-poll.mjs` is the read-only polling
+kernel: it receives the result fetcher, a millisecond clock and a sleeper as
+injected dependencies, so it spawns no process, reads no wall clock, emits no
+telemetry and builds no failure envelope. It always performs one immediate
+fetch, retries at most once a second while the fetch fails, and clamps the
+final delay to the remaining time so the last attempt starts at the deadline.
+The injected fetcher can then continue beyond that deadline, because the CLI
+spawns `odw result` without a process timeout. It returns the final fetch
+alongside bounded metrics (`attempts`, `failures`, `startedAt`) and
+`elapsedMs`, which it measures with the same injected clock that enforces the
+deadline, so the command unit never mixes a wall-clock reading into injected
+time.
+
+`waitForOdwResult()` in `bin/dakar-review.mjs` is the command unit. It supplies
+the `odw result` fetcher and the real clock and sleeper, finalizes the payload,
+and owns everything the kernel must not do: it builds one metrics object per
+terminal outcome from the poller's counters and elapsed time, emits the single
+`odw_result_poll` event from it, and reuses the same object in the failure
+envelope so the event and the envelope cannot disagree about `elapsedMs`. A
+zero exit status with an unusable payload fails the retrieval with
+`category: "invalid_output"` rather than reporting a completed poll.
+
+Keep the seam testable: polling regressions belong in
+`tests/odw-result-poll.test.mjs`, which combines boundary tables with a bounded
+`fast-check` property over the injected clock and sleeper, while command
+recording and telemetry regressions belong in `tests/cli-telemetry.test.mjs`.
 
 A CLI test that exercises a review must run against its own fixture repository,
 never the checkout under test. `setUpRecordRepo` in

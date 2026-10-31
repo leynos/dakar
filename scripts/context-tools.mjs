@@ -7,13 +7,27 @@
 import { shellWord } from '../src/workflows/dakar-review/shell.ts'
 
 /**
+ * Serialize a value as JSON with the true return type.
+ *
+ * `JSON.stringify` is declared as returning `string`, but returns `undefined`
+ * for values it cannot represent. The explicit return type keeps the caller's
+ * emptiness guard meaningful to type-aware analysis.
+ *
+ * @param {unknown} value - value to serialize.
+ * @returns {string | undefined} the JSON text, or `undefined` when unserializable.
+ */
+function serializeJson(value) {
+  return JSON.stringify(value)
+}
+
+/**
  * Serialize an MCP payload as one shell-safe command argument.
  *
  * @param {Record<string, unknown>} payload - JSON-serializable tool payload.
  * @returns {string} A shell-quoted JSON payload.
  */
 function mcpPayload(payload) {
-  const json = JSON.stringify(payload)
+  const json = serializeJson(payload)
   if (json === undefined) throw new Error('MCP payload must be serializable')
   return shellWord(json)
 }

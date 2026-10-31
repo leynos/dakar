@@ -18,8 +18,10 @@ const unicornRecommendedRules = Object.fromEntries(
   "error-message",
   "escape-case",
   "explicit-length-check",
+  "explicit-timer-delay",
   "filename-case",
   "import-style",
+  "max-nested-calls",
   "new-for-builtins",
   "no-abusive-eslint-disable",
   "no-accessor-recursion",
@@ -34,6 +36,7 @@ const unicornRecommendedRules = Object.fromEntries(
   "no-await-expression-member",
   "no-await-in-promise-methods",
   "no-console-spaces",
+  "no-confusing-array-with",
   "no-document-cookie",
   "no-empty-file",
   "no-hex-escape",
@@ -105,6 +108,7 @@ const unicornRecommendedRules = Object.fromEntries(
   "prefer-native-coercion-functions",
   "prefer-negative-index",
   "prefer-node-protocol",
+  "prefer-number-coercion",
   "prefer-number-properties",
   "prefer-object-from-entries",
   "prefer-optional-catch-binding",
@@ -139,7 +143,7 @@ const unicornRecommendedRules = Object.fromEntries(
 );
 
 export default defineConfig({
-  plugins: ["unicorn"],
+  plugins: ["typescript", "unicorn"],
   jsPlugins: ["ai-deslop"],
   categories: {
     correctness: "off",

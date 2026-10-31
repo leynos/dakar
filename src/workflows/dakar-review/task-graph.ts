@@ -102,7 +102,7 @@ export function taskSpec(kind: string, files: string[], index: number, config: T
   const assigned = modelForRole(role, config.reviewModels)
   return {
     taskId: `${kind}-${index + 1}`, kind, files, assignedModel: modelName(assigned),
-    adapter: adapterForReasoning(assigned.reasoning || 'medium'), model: baseModel(assigned.model || ''),
+    adapter: adapterForReasoning(assigned.reasoning), model: baseModel(assigned.model),
     modelLabel: assigned.label, role,
     maxFindings: Math.max(1, Math.min(config.maxFindings, kind === 'source' ? 6 : 3)),
     verificationPolicy: role === 'high' ? 'verify-all' : 'verify-non-low-and-sampled-low',
@@ -230,20 +230,29 @@ export function buildFlexFinderPlan(
   const effectiveCap = Math.max(1, Math.min(config.maxTasks, config.maxLunaFlexCalls))
   const admittedChunks = orderedChunks.slice(0, effectiveCap)
   const truncatedFiles = orderedChunks.slice(effectiveCap).flatMap((entry) => entry.files)
-  const packs = admittedChunks.map((entry, index): ReviewTask => ({
-    taskId: `luna-flex-${index + 1}`,
-    kind: entry.kind,
-    files: entry.files,
-    assignedModel: modelName({ model: lane.model, reasoning: lane.reasoning }),
-    adapter: lane.adapter,
-    model: lane.model,
-    modelLabel: lane.adapter,
-    role: lane.role,
-    serviceTier: lane.serviceTier,
-    reasoningEffort: lane.reasoning,
-    maxFindings: Math.max(1, Math.min(config.maxFindings, entry.kind === 'source' ? 6 : 3)),
-    verificationPolicy: 'verify-all',
-  }))
+  const packs = admittedChunks.map(
+    /**
+     * Project one admitted finder chunk into a dispatchable Luna task.
+     *
+     * @param entry - chunk kind and the files it covers.
+     * @param index - position within the admitted order.
+     * @returns the task carrying the lane routing and the per-kind finding cap.
+     */
+    (entry, index): ReviewTask => ({
+      taskId: `luna-flex-${index + 1}`,
+      kind: entry.kind,
+      files: entry.files,
+      assignedModel: modelName({ model: lane.model, reasoning: lane.reasoning }),
+      adapter: lane.adapter,
+      model: lane.model,
+      modelLabel: lane.adapter,
+      role: lane.role,
+      serviceTier: lane.serviceTier,
+      reasoningEffort: lane.reasoning,
+      maxFindings: Math.max(1, Math.min(config.maxFindings, entry.kind === 'source' ? 6 : 3)),
+      verificationPolicy: 'verify-all',
+    }),
+  )
   return { packs, truncatedFiles }
 }
 

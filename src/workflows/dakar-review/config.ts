@@ -52,11 +52,26 @@ const modelSpecSchema = z.strictObject({
   reasoning: reasoningSchema,
   role: z.string().optional(),
 })
+/**
+ * Treat an omitted value as absent and discard an invalid one.
+ *
+ * @param schema - schema applied to a supplied value.
+ * @returns a preprocessed optional schema.
+ */
 function optionalParsed<Schema extends z.ZodType>(schema: Schema) {
-  return z.preprocess((candidate) => {
-    const parsed = schema.safeParse(candidate)
-    if (parsed.success) return parsed.data
-  }, schema.optional())
+  return z.preprocess(
+    /**
+     * Keep a supplied value only when its own schema accepts it.
+     *
+     * @param candidate - raw value supplied for the field.
+     * @returns the parsed value, or `undefined` to treat the field as absent.
+     */
+    (candidate) => {
+      const parsed = schema.safeParse(candidate)
+      if (parsed.success) return parsed.data
+    },
+    schema.optional(),
+  )
 }
 
 const modelCandidateSchema = optionalParsed(modelSpecSchema)
@@ -73,7 +88,8 @@ const deterministicGateSchema = z.strictObject({
   stdout: z.string(),
   stdoutSha256: z.string(),
 })
-const preparedReviewSchema = z.object({
+/** Prepared review boundary schema. @internal */
+export const preparedReviewSchema = z.looseObject({
   alreadyReviewed: z.boolean().optional(),
   changedFiles: z.array(z.string()).optional(),
   commitCount: z.number().optional(),
@@ -84,11 +100,12 @@ const preparedReviewSchema = z.object({
   reviewBase: z.string().optional(),
   stateFile: z.string().optional(),
   warnings: z.array(z.string()).optional(),
-}).passthrough()
+})
 const numericArgumentField = optionalParsed(numericArgumentSchema)
 const stringArgumentField = optionalParsed(z.string())
 const reasoningArgumentField = optionalParsed(reasoningSchema)
-const workflowArgsSchema = z.object({
+/** Workflow argument boundary schema. @internal */
+export const workflowArgsSchema = z.looseObject({
   adapterOverheadTokens: numericArgumentField,
   agentInstructions: optionalParsed(agentInstructionsSchema),
   base: stringArgumentField,
@@ -121,7 +138,7 @@ const workflowArgsSchema = z.object({
   transactionMaxFiles: numericArgumentField,
   transactionMaxInputTokens: numericArgumentField,
   transactionMaxOutputTokens: numericArgumentField,
-}).passthrough()
+})
 
 /** Summarizes the validated, immutable settings consumed by one workflow run. */
 export interface WorkflowConfig {
@@ -298,17 +315,18 @@ const EMPTY_REVIEW_POLICY: Readonly<NormalizedReviewPolicy> = Object.freeze({
   ignoredKeys: Object.freeze([]),
 })
 
+/** A validated review policy and the flag recording whether the hand-off was usable. */
+interface ConfiguredReviewPolicy {
+  policy: Readonly<NormalizedReviewPolicy>
+  valid: boolean
+}
+
 /**
  * Validate the normalized review-policy hand-off supplied by the CLI.
  *
  * @param value - untrusted workflow argument.
  * @returns Frozen policy and a validity flag; omission is a valid empty policy.
  */
-interface ConfiguredReviewPolicy {
-  policy: Readonly<NormalizedReviewPolicy>
-  valid: boolean
-}
-
 function configuredReviewPolicy(value: JsonValue | undefined): ConfiguredReviewPolicy {
   if (value === undefined) return { policy: EMPTY_REVIEW_POLICY, valid: true }
   const parsed = reviewPolicySchema.safeParse(value)
