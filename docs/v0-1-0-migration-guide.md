@@ -35,7 +35,9 @@ output. Existing explicit token-limit options continue to override the defaults.
 `--telemetry` now follows the ODW log stream and then polls `odw result` until
 the review result is available. The CLI retries at most once per second until
 `--timeout` expires, performs a final fetch at the deadline, and gives a hung
-log stream a five-second result-recovery window before giving up.
+log stream a five-second result-recovery polling deadline before giving up.
+That deadline bounds the polling loop only: each `odw result` attempt is
+spawned without a process timeout, so an individual fetch can outlast it.
 
 Each retrieval reports one bounded `odw_result_poll` event on standard error
 with the run id, attempt and failure counts, elapsed time, terminal state, and

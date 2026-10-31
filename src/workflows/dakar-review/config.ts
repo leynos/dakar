@@ -59,10 +59,19 @@ const modelSpecSchema = z.strictObject({
  * @returns a preprocessed optional schema.
  */
 function optionalParsed<Schema extends z.ZodType>(schema: Schema) {
-  return z.preprocess((candidate) => {
-    const parsed = schema.safeParse(candidate)
-    if (parsed.success) return parsed.data
-  }, schema.optional())
+  return z.preprocess(
+    /**
+     * Keep a supplied value only when its own schema accepts it.
+     *
+     * @param candidate - raw value supplied for the field.
+     * @returns the parsed value, or `undefined` to treat the field as absent.
+     */
+    (candidate) => {
+      const parsed = schema.safeParse(candidate)
+      if (parsed.success) return parsed.data
+    },
+    schema.optional(),
+  )
 }
 
 const modelCandidateSchema = optionalParsed(modelSpecSchema)

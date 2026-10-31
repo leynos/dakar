@@ -995,7 +995,10 @@ function resultFailureEnvelope(stage, runId, error) {
 }
 
 /**
- * Give a timed-out log follow a separate five-second result-recovery window.
+ * Give a timed-out log follow a five-second result-recovery polling deadline.
+ *
+ * The deadline bounds only the retry loop; each fetch is spawned without a
+ * process timeout, so one fetch may outlast it.
  *
  * @param {object} options - parsed CLI options.
  * @param {object} workflowArgs - workflow arguments to pass via `--args`.

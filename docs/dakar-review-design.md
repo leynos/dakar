@@ -476,10 +476,12 @@ discards remain only at the CLI compatibility/debug boundary.
 - The CLI's own append to review history fails: the result carries
   `stage: "record"` with `recordInput` preserved for manual retry.
 - Telemetry follow times out: the CLI gives the possibly completed (and
-  already billed) run one five-second result-recovery fetch. A usable result is
-  finalized and recorded as usual; otherwise the CLI reports
-  `stage: "odw-logs"` with the same poll metrics, exits non-zero, and leaves
-  the ODW run inspectable by run id.
+  already billed) run a five-second result-recovery polling deadline. Each
+  fetch is spawned without a process timeout, so the deadline bounds the
+  retries rather than the duration of one fetch. A usable result is finalized
+  and recorded as usual; otherwise the CLI reports `stage: "odw-logs"` with the
+  same poll metrics, exits non-zero, and leaves the ODW run inspectable by run
+  id.
 - Result retrieval fails: `pollOdwResult()` in `scripts/odw-result-poll.mjs`
   is the read-only kernel that performs one immediate `odw result` fetch and
   retries at most once a second until the deadline, with the result fetcher,

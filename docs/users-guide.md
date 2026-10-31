@@ -691,7 +691,9 @@ available, the CLI exits non-zero with a JSON error carrying
 `stage: "odw-result"`, the same poll metrics, and the underlying process or
 parsing error, such as `ENOENT` when the ODW executable is missing. A log
 stream that hangs until the timeout receives a five-second result-recovery
-fetch instead; if that also fails, the stage is `odw-logs`. The
+polling deadline instead; that deadline bounds the retries only, because each
+`odw result` fetch is spawned without a process timeout and can outlast it. If
+recovery also fails, the stage is `odw-logs`. The
 [0.1.0 behaviour migration guide](v0-1-0-migration-guide.md) summarizes this
 change at release level.
 

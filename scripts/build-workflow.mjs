@@ -43,6 +43,10 @@ const RUNTIME_PACKAGES = ['zod']
  * callers such as the CLI entry point can report the failure kind precisely.
  */
 export class WorkflowBuildError extends Error {
+  /**
+   * @param {string} code - machine-readable code naming the violated invariant.
+   * @param {string} message - human-readable failure explanation.
+   */
   constructor(code, message) {
     super(message)
     /** Always `'WorkflowBuildError'`, distinguishing this from other thrown errors. */
