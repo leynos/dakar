@@ -108,6 +108,13 @@ hand-edit `workflows/dakar-review.js`. Edit the source tree, run
 `make workflow-freshness` to prove that the committed artefact matches its
 inputs without rewriting it.
 
+`scripts/build-workflow.mjs` also exports `findLastNode` and
+`findModuleWrapperName` for the depth-first traversal property tests only; they
+are test seams over the bundle's AST checks, not a supported build API.
+`scripts/odw-result-poll.mjs` is listed in the `Makefile`'s `NODE_MODULES`
+target so that the ordinary Node syntax check covers it alongside the other
+CLI-side modules.
+
 The source tree has these responsibilities:
 
 - `meta.js`: one literal metadata export, concatenated verbatim;
@@ -361,9 +368,11 @@ Result retrieval is split across two units with an explicit boundary.
 kernel: it receives the result fetcher, a millisecond clock and a sleeper as
 injected dependencies, so it spawns no process, reads no wall clock, emits no
 telemetry and builds no failure envelope. It always performs one immediate
-fetch, retries at most once a second while the fetch fails, clamps the final
-delay to the remaining time, and stops at the deadline. It returns the final
-fetch alongside bounded metrics (`attempts`, `failures`, `startedAt`).
+fetch, retries at most once a second while the fetch fails, and clamps the
+final delay to the remaining time so the last attempt starts at the deadline.
+The injected fetcher can then continue beyond that deadline, because the CLI
+spawns `odw result` without a process timeout. It returns the final fetch
+alongside bounded metrics (`attempts`, `failures`, `startedAt`).
 
 `waitForOdwResult()` in `bin/dakar-review.mjs` is the command unit. It supplies
 the `odw result` fetcher and the real clock and sleeper, finalizes the payload,

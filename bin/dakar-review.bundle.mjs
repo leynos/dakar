@@ -6992,6 +6992,7 @@ var dakarRunSchema = object({
   properties: object({ dakar: jsonRecordSchema.optional() }).loose().optional()
 }).loose();
 var sarifOutputSchema = object({ runs: array(dakarRunSchema).optional() }).loose();
+var workflowVerdictSchema = object({ ok: boolean2() }).loose();
 var workflowOutputSchema = object({
   metrics: jsonRecordSchema.optional(),
   recordInput: recordInputSchema.optional()
@@ -7528,6 +7529,9 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
   let output;
   try {
     output = finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
+    if (!workflowVerdictSchema.safeParse(output).success) {
+      throw new Error("ODW result must contain a boolean `ok`");
+    }
   } catch (error2) {
     poll.failures += 1;
     const metrics = pollMetrics(poll, "failed", "invalid_output");

@@ -50,6 +50,9 @@ const dakarRunSchema = z.object({
   properties: z.object({ dakar: jsonRecordSchema.optional() }).loose().optional(),
 }).loose()
 const sarifOutputSchema = z.object({ runs: z.array(dakarRunSchema).optional() }).loose()
+
+/** Require the workflow's boolean verdict flag at the result boundary. */
+const workflowVerdictSchema = z.object({ ok: z.boolean() }).loose()
 const workflowOutputSchema = z.object({
   metrics: jsonRecordSchema.optional(),
   recordInput: recordInputSchema.optional(),
@@ -924,9 +927,9 @@ function pollMetrics(poll, terminal, category) {
 }
 
 /**
- * Retrieve, finalise and record the ODW result, reporting one bounded poll event.
+ * Retrieve, finalize and record the ODW result, reporting one bounded poll event.
  *
- * The command unit owns finalisation, telemetry and the failure envelope, while
+ * The command unit owns finalization, telemetry and the failure envelope, while
  * {@link pollOdwResult} stays a read-only polling seam. A zero exit status does
  * not guarantee a usable payload, so malformed JSON or an invalid result shape
  * fails the retrieval and reports the same `invalid_output` outcome in the poll
@@ -959,6 +962,9 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
   let output
   try {
     output = finalizeWorkflowResult(extractJson(result.stdout), workflowArgs)
+    if (!workflowVerdictSchema.safeParse(output).success) {
+      throw new Error('ODW result must contain a boolean `ok`')
+    }
   } catch (error) {
     poll.failures += 1
     const metrics = pollMetrics(poll, 'failed', 'invalid_output')

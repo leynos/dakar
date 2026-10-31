@@ -424,6 +424,14 @@ export function createUsageScanner({ maxLineChars = MAX_TELEMETRY_LINE_CHARS } =
   }
 
   const stream = new Writable({
+    /**
+     * Decode and consume one chunk from the followed log stream.
+     *
+     * @param {Buffer} chunk - bytes written by the child process.
+     * @param {string} _encoding - stream encoding, unused for byte chunks.
+     * @param {(error?: Error) => void} callback - completion callback.
+     * @returns {void}
+     */
     write(chunk, _encoding, callback) {
       try {
         consume(decoder.write(chunk))
@@ -432,6 +440,12 @@ export function createUsageScanner({ maxLineChars = MAX_TELEMETRY_LINE_CHARS } =
         callback(error)
       }
     },
+    /**
+     * Flush the decoder once the followed stream ends.
+     *
+     * @param {(error?: Error) => void} callback - completion callback.
+     * @returns {void}
+     */
     final(callback) {
       try {
         consume(decoder.end(), true)
