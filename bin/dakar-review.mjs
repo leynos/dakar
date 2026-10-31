@@ -961,10 +961,15 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
   }
   let output
   try {
-    output = finalizeWorkflowResult(extractJson(result.stdout), workflowArgs)
-    if (!workflowVerdictSchema.safeParse(output).success) {
+    // Validate the raw payload: finalisation normalizes unusable results (for
+    // example a malformed `recordInput`) into an `ok: false` envelope and
+    // consumes the usage log, so checking afterwards would both accept a
+    // shapeless result and discard the only reported-usage channel.
+    const rawOutput = extractJson(result.stdout)
+    if (!workflowVerdictSchema.safeParse(rawOutput).success) {
       throw new Error('ODW result must contain a boolean `ok`')
     }
+    output = finalizeWorkflowResult(rawOutput, workflowArgs)
   } catch (error) {
     poll.failures += 1
     const metrics = pollMetrics(poll, 'failed', 'invalid_output')

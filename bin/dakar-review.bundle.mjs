@@ -7528,10 +7528,11 @@ async function waitForOdwResult(options, workflowArgs, runId, timeoutMs = (optio
   }
   let output;
   try {
-    output = finalizeWorkflowResult(extractJson(result.stdout), workflowArgs);
-    if (!workflowVerdictSchema.safeParse(output).success) {
+    const rawOutput = extractJson(result.stdout);
+    if (!workflowVerdictSchema.safeParse(rawOutput).success) {
       throw new Error("ODW result must contain a boolean `ok`");
     }
+    output = finalizeWorkflowResult(rawOutput, workflowArgs);
   } catch (error2) {
     poll.failures += 1;
     const metrics = pollMetrics(poll, "failed", "invalid_output");

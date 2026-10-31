@@ -22,24 +22,35 @@ function pollEvent(stderr) {
  * Run the CLI against a fake ODW whose `result` fetch exits zero with `payload`.
  *
  * The fake ODW starts a run, never writes a log stream, and answers `result`
- * with the payload verbatim, so the poll sees exactly one zero-exit fetch.
+ * with the payload verbatim, so the poll sees exactly one zero-exit fetch. It
+ * always records the usage-log path it was given, and can append one usage
+ * record to it first.
  *
  * @param {object} t - the test context, used to clean up the fixture.
  * @param {string} payload - exact text the fake `result` command writes.
- * @returns {object} the completed CLI spawn result.
+ * @param {object} [options] - fixture options.
+ * @param {boolean} [options.reportUsage] - append one usage record before answering.
+ * @returns {{ completed: object, capturePath: string }} the CLI spawn result and the captured usage-log path file.
  */
-function runZeroExitResult(t, payload) {
+function runZeroExitResult(t, payload, { reportUsage = false } = {}) {
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
   t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const fakeOdw = join(tempRoot, 'odw.mjs')
+  const capturePath = join(tempRoot, 'usage-log-path')
   writeFileSync(fakeOdw, `#!/usr/bin/env node
+import { appendFileSync, writeFileSync } from 'node:fs'
 const mode = process.argv[2]
 if (mode === 'run') process.stdout.write('started run 20260719-000000-fedcba\\n')
-if (mode === 'result') process.stdout.write(${JSON.stringify(payload)})
+if (mode === 'result') {
+  writeFileSync(${JSON.stringify(capturePath)}, process.env.DAKAR_USAGE_LOG)
+  if (${reportUsage}) appendFileSync(process.env.DAKAR_USAGE_LOG, '{"model":"probe","usage":{"input":7,"output":3}}\\n')
+  process.stdout.write(${JSON.stringify(payload)})
+}
 `)
   chmodSync(fakeOdw, 0o755)
-  return spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
+  const completed = spawnCli(['--repo-root', targetRepo, '--base', base, '--odw-bin', fakeOdw,
     '--runs-root', join(tempRoot, 'runs'), '--telemetry', '--timeout', '1'])
+  return { completed, capturePath }
 }
 
 /**
@@ -296,7 +307,7 @@ if (mode === 'logs') unlinkSync(process.argv[1])
 })
 
 test('a zero-exit result with malformed JSON reports one failed outcome', (t) => {
-  const completed = runZeroExitResult(t, 'this is not the result JSON\n')
+  const { completed } = runZeroExitResult(t, 'this is not the result JSON\n')
   assertInvalidOutput(completed, {
     error: /"error":\s*"invalid ODW result:/u,
     reason: 'malformed JSON',
@@ -304,11 +315,30 @@ test('a zero-exit result with malformed JSON reports one failed outcome', (t) =>
 })
 
 test('a zero-exit result without a boolean ok reports one failed outcome', (t) => {
-  const completed = runZeroExitResult(t, '{}\n')
+  const { completed } = runZeroExitResult(t, '{}\n')
   assertInvalidOutput(completed, {
     error: /"error":\s*"invalid ODW result: ODW result must contain a boolean/u,
     reason: 'shapeless',
   })
+})
+
+test('a raw result without a boolean verdict is rejected before finalisation', (t) => {
+  const { completed } = runZeroExitResult(t, '{"recordInput":123}\n')
+  assertInvalidOutput(completed, {
+    error: /"error":\s*"invalid ODW result: ODW result must contain a boolean/u,
+    reason: 'verdictless',
+  })
+})
+
+test('a rejected result leaves the reported-usage log intact', (t) => {
+  const { completed, capturePath } = runZeroExitResult(t, '{}\n', { reportUsage: true })
+  assertInvalidOutput(completed, {
+    error: /"error":\s*"invalid ODW result: ODW result must contain a boolean/u,
+    reason: 'shapeless',
+  })
+  const usageLogPath = readFileSync(capturePath, 'utf8')
+  assert.match(readFileSync(usageLogPath, 'utf8'), /"input":7/u,
+    'the only reported-usage channel must survive a rejected result')
 })
 
 test('an outer timeout below the retry worst case warns on stderr', (t) => {
