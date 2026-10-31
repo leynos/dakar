@@ -322,6 +322,14 @@ test('a zero-exit result without a boolean ok reports one failed outcome', (t) =
   })
 })
 
+test('a zero-exit result with a non-boolean ok reports one failed outcome', (t) => {
+  const { completed } = runZeroExitResult(t, '{"ok":"false"}\n')
+  assertInvalidOutput(completed, {
+    error: /"error":\s*"invalid ODW result: ODW result must contain a boolean/u,
+    reason: 'non-boolean verdict',
+  })
+})
+
 test('a raw result without a boolean verdict is rejected before finalisation', (t) => {
   const { completed } = runZeroExitResult(t, '{"recordInput":123}\n')
   assertInvalidOutput(completed, {
