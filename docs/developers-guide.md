@@ -180,11 +180,15 @@ The host-to-workflow argument boundary lives in `config.ts`.
 `workflowArgsSchema` validates the JSON argument object the CLI passes to the
 compiled workflow, and `preparedReviewSchema` validates its `prepared` member,
 which carries the resolved review range and the deterministic gate results.
-Both are `z.looseObject()` schemas, so unknown top-level and nested keys
+Both are `z.looseObject()` schemas, so unknown keys at those two boundaries
 survive parsing and reach the workflow, keeping the hand-off forward
-compatible. Individual fields are wrapped in `optionalParsed()`, which drops a
-value that fails its field schema; an omitted or invalid value therefore falls
-back to the documented default rather than failing the run.
+compatible. Nested values keep their own schemas' rules rather than inheriting
+the boundary's: `agentInstructionsSchema` uses `z.object()` and so strips
+unknown keys, while `modelSpecSchema`, reached through `modelCandidateSchema`,
+uses `z.strictObject()` and rejects them, which lets `optionalParsed()` discard
+that model entry. Individual fields are wrapped in `optionalParsed()`, which
+drops a value that fails its field schema; an omitted or invalid value
+therefore falls back to the documented default rather than failing the run.
 `resolveWorkflowConfig()` applies the same contract to the payload as a whole:
 a parse failure yields an empty argument object, so a malformed hand-off
 degrades to defaults instead of aborting. Both schemas are `@internal`, because

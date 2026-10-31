@@ -164,18 +164,25 @@ function hasExportModifier(node) {
 }
 
 /**
+ * Whether a statement declares exactly one variable binding named `meta`.
+ * @param {import('typescript').Statement} statement - candidate statement.
+ * @returns {statement is import('typescript').VariableStatement} true for `const meta = …` with a single declarator.
+ */
+function isSingleMetaDeclaration(statement) {
+  if (!ts.isVariableStatement(statement)) return false
+  const declarations = statement.declarationList.declarations
+  return declarations.length === 1 &&
+    ts.isIdentifier(declarations[0].name) &&
+    declarations[0].name.text === 'meta'
+}
+
+/**
  * Collect the banner statements that declare a single `meta` binding.
  * @param {import('typescript').SourceFile} sourceFile - parsed metadata banner.
  * @returns {import('typescript').VariableStatement[]} matching statements.
  */
 function findMetaStatements(sourceFile) {
-  return sourceFile.statements.filter((statement) => {
-    if (!ts.isVariableStatement(statement)) return false
-    const declarations = statement.declarationList.declarations
-    return declarations.length === 1 &&
-      ts.isIdentifier(declarations[0].name) &&
-      declarations[0].name.text === 'meta'
-  })
+  return sourceFile.statements.filter(isSingleMetaDeclaration)
 }
 
 /**
