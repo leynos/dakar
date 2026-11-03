@@ -86,7 +86,7 @@ Set `OPENAI_API_KEY` before running a live review. The default
 `pi` coding agent (`@earendil-works/pi-coding-agent`) with Dakar's own
 `adapters/pi/` extension and provider catalogue; `pi` must be installed and on
 `PATH`. The CLI sets `PI_CODING_AGENT_DIR` to point `pi` at that catalogue and
-warns on stderr, without failing, if `OPENAI_API_KEY` is unset. ADR 002's
+warns on stderr, without failing, if `OPENAI_API_KEY` is unset. ADR 0002's
 staged-cutover guideline for this default was superseded by a recorded operator
 decision (see roadmap task 7.5.3).
 
@@ -144,7 +144,7 @@ and the ledger" and "Retries, downgrades, and deferral" below for what each
 knob controls.
 
 - `--budget-gbp <number>` sets the hard admission budget in GBP. The default is
-  `0.15`, raised from ADR 002's historical `0.1` hard-budget setting because,
+  `0.15`, raised from ADR 0002's historical `0.1` hard-budget setting because,
   at pricing table 2026-07-18, the reserve-first audit left less than one
   finder pack's worst case inside that old benchmark (see the ADR's 2026-08-13
   amendment).

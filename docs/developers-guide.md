@@ -6,12 +6,12 @@ primary architecture reference is
 record remains at
 [`docs/design/initial-workflow.md`](design/initial-workflow.md), the accepted
 compilation boundary is recorded in
-[`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md),
+[`docs/adrs/adr-0001-compile-odw-workflow-from-typescript.md`](adrs/adr-0001-compile-odw-workflow-from-typescript.md),
 the deterministic and Flex routing decision is recorded in
-[`docs/adr-002-deterministic-tiered-review-cost.md`](adr-002-deterministic-tiered-review-cost.md),
+[`docs/adrs/adr-0002-deterministic-tiered-review-cost.md`](adrs/adr-0002-deterministic-tiered-review-cost.md),
 the application lint strategy is recorded in
-[`docs/adr-003-linting-strategy.md`](adr-003-linting-strategy.md), and delivery
-plans live under [`docs/execplans/`](execplans/).
+[`docs/adrs/adr-0003-linting-strategy.md`](adrs/adr-0003-linting-strategy.md),
+and delivery plans live under [`docs/execplans/`](execplans/).
 
 ## 1. Local validation
 
@@ -51,7 +51,7 @@ recommended Unicorn and deslop rules to `adapters`, `bin/dakar-review.mjs`,
 rules; built-in categories remain off. The
 `adapters/pi/extensions/flex-tier.ts` file is linted but lies outside
 `tsconfig.json`. Pinned versions and the sole plugin-rule exception are
-recorded in [ADR 003](adr-003-linting-strategy.md), whose dated addendum
+recorded in [ADR 0003](adrs/adr-0003-linting-strategy.md), whose dated addendum
 records the TypeScript plugin configuration. Generated bundles and tests are
 outside the Oxlint application target. The generated bundles are checked
 through their source gates and freshness checks, while tests run under
@@ -128,7 +128,7 @@ The source tree has these responsibilities:
 - `config.ts` and `model-routing.ts`: argument defaults, the Flex lane roles
   (`luna`, `luna-medium`, `luna-low`, `terra`), and adapter/model selection;
 - `pricing.ts`: the versioned pricing table and `estimateWorstCaseUsd()`,
-  which prices uncached input at the cache-write band (ADR 002's worst case);
+  which prices uncached input at the cache-write band (ADR 0002's worst case);
 - `admission.ts`: the reserve-first budget controller (`admit()`) that
   enforces `budgetGbp` before any Flex call is dispatched;
 - `retry.ts`: the pure Flex retry schedule — deterministic FNV-1a jitter,
@@ -161,7 +161,7 @@ command introduced by the head under review.
 The internally facing interfaces follow the same ownership boundaries.
 `resolveWorkflowConfig()` returns the frozen `WorkflowConfig` passed into
 routing and planning; it validates and freezes the normalized policy hand-off
-and carries the ADR 002 Flex knobs (budget, Flex limits, retry schedule)
+and carries the ADR 0002 Flex knobs (budget, Flex limits, retry schedule)
 alongside the existing task and candidate limits. `modelForRole()`,
 `flexLaneRole()`, and the other model-routing helpers map that configuration to
 model, adapter, and service-tier selections. The host selects each Flex lane;
@@ -478,9 +478,9 @@ when the CLI enriches the result, and the pricing-table version.
 `renderSarifMarkdown()` are the only final projection paths.
 
 The Flex lanes are pinned in `model-routing.ts::FLEX_LANE_ROLES` and selected
-only by host code (`flexLaneRole()`); ADR 002 forbids an agent promoting itself
-to a costlier model or service tier, so lane choice never appears in a prompt.
-`adapters/pi/` is the Dakar-owned adapter contract for these lanes:
+only by host code (`flexLaneRole()`); ADR 0002 forbids an agent promoting
+itself to a costlier model or service tier, so lane choice never appears in a
+prompt. `adapters/pi/` is the Dakar-owned adapter contract for these lanes:
 
 - `adapters/pi/extensions/flex-tier.ts`: the pi extension that stamps
   `service_tier: "flex"` from the `before_provider_request` hook and logs the
