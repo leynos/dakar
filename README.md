@@ -111,7 +111,7 @@ ______________________________________________________________________
   result interpretation.
 - [Developer's guide](docs/developers-guide.md) — building, testing, and
   extending the workflow.
-- [ADR 002](docs/adr-002-deterministic-tiered-review-cost.md) — why the
+- [ADR 0002](docs/adrs/adr-0002-deterministic-tiered-review-cost.md) — why the
   pipeline is deterministic-first with Flex-tier lanes.
 - [Roadmap](docs/roadmap.md) — planned features and progress.
 

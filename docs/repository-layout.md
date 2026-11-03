@@ -24,8 +24,10 @@ contributor must understand quickly and omits incidental files.
 ├── tests/                Node test suite for the CLI, scripts, and workflow
 ├── examples/             Illustrative configuration samples
 ├── docs/                 Documentation set (see docs/contents.md)
-│   ├── design/           Supplementary design notes
-│   └── execplans/        Living execution plans
+│   ├── adrs/              Architecture decision records
+│   ├── design/            Supplementary design notes
+│   ├── execplans/         Living execution plans
+│   └── rfcs/              Requests for comments
 ├── adapters/pi/          Dakar-owned pi provider catalogue and Flex extension
 ├── .github/workflows/    Continuous integration (CI) configuration
 ├── AGENTS.md             Repository contract for contributors and agents
@@ -48,10 +50,12 @@ notable conventions.
 | `scripts/`                    | Build and support scripts: workflow build (`build-workflow.mjs`), docstring checks, and CodeRabbit-style config and review-history state helpers.                                                                                                                                                             |
 | `tests/`                      | Node test suite covering the CLI, scripts, and workflow orchestration, including property and robustness tests.                                                                                                                                                                                               |
 | `examples/`                   | Illustrative configuration samples, such as a CodeRabbit-style review configuration.                                                                                                                                                                                                                          |
-| `docs/`                       | Documentation set. The [contents file](contents.md) is the index; decision records live here as `adr-NNN-*.md`.                                                                                                                                                                                               |
+| `docs/`                       | Documentation set. The [contents file](contents.md) is the index; ADRs and RFCs use the canonical `adrs/adr-nnnn-title-slug.md` and `rfcs/rfc-nnnn-title-slug.md` paths.                                                                                                                                      |
 | `adapters/pi/`                | Dakar-owned pi provider catalogue and Flex extension: committed `models.json` (custom `openai-flex` provider) and `extensions/flex-tier.ts` (service-tier injection plus usage reporting, auto-loaded via `PI_CODING_AGENT_DIR` set by the CLI). pi's runtime state files written beside them are gitignored. |
 | `docs/design/`                | Supplementary design notes that expand on the primary design document.                                                                                                                                                                                                                                        |
+| `docs/adrs/`                  | Accepted and proposed architectural decisions named with four-digit serials.                                                                                                                                                                                                                                  |
 | `docs/execplans/`             | Living execution plans that record scope, progress, and lessons for individual pieces of work.                                                                                                                                                                                                                |
+| `docs/rfcs/`                  | Proposed changes awaiting technical review, named with four-digit serials.                                                                                                                                                                                                                                    |
 | `.github/workflows/`          | CI configuration that runs the commit gates.                                                                                                                                                                                                                                                                  |
 | `AGENTS.md`                   | The repository contract that contributors and agents must follow.                                                                                                                                                                                                                                             |
 | `Makefile`                    | Commit-gate targets. `make check` runs formatting, linting, type checks, workflow freshness, the ODW dry run, and tests.                                                                                                                                                                                      |

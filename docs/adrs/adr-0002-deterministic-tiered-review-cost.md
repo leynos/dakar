@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 002: Prefer deterministic review stages and Flex-tier residual judgement
+# Architectural decision record (ADR) 0002: Prefer deterministic review stages and Flex-tier residual judgement
 
 ## Status
 
@@ -720,8 +720,8 @@ runs provide the normal verification path.
 - [OpenAI Flex processing][openai-flex]
 - [OpenAI API pricing][openai-pricing]
 - [Codex configuration reference][codex-config]
-- [`docs/dakar-review-design.md`](dakar-review-design.md)
-- [`docs/roadmap.md`](roadmap.md)
+- [`docs/dakar-review-design.md`](../dakar-review-design.md)
+- [`docs/roadmap.md`](../roadmap.md)
 
 [^1]: `df12-build` distinguishes host-enforced contracts from prompt-enforced
     instructions, runs deterministic gates before reviewer agents, and reserves
