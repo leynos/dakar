@@ -24,7 +24,9 @@
     "cli:freshness": "node scripts/build-cli.mjs --check",
     "workflow:build": "node scripts/build-workflow.mjs",
     "workflow:freshness": "node scripts/build-workflow.mjs --check",
-    "odw:dry-run": "sh -eu -c 'runs_root=$(mktemp -d); trap '\\''rm -rf \"$runs_root\"'\\'' EXIT; odw run workflows/dakar-review.js --runs-root \"$runs_root\" --source . --wait --timeout 20 --args '\\''{\"dryRun\":true}'\\'''"
+    "odw:dry-run": "sh -eu -c 'runs_root=$(mktemp -d); trap '\\''rm -rf \"$runs_root\"'\\'' EXIT; odw run workflows/dakar-review.js --runs-root \"$runs_root\" --source . --wait --timeout 20 --args '\\''{\"dryRun\":true}'\\'''",
+    "lint:review-yaml": "uv tool run --python 3.14 --from yamllint==1.38.0 yamllint --strict --config-file .yamllint.yaml",
+    "lint:review-schema": "uv tool run --python 3.14 --from check-jsonschema==0.39.0 check-jsonschema --schemafile https://www.coderabbit.ai/integrations/schema.v2.json"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",

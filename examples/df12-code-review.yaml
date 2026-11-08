@@ -9,7 +9,8 @@ early_access: true
 
 reviews:
   profile: assertive
-  request_changes_workflow: true
+  path_filters:
+    - "!typos.toml"
   high_level_summary_instructions: If the PR includes a *new* execplan document, reference it in the summary. Try to link
     changes to the relevant design document, issue, ADR or RFC.
   high_level_summary_in_walkthrough: true
@@ -33,6 +34,7 @@ reviews:
     - label: Issue
       instructions: A task explicitly aligned with a GitHub issue
   auto_apply_labels: true
+  poem: true
   path_instructions:
     - path: "**/*.rs"
       instructions: >-
@@ -48,10 +50,12 @@ reviews:
 
         - Avoid `unsafe` unless absolutely necessary.
 
-        - Every module **must** begin with a `//!` doc comment that explains the module's purpose and utility.
+        - Every module **must** begin with a `//!` doc comment that explains the
+        module's purpose and utility.
 
-        - Comments and docs must follow en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize,"
-        "synthesized," "polymerization," "analyse," "colour," "behaviour").
+        - Comments and docs must follow en-GB-oxendict (-ize / -yse / -our)
+        spelling and grammar (examples: "recognize," "synthesized,"
+        "polymerization," "analyse," "colour," "behaviour").
 
         - Lints must not be silenced except as a **last resort**.
           - `#[allow]` is **forbidden**.
@@ -59,10 +63,11 @@ reviews:
           - No lint groups, no blanket or file-wide suppression.
           - Lint suppressions must always include a justification.
           - Include `FIXME:` with link if and only if a fix is expected.
-        - Where code is only used by specific features, it must be conditionally compiled or a conditional expectation
-        for unused_code applied.
+        - Where code is only used by specific features, it must be conditionally
+        compiled or a conditional expectation for unused_code applied.
 
-        - Use `rstest` fixtures for shared setup and to avoid repetition between tests.
+        - Use `rstest` fixtures for shared setup and to avoid repetition between
+        tests.
 
         - Replace duplicated tests with `#[rstest(...)]` parameterized cases.
 
@@ -70,23 +75,26 @@ reviews:
 
         - Prefer `.expect()` over `.unwrap()` in tests.
 
-        - `.expect()` and `.unwrap()` are forbidden outside of tests. Errors *must* be propagated.
+        - `.expect()` and `.unwrap()` are forbidden outside of tests. Errors
+        *must* be propagated.
 
-        - Ensure that any API or behavioural changes are reflected in the documentation in `docs/`
+        - Ensure that any API or behavioural changes are reflected in the
+        documentation in `docs/`
 
-        - Ensure that any completed roadmap steps are recorded in the appropriate roadmap in `docs/`
+        - Ensure that any completed roadmap steps are recorded in the
+        appropriate roadmap in `docs/`
 
-        - Files must not exceed 400 lines in length
+        - Rust source files must not exceed 400 lines in length
           - Large modules must be decomposed
           - Long match statements or dispatch tables should be decomposed by domain and collocated with targets
           - Large blocks of inline data (e.g., test fixtures, constants or templates) must be moved to external files and inlined at compile-time or loaded at run-time.
-        - Environment access (env::set_var and env::remove_var) are always unsafe in Rust 2024 and MUST be marked as
-        such 
+        - Environment access (env::set_var and env::remove_var) are always
+        unsafe in Rust 2024 and MUST be marked as such
           - For testing of functionality depending upon environment variables, dependency injection and the `mockable` crate are the preferred option.
-          - If mockable cannot be used, env mutations in tests MUST be wrapped in shared guards and mutexes placed in a shared `test_utils` or `test_helpers` crate.  Direct environment mutation is FORBIDDEN in tests.
+          - If mockable cannot be used, env mutations in tests MUST be wrapped in shared guards and mutexes placed in a shared `test_utils` or `test_helpers` crate. Direct environment mutation is FORBIDDEN in tests.
          - Rust Edition 2024 is a valid and finalized edition that was officially released as part of Rust 1.85.0 on February 20, 2025. It can be used in Cargo.toml files with `edition = "2024"`.
-        - Dependency versions in Cargo.toml should make use of implicit semver caret versioning and must not explicitly
-        include carets.
+        - Dependency versions in Cargo.toml should make use of implicit semver
+        caret versioning and must not explicitly include carets.
     - path: "**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
       instructions: >-
         - Keep complexity low and functions small, meaningful, and single responsibility. Follow command/query
@@ -167,16 +175,23 @@ reviews:
 
         - Commit lockfiles and rebuild them deliberately when major tool upgrades require it.
 
-        - Files must not exceed 400 logical lines:
+        - Code files must not exceed 400 logical lines:
           - Decompose large modules into feature-oriented files
           - Split large `switch` statements or dispatch tables by domain and collocate with targets
           - Move bulky fixtures, templates, or snapshots to external files when appropriate.
     - path: "**/*.md"
       instructions: >-
-        - Avoid 2nd person or 1st person pronouns ("I", "you", "we"), exceptions: README.md, BDD .feature files and SKILL.md files or documents in subdirectories of a directory containing a SKILL.md file.
+        - Avoid first-person pronouns ("I", "we"), except in README.md and BDD .feature files.
+
+        - Avoid second-person pronouns ("you"), except in AGENTS.md, README.md, BDD .feature files, and every agent
+        skill directory. AGENTS.md and README.md are exempt at any directory depth. The skill exemption covers
+        SKILL.md and all other files and nested subdirectories in its containing directory, regardless of the
+        directory's name or location.
 
         - Use en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize," "synthesized,"
         "polymerization," "analyse," "colour," "behaviour").
+
+        - Code file length limits, including the 400-line limit, do not apply to Markdown files.
 
         - Headings must not be wrapped.
 
@@ -228,7 +243,7 @@ reviews:
 
         - Lint suppressions:
           - Blanket `# noqa`, file-level skips, and categories are **forbidden**
-          - Only narrow in-line disables (`# noqa: XYZ`) are permitted, must be accompanied by justification and used only as a last resort.
+          - Only narrow in-line disables (`# ruff: ignore[rule-name]` or `# noqa: XYZ`) are permitted, must be accompanied by justification and used only as a last resort.
           - If (and only if) a fix is required a `FIXME:` with a ticket link must be included
         - Use `pytest` fixtures for shared setup (`conftest.py` or `fixtures/`)
 
@@ -240,7 +255,7 @@ reviews:
 
         - Reflect all API/behaviour changes in `docs/` and update roadmap on completion
 
-        - Files must not exceed 400 logical lines:
+        - Code files must not exceed 400 logical lines:
           - Decompose large modules into subpackages
           - Split large `match/case` or dispatch tables by domain and collocate with targets if appropriate
           - Move bulky data (fixtures, templates) to external files for parsing at runtime
@@ -258,11 +273,34 @@ reviews:
   abort_on_close: false
   auto_review:
     auto_pause_after_reviewed_commits: 1
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
   pre_merge_checks:
     title:
-      requirements: The title must align with the original change in the PR. The title should only change when the scope of
-        the PR changes. If the change implements a roadmapped execplan, the roadmap item reference must be included in
-        the title, e.g. `(1.2.3.)`. If the change fixes an issue, the issue must be linked in the title with `(#nnn)`.
+      requirements: >-
+        The title should be derived from the purpose of the original push to the PR.
+
+
+        If a PR contains a *new* execplan, the title should be drawn from the execplan, and must not describe the PR's
+        purpose as "planning" (unless the execplan describes a purely planning task). Where an execplan has not yet been
+        accepted, this must be denoted with a "Plan: " prefix (this prefix is distinct from the actual title).
+
+
+        Changes that implement a roadmap task must reference the roadmap item by number in the title, e.g., `(1.2.3.)`.
+        This should only be included where a roadmap task is referenced in the execplan or PR description.
+
+
+        Changes that fix an issue must reference the issue by number in the title, e.g., `(#123)`, where there is an
+        existing GitHub issue referenced by the PR description.
     custom_checks:
       - mode: error
         name: Testing (Overall)
@@ -280,6 +318,12 @@ reviews:
 
           When reviewing tests, explicitly consider whether the test would fail for the most plausible incorrect
           implementations of the change. If not, request stronger tests before merge.
+
+
+          Do not require tests to determine if a third party tool or library is working as advertised. Tests relating to
+          third-party tools should only be present where the local configuration describes logical behaviour that builds
+          on the standard tool behaviour or where interaction between the external tool and repository code is heavily
+          dependent on repository code behaviour.
       - mode: warning
         name: User-facing documentation
         instructions: >-
@@ -297,8 +341,9 @@ reviews:
           it does not belong in the `README`.
 
 
-          Breaking changes, or new functionality should be signposted in an n+1 migration document (minor for pre-1.0.0,
-          major for post-1.0.0). Where new functionality requires a change in the approach to using the application or
+          Breaking changes, or new functionality should be signposted in an n+1 migration document. This is the minor
+          version for pre-1.0.0, and major for post-1.0.0, and the corresponding final release for a pre-release
+          (alpha/beta) version. Where new functionality requires a change in the approach to using the application or
           library this must be clearly explained. Any renames, moves or conceptual changes in the UI for applications
           must also be signposted.
 
@@ -314,19 +359,20 @@ reviews:
           document or an ADR (depending on size and scope of the decision).
 
 
-          Completed roadmap items (if any) must be checked off, and if an execplan is present, it must be up to date,
-          reflecting the progress of the changes in the code.
+          Completed roadmap items (if any) must be checked off, and if a *new* execplan is present, it must be up to
+          date, reflecting the progress of the changes in the code. Pre-existing completed execplans are historical
+          documents and must reflect the state of the codebase at time of implementation. Clarifying updates may be
+          added as addenda, but are generally not required. Accepted/rejected ADRs should be updated by logged addenda
+          rather than changed retroactively.
 
 
           If documentation is provided in multiple languages, following locales must be kept in sync with the lead
           locale.
       - mode: error
         name: Module-level documentation
-        instructions: Language-specific source modules must carry appropriate module-level documentation clearly explaining
-          the module's purpose, utility and function. Rust modules use `//!`, JavaScript and TypeScript modules use
-          `/** @file ... */`, and Python modules use a triple-quoted module docstring. The documentation should also set
-          out the module's relationship to other components if not obvious.
-      - mode: warning
+        instructions: All modules must carry a docstring clearly explaining the module's purpose, utility and function.
+          The documentation should also set out the module's relationship to other components if not obvious.
+      - mode: error
         name: Testing (Unit and Behavioural)
         instructions: Unit tests must verify meaningful local behaviour, edge cases, error paths, and invariants. Behavioural
           tests must exercise the appropriate functional boundary and must not be disguised unit tests that only drive
@@ -335,21 +381,36 @@ reviews:
           boundaries, UI flows, or other system-level behaviour.
       - mode: warning
         name: Testing (Property / Proof)
-        instructions: Property tests, using proptest (Rust), Hypothesis (Python) or fast-check (TypeScript), or a bounded model
+        instructions: >-
+          Property tests, using proptest (Rust), Hypothesis (Python) or fast-check (TypeScript), or a bounded model
           checker, such as Kani (Rust) or CrossHair (Python), should be recommended when the change introduces an
-          invariant over a range of inputs, states, orderings, or transitions. For introduced lemmas or proof
-          assumptions, an exhaustive proof, for example using Verus (Rust) or LemmaScript (TypeScript), should be
-          recommended. Any proof must be substantive, rigorous, and well-founded, not merely a restatement of the
-          assumed property. Axioms accepted in the proof must be genuinely axiomatic and not an excuse to avoid testing
-          stated assumptions.
+          invariant over a range of inputs, states, orderings, or transitions.
+
+
+          Add a property test when an invariant covers many meaningful inputs that a reader cannot confidently audit
+          from a small parameterized table. Keep parameterized unit tests when the table is complete, small, and
+          communicates the contract better.
+
+
+          For introduced lemmas or proof assumptions, an exhaustive proof, for example using Verus (Rust) or LemmaScript
+          (TypeScript), should be recommended. Any proof must be substantive, rigorous, and well-founded, not merely a
+          restatement of the assumed property. Axioms accepted in the proof must be genuinely axiomatic and not an
+          excuse to avoid testing stated assumptions.
       - mode: warning
         name: Testing (Compile-time / UI)
-        instructions: "For compile-time behaviour, a trybuild test is required. For text-based, structured, or UI-adjacent
-          output, snapshot tests should be recommended where appropriate. Snapshot tests must encode meaningful
-          behavioural expectations: they must not be so generic that they bless meaningless output, nor so brittle that
-          incidental formatting churn causes blithe failure cascades. Prefer focused snapshots, stable serialization,
-          explicit redaction of nondeterministic fields, and small semantic assertions around the snapshot when that
-          improves reviewability."
+        instructions: >-
+          For compile-time behaviour (where present) in Rust or TypeScript, a trybuild (or language-specific equivalent
+          where applicable) test is required.
+
+
+          For text-based, structured, multi-variant or UI-adjacent output, snapshot tests should be recommended where
+          appropriate. Snapshot tests must encode meaningful behavioural expectations: they must not be so generic that
+          they bless meaningless output, nor so brittle that incidental formatting churn causes blithe failure cascades.
+          Prefer focused snapshots, stable serialization, explicit redaction of nondeterministic fields, and small
+          semantic assertions around the snapshot when that improves reviewability. Ensure that staleness, secret
+          leakiness and brittleness are mitigated by redacting floating values such as version numbers, commit hashes,
+          filenames, sizes, timestamps, etc., PII and secrets. Redacting for PII or secrets in external or logging
+          output should be seen as a red flag suggesting insecure or unsafe output.
       - mode: error
         name: Unit Architecture
         instructions: >-
@@ -495,7 +556,7 @@ reviews:
           identifiers, private metadata, or internal operational data through APIs, logs, traces, metrics, errors,
           snapshots, caches, test fixtures, or documentation unless the exposure is intentional, necessary, and
           protected at the correct boundary.
-      - mode: warning
+      - mode: error
         name: Performance and Resource Use
         instructions: >-
           Changes must avoid avoidable algorithmic regressions, unbounded resource growth, excessive allocation,
@@ -534,7 +595,7 @@ reviews:
 
           For material performance-sensitive changes, reviewers should request a benchmark, profiling evidence,
           complexity note, load test, or regression test that reflects realistic input size rather than toy data.
-      - mode: warning
+      - mode: error
         name: Concurrency and State
         instructions: >-
           Changes involving shared state, async execution, ordering, cancellation, locks, transactions, task lifetimes,
@@ -548,7 +609,7 @@ reviews:
           relevant concurrent or re-entrant paths.
 
 
-          Shared mutable state must be have a clear owner and synchronization strategy. Reviewers should reject changes
+          Shared mutable state must have a clear owner and synchronization strategy. Reviewers should reject changes
           where state can be mutated through multiple paths without an explicit lock, transaction, actor, channel,
           atomic protocol, ownership boundary, or single-threaded executor guarantee. Global mutable state, lazy
           singletons, process-wide registries, and static caches require explicit justification and reset behaviour for
@@ -583,7 +644,7 @@ reviews:
           and shutdown while work is in flight. If deterministic testing is difficult, reviewers should request smaller
           units, injectable schedulers or clocks, model tests, stress tests, loom-style tests, or property tests over
           operation sequences.
-      - mode: warning
+      - mode: error
         name: Architectural Complexity and Maintainability
         instructions: >-
           Changes must keep architectural complexity proportional to the problem being solved. Reviewers should
@@ -740,14 +801,14 @@ reviews:
           narrower module boundary, removal of stale code, removal or justification of unnecessary clones, or a properly
           justified `#[expect(...)]` tied to planned work before merge.
   tools:
-    github-checks:
-      timeout_ms: 120000
     languagetool:
       level: picky
     clippy:
       enabled: false
     presidio:
       enabled: false
+  auto_approvals:
+    enabled: true
 
 chat:
   integrations:
@@ -761,7 +822,7 @@ knowledge_base:
     filePatterns:
       - AGENTS.md
       - .rules/*.md
-      - docs/**/*.md
+      - docs/*.md
       - .cursor/*.mdc
       - .rules/*.mdc
   learnings:
@@ -778,10 +839,11 @@ knowledge_base:
     scope: global
   mcp:
     usage: enabled
-  automatic_repository_linking: true
+  automatic_linking_mode: auto
 
 code_generation:
   docstrings:
+    language: en-GB
     path_instructions:
       - path: "**/*.rs"
         instructions: Function doc comments must be placed BEFORE function attributes.  New modules must have a module level
@@ -789,7 +851,6 @@ code_generation:
       - path: "**/*.py"
         instructions: Always use `numpy` conventions for docstrings. Always wrap paragraphs at 88 columns. Provide code examples
           where applicable.
-    language: en-GB
   unit_tests:
     path_instructions:
       - path: "**/*.py"

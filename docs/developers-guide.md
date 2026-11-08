@@ -57,6 +57,19 @@ outside the Oxlint application target. The generated bundles are checked
 through their source gates and freshness checks, while tests run under
 `make test`.
 
+The `make lint` gate also runs `make review-rules` against
+`examples/df12-code-review.yaml`. Pinned yamllint checks YAML syntax, duplicate
+keys, indentation, and whitespace; pinned check-jsonschema validates CodeRabbit
+fields against the upstream
+[CodeRabbit schema](https://www.coderabbit.ai/integrations/schema.v2.json).
+Both tool versions are pinned in the `package.json` scripts and run through
+`uv`. The schema validator fetches and caches the live schema, so a fresh
+checkout needs network access for the tools and schema. Long lines inside
+review prompts are allowed by `.yamllint.yaml`.
+
+Validate another rules file with
+`make review-rules REVIEW_RULES=/path/to/rules.yaml`.
+
 Do not use `node --check workflows/dakar-review.js` as a workflow syntax gate.
 ODW files permit top-level `return`, which ordinary Node syntax checking
 rejects. Use `odw run ... --args '{"dryRun":true}'` instead.
