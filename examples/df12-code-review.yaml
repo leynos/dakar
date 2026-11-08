@@ -84,7 +84,7 @@ reviews:
         - Ensure that any completed roadmap steps are recorded in the
         appropriate roadmap in `docs/`
 
-        - Files must not exceed 400 lines in length
+        - Rust source files must not exceed 400 lines in length
           - Large modules must be decomposed
           - Long match statements or dispatch tables should be decomposed by domain and collocated with targets
           - Large blocks of inline data (e.g., test fixtures, constants or templates) must be moved to external files and inlined at compile-time or loaded at run-time.
@@ -175,7 +175,7 @@ reviews:
 
         - Commit lockfiles and rebuild them deliberately when major tool upgrades require it.
 
-        - Files must not exceed 400 logical lines:
+        - Code files must not exceed 400 logical lines:
           - Decompose large modules into feature-oriented files
           - Split large `switch` statements or dispatch tables by domain and collocate with targets
           - Move bulky fixtures, templates, or snapshots to external files when appropriate.
@@ -190,6 +190,8 @@ reviews:
 
         - Use en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize," "synthesized,"
         "polymerization," "analyse," "colour," "behaviour").
+
+        - Code file length limits, including the 400-line limit, do not apply to Markdown files.
 
         - Headings must not be wrapped.
 
@@ -253,7 +255,7 @@ reviews:
 
         - Reflect all API/behaviour changes in `docs/` and update roadmap on completion
 
-        - Files must not exceed 400 logical lines:
+        - Code files must not exceed 400 logical lines:
           - Decompose large modules into subpackages
           - Split large `match/case` or dispatch tables by domain and collocate with targets if appropriate
           - Move bulky data (fixtures, templates) to external files for parsing at runtime
