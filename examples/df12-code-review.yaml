@@ -181,7 +181,12 @@ reviews:
           - Move bulky fixtures, templates, or snapshots to external files when appropriate.
     - path: "**/*.md"
       instructions: >-
-        - Avoid 2nd person or 1st person pronouns ("I", "you", "we"), exceptions: README.md, BDD .feature files.
+        - Avoid first-person pronouns ("I", "we"), except in README.md and BDD .feature files.
+
+        - Avoid second-person pronouns ("you"), except in AGENTS.md, README.md, BDD .feature files, and every agent
+        skill directory. AGENTS.md and README.md are exempt at any directory depth. The skill exemption covers
+        SKILL.md and all other files and nested subdirectories in its containing directory, regardless of the
+        directory's name or location.
 
         - Use en-GB-oxendict (-ize / -yse / -our) spelling and grammar (examples: "recognize," "synthesized,"
         "polymerization," "analyse," "colour," "behaviour").
