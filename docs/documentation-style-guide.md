@@ -737,6 +737,7 @@ contents of the manual.
 /// # Examples
 ///
 /// ```rust
+/// # fn add(a: i32, b: i32) -> i32 { a + b }
 /// assert_eq!(add(2, 3), 5);
 /// ```
 #[inline]

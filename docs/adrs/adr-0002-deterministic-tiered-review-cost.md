@@ -20,10 +20,11 @@ insufficient for another maximum-cost retry. Under the historical £0.10 setting
 finder pack (USD 0.017875), so no finder pack could be admitted and no
 default-configuration review could run. The £0.05 mean and £0.08
 95th-percentile targets for observed spend stand — measured reported spend on
-the evaluation corpus was well inside both — and the hard ceiling remains
-enforced; only its default value changes. Invalid `budgetGbp` values or values
-below 0.01 fall back to 0.15; valid 0.05 remains 0.05, and values above 10
-clamp to 10.
+the evaluation corpus was well inside both — and the admission ceiling on
+estimated cost remains enforced; only its default value changes. The estimate
+is not a guarantee of provider-reported charges: actual token use can exceed
+the estimator's assumptions. Invalid `budgetGbp` values or values below 0.01
+fall back to 0.15; valid 0.05 remains 0.05, and values above 10 clamp to 10.
 
 Amended (2026-10-11): the accepted defaults and adapter mapping recorded below
 remain as the historical decision. The live `deterministic-flex-v1` route now

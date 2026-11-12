@@ -17,31 +17,34 @@ today.
 
 After this change, running `dakar-review` on a real branch produces a useful
 semantic code review whose measured provider spend is below USD 0.25, with a
-stretch goal below USD 0.11. Today one review can launch agents for
-configuration resolution, range preparation, up to eight finder tasks, up to
-thirty per-candidate verifications, synthesis rendering, and history recording,
-with no cost ceiling at all. This plan implements the vertical slice of
+stretch goal below USD 0.11. Before this plan, one review could launch agents
+for configuration resolution, range preparation, up to eight finder tasks, up
+to thirty per-candidate verifications, synthesis rendering, and history
+recording, without a per-call cost admission estimate. This plan implements the
+vertical slice of
 [ADR 0002](../adrs/adr-0002-deterministic-tiered-review-cost.md) (roadmap steps
 7.1 through 7.4): deterministic host code absorbs every derivable phase, the
 remaining model work routes to two OpenAI Flex-tier lanes (`gpt-5.6-luna` for
 bounded finder transactions, `gpt-5.6-terra` for one issue-set audit), and an
-admission controller enforces a hard per-review budget before any call is
-dispatched.
+admission controller applies a per-review budget to estimated worst-case token
+costs before calls are dispatched.
 
 Cost-goal framing (expert-panel finding, adopted): the USD 0.25 and USD 0.11
 figures are independently chosen delivery goals, not currency conversions of
-ADR 0002's GBP targets. The current hard ordinary-review budget is £0.15, or
-USD 0.1905 at the pricing table's seed exchange snapshot; the admission
-controller enforces the GBP budget through that versioned snapshot. The current
-default caps (four Luna transactions plus one Terra audit, uncached input
-priced at the cache-write band) total USD 0.1855625, leaving USD 0.0049375
-inside the default budget. The USD 0.11 stretch goal is therefore a
-typical-case goal — reachable only when fewer transactions fire or cached input
-reduces spend — and the USD 0.25 acceptance goal still has headroom. The
-earlier recorded USD 0.133 isolated worst case belongs to the pre-amendment
-cost model and is historical evidence, not the current default-cap total. Terra
-dominates the ceiling, so `terraMaxInputTokens` is the lever that matters if
-cost must come down later, not the Luna caps.
+ADR 0002's GBP targets. The configured ordinary-review admission budget is
+£0.15, or USD 0.1905 at the pricing table's seed exchange snapshot; it limits
+versioned cost estimates, not provider billing. The current default caps (four
+Luna transactions plus one Terra audit, uncached input priced at the
+cache-write band) total an estimated USD 0.1855625, leaving estimated headroom
+of USD 0.0049375. The USD 0.11 stretch goal is therefore a typical-case goal —
+reachable only when fewer transactions fire or cached input reduces spend — and
+the USD 0.25 acceptance goal is measured against provider-reported usage. M7
+later showed an estimate below reported cost: pi wrote about 28k cache tokens
+against the 13k `adapterOverheadTokens` assumption on an uncached call. The
+earlier recorded USD 0.133 isolated estimate belongs to the pre-amendment cost
+model and is historical evidence, not the current default-cap total. Terra
+dominates the estimate envelope, so `terraMaxInputTokens` is the lever that
+matters if expected cost must come down later, not the Luna caps.
 
 Success is observable: a live review of a selected estate pull request
 completes end to end, the result carries a per-call cost ledger with
@@ -659,10 +662,11 @@ conflict in `Decision Log`, and escalate.
   next attempt. After the full default initial envelope, no headroom remains
   for a maximum-cost retry, although smaller retries can still fit. Under
   budget pressure the review degrades to fewer retries, then partial coverage,
-  then deferral, never past the ceiling. Rationale: the hard ceiling must bound
-  actual worst-case spend including retries, without repealing the ordinary
-  budget or the retry policy as upfront chain reservation would. Date/Author:
-  2026-07-19, implementing agent, per operator direction.
+  then deferral, while admitted estimates stay within the ceiling. Rationale:
+  the configured ceiling must bound estimated worst-case cost including
+  retries, without repealing the ordinary budget or the retry policy as upfront
+  chain reservation would. Date/Author: 2026-07-19, implementing agent, per
+  operator direction.
 - Decision (round-4 batch dispositions): malformed `DAKAR-USAGE`
   telemetry is now an explicit parse outcome — the harness returns structured
   `{ line, category }` diagnostics (categories `invalid-json`, `non-object`,

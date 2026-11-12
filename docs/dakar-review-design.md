@@ -22,16 +22,18 @@ to decide whether the approach can beat CodeRabbit's user-supplied benchmark.
 > **Superseded benchmark framing.** The original per-file benchmark below
 > (USD 0.25 per reviewed file) predates
 > [ADR 0002](adrs/adr-0002-deterministic-tiered-review-cost.md), which reframes
-> cost
-> as a hard **per-review** budget (`budgetGbp`, default £0.15, with mean and
-> 95th-percentile targets of £0.05 and £0.08) rather than a per-file ratio.
+> cost as a **per-review admission budget** on estimated costs (`budgetGbp`,
+> default £0.15, with mean and 95th-percentile targets of £0.05 and £0.08)
+> rather than a per-file ratio. Provider-reported charges can exceed estimates
+> when actual token use exceeds the configured bounds.
 > The `api-key-support` ExecPlan's USD 0.25 acceptance and USD 0.11 stretch
 > figures are independent per-review USD delivery goals chosen for that
 > plan, not currency conversions of ADR 0002's GBP targets; see the ExecPlan's
 > "Purpose / big picture" section for the reconciliation and the worst-case
-> arithmetic (USD 0.1855625 for four finder packs and one audit, within the
-> USD 0.1905 default budget). That admits the initial calls, not a retry at
-> their maximum caps. §8 below names the ledger fields that carry the
+> arithmetic (an estimated USD 0.1855625 for four finder packs and one audit,
+> within the USD 0.1905 default admission budget). That admits the estimated
+> initial calls, not a retry at their maximum caps. §8 below names the ledger
+> fields that carry the
 > implemented accounting.
 
 Dakar is not a deterministic linter. The separate `odw-lint` project should own
@@ -351,9 +353,9 @@ spend to review coverage and outcome.
 
 Cost recovery has three layers, now implemented as follows:
 
-- Budget control: a hard per-review `budgetGbp` (default £0.15), enforced
-  by reserve-first admission — the audit's worst case is reserved before any
-  Luna finder dispatch, so an unaffordable review refuses
+- Budget control: a per-review `budgetGbp` (default £0.15) applied to
+  estimated worst-case costs by reserve-first admission — the audit estimate is
+  reserved before any Luna finder dispatch, so an unaffordable review refuses
   (`stage: "admission"`) before spending on finders it could not afford to
   conclude. `maxLunaFlexCalls`, `transactionMaxFiles`, and `maxAuditCandidates`
   remain as complementary bounded caps. The default admits four initial finder
@@ -362,10 +364,12 @@ Cost recovery has three layers, now implemented as follows:
 - Attribution: `ledger` entries carry cost per call, phase, lane, and model;
   `admissionRefusals` and `lunaDowngrades` record what did not run, or ran only
   partially, and why.
-- Evaluation: compare `metrics.ledgerTotalEstimatedUsd` (and, once
-  populated, the summed `reportedUsd`) against the hard `budgetGbp` converted
-  through `pricingTableVersion`'s `usdPerGbp` snapshot, not against a per-file
-  ratio (see the superseded-benchmark note in §1).
+- Evaluation: compare `metrics.ledgerTotalEstimatedUsd` and, once populated,
+  the summed provider-reported `reportedUsd` against the configured `budgetGbp`
+  converted through `pricingTableVersion`'s `usdPerGbp` snapshot, not against a
+  per-file ratio (see the superseded-benchmark note in §1). Admission bounds
+  estimates; provider-reported charges can exceed them when actual usage is
+  higher than the estimator's assumptions.
 
 The cost model stores the pricing table version used for each estimate in every
 ledger entry. Provider prices change, so old runs remain auditable without

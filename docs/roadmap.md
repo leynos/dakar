@@ -340,10 +340,12 @@ fundamentals.
 ## 7. Deterministic-tiered review cost (ADR 0002)
 
 Idea: if deterministic host code owns every derivable decision and the two
-Flex-tier model lanes are admitted against a hard budget, an ordinary review
-becomes provably affordable — mean at or below £0.05, hard ceiling £0.10 —
-without losing high-severity recall (an acceptance target that task 7.5.3
-evaluates).
+Flex-tier model lanes are admitted against a £0.15 budget using per-call cost
+estimates, the default estimated envelope fits the budget and observed mean
+provider spend can meet the £0.05 target without losing high-severity recall
+(an acceptance target that task 7.5.3 evaluates). The original £0.10 figure was
+the historical budget benchmark; admission estimates do not guarantee
+provider-reported charges will stay within the configured budget.
 
 This phase implements
 [ADR 0002](adrs/adr-0002-deterministic-tiered-review-cost.md). It supersedes
@@ -355,9 +357,10 @@ stretch goal below USD 0.11.
 
 ### 7.1. Pricing table, cost ledger, and admission control
 
-This step answers whether Dakar can bound worst-case review cost before any
-model call is dispatched. Subsumes 4.3.1. See ADR 0002 §"Cost budget and
-admission control".
+This step answers whether Dakar can estimate and admit worst-case review cost
+before any model call is dispatched. Provider-reported charges can exceed an
+admission estimate when actual usage is higher. Subsumes 4.3.1. See ADR 0002
+§"Cost budget and admission control".
 
 - [x] 7.1.1. Land the versioned pricing table with a foreign-exchange
   snapshot.
@@ -367,7 +370,7 @@ admission control".
   - Requires 7.1.1.
   - Success: every model call records model, service tier, reasoning effort,
     estimated worst-case cost, and provider-reported token usage separately.
-- [x] 7.1.3. Add the admission controller with the hard ordinary-review
+- [x] 7.1.3. Add the admission controller with the ordinary-review estimate
   budget.
   - Requires 7.1.2.
   - Success: the required audit is reserved first, and an optional call whose
