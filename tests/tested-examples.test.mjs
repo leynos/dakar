@@ -48,6 +48,16 @@ function renderMarkedExamples(identifiers) {
     .join('\n')
 }
 
+function nextAvailableOrphanIdentifier(identifiers) {
+  let candidate = 'orphan'
+  let suffix = 0
+  while (identifiers.includes(candidate)) {
+    candidate = `orphan-${suffix}`
+    suffix += 1
+  }
+  return candidate
+}
+
 test('published examples are marked, unique, and present in the coverage inventory', () => {
   const examples = loadTestedExamples(REPOSITORY_ROOT)
   assert.deepEqual([...examples.keys()].toSorted(), [...EXPECTED_EXAMPLES].toSorted())
@@ -95,6 +105,15 @@ test('fence closure follows list-item indentation', () => {
 
   assert.equal(parseTestedExamples(valid, 'list-closure.md').get('list-closure').code, '  echo ready')
   assert.throws(() => parseTestedExamples(unterminated, 'list-closure.md'), /unterminated/u)
+})
+
+test('an orphan marker identifier does not collide with a generated example', () => {
+  const identifiers = ['orphan']
+  const orphanIdentifier = nextAvailableOrphanIdentifier(identifiers)
+  const markdown = `${renderMarkedExamples(identifiers)}\n<!-- tested-example: ${orphanIdentifier} -->`
+
+  assert.equal(orphanIdentifier, 'orphan-0')
+  assert.throws(() => parseTestedExamples(markdown), /does not precede a fenced example/u)
 })
 
 test('the parser follows CommonMark fence character, length, and indentation rules', () => {
@@ -166,7 +185,9 @@ test('marker and fence sequences preserve a one-to-one identifier mapping', () =
         /duplicate tested-example identifier/u,
       )
       assert.throws(
-        () => parseTestedExamples(`${renderMarkedExamples(identifiers)}\n<!-- tested-example: orphan -->`),
+        () => parseTestedExamples(
+          `${renderMarkedExamples(identifiers)}\n<!-- tested-example: ${nextAvailableOrphanIdentifier(identifiers)} -->`,
+        ),
         /does not precede a fenced example/u,
       )
       assert.throws(
