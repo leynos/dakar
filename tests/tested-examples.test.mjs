@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import fc from 'fast-check'
 import { load as loadYaml } from 'js-yaml'
 import { loadTestedExamples, parseTestedExamples } from '../scripts/tested-examples.mjs'
 
@@ -33,6 +34,19 @@ const EXPECTED_EXAMPLES = [
   'users-guide-telemetry-redirect',
   'users-guide-tuning-workflow',
 ]
+const IDENTIFIER_ARBITRARY = fc.stringMatching(/^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,3}$/u)
+const INFO_ARBITRARY = fc.stringMatching(/^[a-z][a-z0-9-]{0,8}$/u)
+
+function renderMarkedExamples(identifiers) {
+  return identifiers
+    .map((identifier, index) => [
+      `<!-- tested-example: ${identifier} -->`,
+      `${' '.repeat(index % 4)}${'```'}bash`,
+      `echo ${index}`,
+      `${' '.repeat((index + 2) % 4)}${'```'}`,
+    ].join('\n'))
+    .join('\n')
+}
 
 test('published examples are marked, unique, and present in the coverage inventory', () => {
   const examples = loadTestedExamples(REPOSITORY_ROOT)
@@ -51,6 +65,86 @@ test('the shared loader rejects unmarked fences in block quotes and nested lists
   assert.throws(
     () => parseTestedExamples('- outer\n  - inner\n\n    ```bash\n    echo ready\n    ```', 'nested-list.md'),
     /no immediately preceding/u,
+  )
+})
+
+test('the parser follows CommonMark fence character, length, and indentation rules', () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom('`', '~'),
+      fc.integer({ min: 3, max: 6 }),
+      fc.integer({ min: 0, max: 3 }),
+      fc.integer({ min: 0, max: 3 }),
+      fc.integer({ min: 0, max: 3 }),
+      INFO_ARBITRARY,
+      (character, openingLength, extraLength, openingIndent, closingIndent, info) => {
+        const opening = `${' '.repeat(openingIndent)}${character.repeat(openingLength)} ${info}`
+        const closing = `${' '.repeat(closingIndent)}${character.repeat(openingLength + extraLength)}`
+        const markdown = `<!-- tested-example: generated -->\n${opening}\necho ready\n${closing}`
+        const example = parseTestedExamples(markdown).get('generated')
+
+        assert.equal(example.info, info)
+        assert.equal(example.code, 'echo ready')
+      },
+    ),
+  )
+
+  fc.assert(
+    fc.property(
+      fc.constantFrom('`', '~'),
+      fc.integer({ min: 3, max: 6 }),
+      fc.integer({ min: 0, max: 3 }),
+      fc.integer({ min: 0, max: 3 }),
+      INFO_ARBITRARY,
+      (character, openingLength, openingIndent, closingIndent, info) => {
+        const otherCharacter = character === '`' ? '~' : '`'
+        const opening = `${' '.repeat(openingIndent)}${character.repeat(openingLength)} ${info}`
+        const closing = `${' '.repeat(closingIndent)}${otherCharacter.repeat(openingLength)}`
+        const markdown = `<!-- tested-example: generated -->\n${opening}\necho ready\n${closing}`
+
+        assert.throws(() => parseTestedExamples(markdown), /unterminated/u)
+      },
+    ),
+  )
+
+  fc.assert(
+    fc.property(
+      fc.constantFrom('`', '~'),
+      fc.integer({ min: 4, max: 6 }).chain((openingLength) =>
+        fc.integer({ min: 3, max: openingLength - 1 }).map((closingLength) => ({ openingLength, closingLength })),
+      ),
+      fc.integer({ min: 0, max: 3 }),
+      fc.integer({ min: 0, max: 3 }),
+      INFO_ARBITRARY,
+      (character, { openingLength, closingLength }, openingIndent, closingIndent, info) => {
+        const opening = `${' '.repeat(openingIndent)}${character.repeat(openingLength)} ${info}`
+        const closing = `${' '.repeat(closingIndent)}${character.repeat(closingLength)}`
+        const markdown = `<!-- tested-example: generated -->\n${opening}\necho ready\n${closing}`
+
+        assert.throws(() => parseTestedExamples(markdown), /unterminated/u)
+      },
+    ),
+  )
+})
+
+test('marker and fence sequences preserve a one-to-one identifier mapping', () => {
+  fc.assert(
+    fc.property(fc.uniqueArray(IDENTIFIER_ARBITRARY, { minLength: 1, maxLength: 6 }), (identifiers) => {
+      const examples = parseTestedExamples(renderMarkedExamples(identifiers))
+      assert.deepEqual([...examples.keys()], identifiers)
+      assert.throws(
+        () => parseTestedExamples(renderMarkedExamples([...identifiers, identifiers[0]])),
+        /duplicate tested-example identifier/u,
+      )
+      assert.throws(
+        () => parseTestedExamples(`${renderMarkedExamples(identifiers)}\n<!-- tested-example: orphan -->`),
+        /does not precede a fenced example/u,
+      )
+      assert.throws(
+        () => parseTestedExamples(`${renderMarkedExamples(identifiers)}\n\`\`\`bash\necho unmarked\n\`\`\``),
+        /no immediately preceding/u,
+      )
+    }),
   )
 })
 

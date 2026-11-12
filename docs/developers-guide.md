@@ -21,9 +21,29 @@ Run the full local gate before committing changes:
 make check
 ```
 
-This gate checks whitespace, Node syntax for ordinary Node modules, ODW
-dry-run, Node tests, Markdown lint, en-GB-oxendict spelling, and Mermaid
-diagrams.
+This gate checks formatting, Biome and Oxlint, Markdown lint, TypeScript and
+JavaScript syntax, documentation, workflow and CLI freshness, ODW dry-run, Node
+tests, spelling, and Mermaid diagrams.
+
+The lint stage runs `make docs-check`, which invokes `npm run docs:check`. That
+script runs `npm run docs:examples:check` before TypeDoc. The example gate
+covers the published user-facing documents in `scripts/tested-examples.mjs`:
+`README.md`, `docs/users-guide.md`, and `docs/migration-0.1.md`. Maintainer
+documents, including this guide, stay outside that scope.
+
+Put a marker such as `<!-- tested-example: install-cli -->` immediately before
+each fenced code block in those documents. Identifiers use lower-case
+kebab-case and must be unique. The gate rejects unmarked or unterminated
+fences, malformed or orphan markers, and duplicate identifiers. The shared
+loader extracts the fenced content for the examples in
+`tests/tested-examples.test.mjs` and for the CLI, installer, and workflow
+behaviour tests. The parser and gate wiring are also covered by
+`tests/makefile-docs-gate.test.mjs`, `tests/docs-gate.test.mjs`, and
+`tests/ci-workflow-gate.test.mjs`.
+
+The `typecheck` target runs `node --check` over the modules listed by the
+Makefile's `NODE_MODULES`, including `scripts/tested-examples.mjs` and
+`scripts/check-tested-examples.mjs`.
 
 Use focused commands while iterating:
 
@@ -585,16 +605,19 @@ independently of the living design; proposed records must remain visibly
 proposed until approved.
 
 Run `npm run docs:check` (or `make docs-check`) when adding or changing
-authored workflow or CLI symbols. The gate is TypeDoc's `notDocumented`
-validation, configured by `typedoc.json` over `bin`, `scripts`, and
-`src/workflows/dakar-review`: every module must open with a `/** … @module */`
-block and every exported declaration must carry a JSDoc block. It requires 100%
-documentation of that surface, treats warnings as errors, emits no
-documentation artefacts, and reports the qualified name of each undocumented
-declaration. It excludes the generated `workflows/dakar-review.js` artefact,
-ambient `*.d.ts` declarations, and tests; JSON Schema constants are tagged
-`@internal` so their `description` fields remain the per-field documentation.
-`make lint` and therefore `make check` run it automatically.
+authored workflow or CLI symbols. `npm run docs:check` validates the published
+example contract before running TypeDoc. The documentation scope and marker
+convention are described in Section 1. The symbol gate is TypeDoc's
+`notDocumented` validation, configured by `typedoc.json` over `bin`, `scripts`,
+and `src/workflows/dakar-review`: every module must open with a
+`/** … @module */` block and every exported declaration must carry a JSDoc
+block. It requires 100% documentation of that surface, treats warnings as
+errors, emits no documentation artefacts, and reports the qualified name of
+each undocumented declaration. It excludes the generated
+`workflows/dakar-review.js` artefact, ambient `*.d.ts` declarations, and tests;
+JSON Schema constants are tagged `@internal` so their `description` fields
+remain the per-field documentation. `make lint` and therefore `make check` run
+it automatically.
 
 The gate also validates the references inside those comments. `invalidLink`
 rejects a `{@link …}` that names no symbol, and also one that resolves to a

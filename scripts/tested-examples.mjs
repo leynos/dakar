@@ -13,6 +13,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// This gate covers published user-facing examples, not maintainer documents.
 const DOCUMENTS = Object.freeze(['README.md', 'docs/users-guide.md', 'docs/migration-0.1.md'])
 const MARKER_PATTERN = /^<!-- tested-example: ([a-z][a-z0-9]*(?:-[a-z0-9]+)*) -->$/u
 const MARKER_PREFIX = '<!-- tested-example:'
@@ -43,9 +44,9 @@ function createParseState(source) {
  * @returns {boolean} Whether the token was a tested-example marker.
  */
 function recordMarker(token, state) {
-  if (token.type !== 'html_block') return false
+  if (token.type !== 'html_block') return
   const trimmed = token.content.trim()
-  if (!trimmed.startsWith(MARKER_PREFIX)) return false
+  if (!trimmed.startsWith(MARKER_PREFIX)) return
 
   const marker = MARKER_PATTERN.exec(trimmed)
   const [start, end] = token.map
@@ -61,7 +62,6 @@ function recordMarker(token, state) {
   state.identifiers.add(identifier)
   state.markers.set(start, entry)
   state.markersByEnd.set(end, { ...entry, start })
-  return true
 }
 
 /**
@@ -81,6 +81,21 @@ function stripBlockquotePrefixes(line) {
 }
 
 /**
+ * Build the closing-fence pattern for the indentation of an opening fence.
+ *
+ * @param {string} opening - Opening fence line after block quote prefixes.
+ * @param {object} token - Markdown fence token.
+ * @returns {RegExp} Pattern that matches a valid closing delimiter.
+ */
+function closingFencePattern(opening, token) {
+  const openingIndent = /^ */u.exec(opening)[0].length
+  const minIndent = token.level === 0 ? 0 : Math.max(0, openingIndent - 3)
+  const maxIndent = token.level === 0 ? 3 : openingIndent + 3
+  const character = token.markup[0]
+  return new RegExp(`^ {${minIndent},${maxIndent}}${character}{${token.markup.length},}[\\t ]*$`, 'u')
+}
+
+/**
  * Reject a fenced block that reaches its Markdown block end without a closer.
  *
  * @param {string[]} lines - Raw Markdown document lines.
@@ -95,12 +110,7 @@ function assertFenceClosed(lines, token, state) {
   }
   const opening = stripBlockquotePrefixes(lines[openingIndex])
   const closing = stripBlockquotePrefixes(lines[endIndex - 1])
-  const openingIndent = /^ */u.exec(opening)[0].length
-  const minIndent = token.level === 0 ? 0 : Math.max(0, openingIndent - 3)
-  const maxIndent = token.level === 0 ? 3 : openingIndent + 3
-  const character = token.markup[0]
-  const pattern = new RegExp(`^ {${minIndent},${maxIndent}}${character}{${token.markup.length},}[\\t ]*$`, 'u')
-  if (!pattern.test(closing)) {
+  if (!closingFencePattern(opening, token).test(closing)) {
     throw new Error(`${state.source}:${openingIndex + 1}: unterminated fenced example`)
   }
 }
