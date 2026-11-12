@@ -89,52 +89,22 @@ function recordMarker(token, state, identity) {
 }
 
 /**
- * Remove block quote prefixes from a source line before checking its fence.
+ * Reject a fence token that MarkdownIt did not close.
  *
- * @param {string} line - Raw Markdown line.
- * @returns {string} Line content after block quote markers.
- */
-function stripBlockquotePrefixes(line) {
-  let content = line
-  let prefix = /^ {0,3}> ?/u.exec(content)
-  while (prefix) {
-    content = content.slice(prefix[0].length)
-    prefix = /^ {0,3}> ?/u.exec(content)
-  }
-  return content
-}
-
-/**
- * Build the closing-fence pattern for the indentation of an opening fence.
+ * MarkdownIt applies block quote and list indentation before populating
+ * `content`. A closed fence omits both delimiter lines; an open fence keeps
+ * the final source line as content. Comparing those line counts therefore
+ * follows the parser's container-aware rules.
  *
- * @param {string} opening - Opening fence line after block quote prefixes.
- * @param {object} token - Markdown fence token.
- * @returns {RegExp} Pattern that matches a valid closing delimiter.
- */
-function closingFencePattern(opening, token) {
-  const openingIndent = /^ */u.exec(opening)[0].length
-  const minIndent = token.level === 0 ? 0 : Math.max(0, openingIndent - 3)
-  const maxIndent = token.level === 0 ? 3 : openingIndent + 3
-  const character = token.markup[0]
-  return new RegExp(`^ {${minIndent},${maxIndent}}${character}{${token.markup.length},}[\\t ]*$`, 'u')
-}
-
-/**
- * Reject a fenced block that reaches its Markdown block end without a closer.
- *
- * @param {string[]} lines - Raw Markdown document lines.
  * @param {object} token - Markdown fence token.
  * @param {object} state - Mutable parse state for the document.
  * @throws {Error} The opening fence is unterminated.
  */
-function assertFenceClosed(lines, token, state) {
+function assertFenceClosed(token, state) {
   const [openingIndex, endIndex] = token.map
-  if (endIndex < openingIndex + 2) {
-    throw new Error(`${state.source}:${openingIndex + 1}: unterminated fenced example`)
-  }
-  const opening = stripBlockquotePrefixes(lines[openingIndex])
-  const closing = stripBlockquotePrefixes(lines[endIndex - 1])
-  if (!closingFencePattern(opening, token).test(closing)) {
+  const contentLineCount = token.content.split('\n').length
+    - Number(token.content === '' || token.content.endsWith('\n'))
+  if (endIndex - openingIndex !== contentLineCount + 2) {
     throw new Error(`${state.source}:${openingIndex + 1}: unterminated fenced example`)
   }
 }
@@ -142,16 +112,15 @@ function assertFenceClosed(lines, token, state) {
 /**
  * Parse one fenced block and require its immediately preceding marker.
  *
- * @param {string[]} lines - Raw Markdown document lines.
  * @param {object} token - Markdown fence token.
  * @param {object} state - Mutable parse state for the document.
  * @param {string} identity - Identity of the current Markdown containers.
  * @returns {object} Parsed published example.
  * @throws {Error} A fence has no marker.
  */
-function parseExample(lines, token, state, identity) {
+function parseExample(token, state, identity) {
   const [openingIndex] = token.map
-  assertFenceClosed(lines, token, state)
+  assertFenceClosed(token, state)
   const marker = state.markersByEnd.get(`${openingIndex}:${identity}`)
   if (!marker || marker.level !== token.level) {
     throw new Error(`${state.source}:${openingIndex + 1}: fenced example has no immediately preceding tested-example marker`)
@@ -199,7 +168,6 @@ function assertMarkersConsumed(state) {
  */
 export function parseTestedExamples(markdown, source = '<markdown>') {
   const state = createParseState(source)
-  const lines = markdown.split(/\r?\n/u)
   const tokens = MARKDOWN.parse(markdown, {})
   const containers = []
   for (const [tokenIndex, token] of tokens.entries()) {
@@ -207,7 +175,7 @@ export function parseTestedExamples(markdown, source = '<markdown>') {
     const identity = containerIdentity(containers)
     recordMarker(token, state, identity)
     if (token.type === 'fence') {
-      const example = parseExample(lines, token, state, identity)
+      const example = parseExample(token, state, identity)
       state.examples.set(example.id, example)
     }
   }

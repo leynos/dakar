@@ -79,6 +79,24 @@ test('a marker in one list item does not mark a fence in its sibling', () => {
   assert.throws(() => parseTestedExamples(markdown, 'sibling-items.md'), /no immediately preceding/u)
 })
 
+test('fence closure follows list-item indentation', () => {
+  const valid = [
+    '- <!-- tested-example: list-closure -->',
+    '     ```bash',
+    '       echo ready',
+    '     ```',
+  ].join('\n')
+  const unterminated = [
+    '- <!-- tested-example: list-closure -->',
+    '     ```bash',
+    '       echo ready',
+    '       ```',
+  ].join('\n')
+
+  assert.equal(parseTestedExamples(valid, 'list-closure.md').get('list-closure').code, '  echo ready')
+  assert.throws(() => parseTestedExamples(unterminated, 'list-closure.md'), /unterminated/u)
+})
+
 test('the parser follows CommonMark fence character, length, and indentation rules', () => {
   fc.assert(
     fc.property(
