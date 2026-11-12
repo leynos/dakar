@@ -17,6 +17,7 @@ const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 const DOCUMENTS = Object.freeze(['README.md', 'docs/users-guide.md', 'docs/migration-0.1.md'])
 const MARKER_PATTERN = /^<!-- tested-example: ([a-z][a-z0-9]*(?:-[a-z0-9]+)*) -->$/u
 const MARKER_PREFIX = '<!-- tested-example:'
+const CONTAINER_TAGS = new Set(['blockquote', 'li', 'ol', 'ul'])
 const MARKDOWN = new MarkdownIt('commonmark', { html: true })
 
 /**
@@ -37,13 +38,36 @@ function createParseState(source) {
 }
 
 /**
+ * Track the token identities of the current Markdown containers.
+ *
+ * @param {object} token - Markdown block token to inspect.
+ * @param {number} tokenIndex - Stable index in the parsed token list.
+ * @param {number[]} containers - Open container token indexes.
+ */
+function updateContainerPath(token, tokenIndex, containers) {
+  if (!CONTAINER_TAGS.has(token.tag)) return
+  if (token.nesting === 1) containers.push(tokenIndex)
+  if (token.nesting === -1) containers.pop()
+}
+
+/**
+ * Encode the current Markdown container path for marker-fence matching.
+ *
+ * @param {number[]} containers - Open container token indexes.
+ * @returns {string} Stable identity for the current container stack.
+ */
+function containerIdentity(containers) {
+  return containers.join('/')
+}
+
+/**
  * Record a marker represented by a standalone HTML comment block.
  *
  * @param {object} token - Markdown block token to inspect.
  * @param {object} state - Mutable parse state for the document.
- * @returns {boolean} Whether the token was a tested-example marker.
+ * @param {string} identity - Identity of the current Markdown containers.
  */
-function recordMarker(token, state) {
+function recordMarker(token, state, identity) {
   if (token.type !== 'html_block') return
   const trimmed = token.content.trim()
   if (!trimmed.startsWith(MARKER_PREFIX)) return
@@ -61,7 +85,7 @@ function recordMarker(token, state) {
   const entry = { identifier, end, level: token.level }
   state.identifiers.add(identifier)
   state.markers.set(start, entry)
-  state.markersByEnd.set(end, { ...entry, start })
+  state.markersByEnd.set(`${end}:${identity}`, { ...entry, start })
 }
 
 /**
@@ -121,13 +145,14 @@ function assertFenceClosed(lines, token, state) {
  * @param {string[]} lines - Raw Markdown document lines.
  * @param {object} token - Markdown fence token.
  * @param {object} state - Mutable parse state for the document.
+ * @param {string} identity - Identity of the current Markdown containers.
  * @returns {object} Parsed published example.
  * @throws {Error} A fence has no marker.
  */
-function parseExample(lines, token, state) {
+function parseExample(lines, token, state, identity) {
   const [openingIndex] = token.map
   assertFenceClosed(lines, token, state)
-  const marker = state.markersByEnd.get(openingIndex)
+  const marker = state.markersByEnd.get(`${openingIndex}:${identity}`)
   if (!marker || marker.level !== token.level) {
     throw new Error(`${state.source}:${openingIndex + 1}: fenced example has no immediately preceding tested-example marker`)
   }
@@ -176,10 +201,13 @@ export function parseTestedExamples(markdown, source = '<markdown>') {
   const state = createParseState(source)
   const lines = markdown.split(/\r?\n/u)
   const tokens = MARKDOWN.parse(markdown, {})
-  for (const token of tokens) {
-    recordMarker(token, state)
+  const containers = []
+  for (const [tokenIndex, token] of tokens.entries()) {
+    updateContainerPath(token, tokenIndex, containers)
+    const identity = containerIdentity(containers)
+    recordMarker(token, state, identity)
     if (token.type === 'fence') {
-      const example = parseExample(lines, token, state)
+      const example = parseExample(lines, token, state, identity)
       state.examples.set(example.id, example)
     }
   }

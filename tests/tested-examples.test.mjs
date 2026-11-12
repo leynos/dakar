@@ -68,6 +68,17 @@ test('the shared loader rejects unmarked fences in block quotes and nested lists
   )
 })
 
+test('a marker in one list item does not mark a fence in its sibling', () => {
+  const markdown = [
+    '- <!-- tested-example: sibling -->',
+    '- ```bash',
+    '  echo unmarked',
+    '  ```',
+  ].join('\n')
+
+  assert.throws(() => parseTestedExamples(markdown, 'sibling-items.md'), /no immediately preceding/u)
+})
+
 test('the parser follows CommonMark fence character, length, and indentation rules', () => {
   fc.assert(
     fc.property(
