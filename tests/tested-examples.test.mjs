@@ -43,9 +43,46 @@ test('the shared loader rejects an unmarked fence', () => {
   assert.throws(() => parseTestedExamples('```bash\necho ready\n```', 'fixture.md'), /no immediately preceding/u)
 })
 
+test('the shared loader rejects unmarked fences in block quotes and nested lists', () => {
+  assert.throws(
+    () => parseTestedExamples('> ```bash\n> echo ready\n> ```', 'blockquote.md'),
+    /no immediately preceding/u,
+  )
+  assert.throws(
+    () => parseTestedExamples('- outer\n  - inner\n\n    ```bash\n    echo ready\n    ```', 'nested-list.md'),
+    /no immediately preceding/u,
+  )
+})
+
+test('the shared loader extracts marked fences from block quotes and nested lists', () => {
+  const examples = parseTestedExamples(
+    [
+      '> <!-- tested-example: quoted -->',
+      '> ```bash',
+      '> echo quoted',
+      '> ```',
+      '- outer',
+      '  - inner',
+      '',
+      '    <!-- tested-example: nested-list -->',
+      '    ```bash',
+      '    echo nested',
+      '    ```',
+    ].join('\n'),
+    'containers.md',
+  )
+
+  assert.equal(examples.get('quoted').code, 'echo quoted')
+  assert.equal(examples.get('nested-list').code, 'echo nested')
+})
+
 test('the shared loader rejects an unterminated fence', () => {
   assert.throws(
     () => parseTestedExamples('<!-- tested-example: open-fence -->\n```bash\necho ready', 'fixture.md'),
+    /unterminated/u,
+  )
+  assert.throws(
+    () => parseTestedExamples('- outer\n  - inner\n\n    <!-- tested-example: open-list-fence -->\n    ```bash\n    echo ready', 'nested-list.md'),
     /unterminated/u,
   )
 })

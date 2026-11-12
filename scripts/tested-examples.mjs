@@ -8,6 +8,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import MarkdownIt from 'markdown-it'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,10 +16,10 @@ const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 const DOCUMENTS = Object.freeze(['README.md', 'docs/users-guide.md', 'docs/migration-0.1.md'])
 const MARKER_PATTERN = /^<!-- tested-example: ([a-z][a-z0-9]*(?:-[a-z0-9]+)*) -->$/u
 const MARKER_PREFIX = '<!-- tested-example:'
-const FENCE_PATTERN = /^ {0,3}(`{3,}|~{3,})(.*)$/u
+const MARKDOWN = new MarkdownIt('commonmark', { html: true })
 
 /**
- * Create parser state shared by the document-line helpers.
+ * Create parser state shared by the document-token helpers.
  *
  * @param {string} source - Document name used in diagnostics.
  * @returns {object} Mutable parse state for one Markdown document.
@@ -27,6 +28,7 @@ function createParseState(source) {
   return {
     source,
     markers: new Map(),
+    markersByEnd: new Map(),
     identifiers: new Set(),
     examples: new Map(),
     consumedMarkers: new Set(),
@@ -34,85 +36,102 @@ function createParseState(source) {
 }
 
 /**
- * Record a marker line and reject malformed or duplicate identifiers.
+ * Record a marker represented by a standalone HTML comment block.
  *
- * @param {string} line - Markdown line to inspect.
- * @param {number} index - Zero-based line index.
+ * @param {object} token - Markdown block token to inspect.
  * @param {object} state - Mutable parse state for the document.
- * @returns {boolean} Whether the line was a tested-example marker.
+ * @returns {boolean} Whether the token was a tested-example marker.
  */
-function recordMarker(line, index, state) {
-  const trimmed = line.trim()
+function recordMarker(token, state) {
+  if (token.type !== 'html_block') return false
+  const trimmed = token.content.trim()
   if (!trimmed.startsWith(MARKER_PREFIX)) return false
 
   const marker = MARKER_PATTERN.exec(trimmed)
+  const [start, end] = token.map
   if (!marker) {
-    throw new Error(`${state.source}:${index + 1}: tested-example marker is missing a valid identifier`)
+    throw new Error(`${state.source}:${start + 1}: tested-example marker is missing a valid identifier`)
   }
   const [, identifier] = marker
   if (state.identifiers.has(identifier)) {
-    throw new Error(`${state.source}:${index + 1}: duplicate tested-example identifier '${identifier}'`)
+    throw new Error(`${state.source}:${start + 1}: duplicate tested-example identifier '${identifier}'`)
   }
+
+  const entry = { identifier, end, level: token.level }
   state.identifiers.add(identifier)
-  state.markers.set(index, identifier)
+  state.markers.set(start, entry)
+  state.markersByEnd.set(end, { ...entry, start })
   return true
 }
 
 /**
- * Find the matching closing fence for an opening delimiter.
+ * Remove block quote prefixes from a source line before checking its fence.
  *
- * @param {string[]} lines - Markdown document lines.
- * @param {number} openingIndex - Zero-based line index of the opening fence.
- * @param {string} delimiter - Opening fence delimiter.
- * @param {object} state - Mutable parse state for the document.
- * @returns {number} Zero-based line index of the closing fence.
- * @throws {Error} The opening fence is unterminated.
+ * @param {string} line - Raw Markdown line.
+ * @returns {string} Line content after block quote markers.
  */
-function closingFenceIndex(lines, openingIndex, delimiter, state) {
-  const fenceCharacter = delimiter[0]
-  const closingPattern = new RegExp(`^ {0,3}${fenceCharacter}{${delimiter.length},}[\\t ]*$`, 'u')
-  let index = openingIndex + 1
-  while (index < lines.length && !closingPattern.test(lines[index])) index += 1
-  if (index >= lines.length) {
-    throw new Error(`${state.source}:${openingIndex + 1}: unterminated fenced example`)
+function stripBlockquotePrefixes(line) {
+  let content = line
+  let prefix = /^ {0,3}> ?/u.exec(content)
+  while (prefix) {
+    content = content.slice(prefix[0].length)
+    prefix = /^ {0,3}> ?/u.exec(content)
   }
-  return index
+  return content
 }
 
 /**
- * Parse one marked fenced example at a document line.
+ * Reject a fenced block that reaches its Markdown block end without a closer.
  *
- * @param {string[]} lines - Markdown document lines.
- * @param {number} index - Zero-based line index of the candidate opening fence.
+ * @param {string[]} lines - Raw Markdown document lines.
+ * @param {object} token - Markdown fence token.
  * @param {object} state - Mutable parse state for the document.
- * @returns {{ example: object, closingIndex: number } | undefined} Parsed example, or undefined for a non-fence line.
- * @throws {Error} A fence has no marker or is unterminated.
+ * @throws {Error} The opening fence is unterminated.
  */
-function parseExampleAt(lines, index, state) {
-  const opening = FENCE_PATTERN.exec(lines[index])
-  if (!opening) return
-
-  const [, delimiter, info] = opening
-  const closingIndex = closingFenceIndex(lines, index, delimiter, state)
-  const markerIndex = index - 1
-  const identifier = state.markers.get(markerIndex)
-  if (!identifier) {
-    throw new Error(`${state.source}:${index + 1}: fenced example has no immediately preceding tested-example marker`)
+function assertFenceClosed(lines, token, state) {
+  const [openingIndex, endIndex] = token.map
+  if (endIndex < openingIndex + 2) {
+    throw new Error(`${state.source}:${openingIndex + 1}: unterminated fenced example`)
   }
-  state.consumedMarkers.add(markerIndex)
+  const opening = stripBlockquotePrefixes(lines[openingIndex])
+  const closing = stripBlockquotePrefixes(lines[endIndex - 1])
+  const openingIndent = /^ */u.exec(opening)[0].length
+  const minIndent = token.level === 0 ? 0 : Math.max(0, openingIndent - 3)
+  const maxIndent = token.level === 0 ? 3 : openingIndent + 3
+  const character = token.markup[0]
+  const pattern = new RegExp(`^ {${minIndent},${maxIndent}}${character}{${token.markup.length},}[\\t ]*$`, 'u')
+  if (!pattern.test(closing)) {
+    throw new Error(`${state.source}:${openingIndex + 1}: unterminated fenced example`)
+  }
+}
 
-  const infoString = info.trim()
-  const language = infoString.split(/[\s,]+/u)[0]?.toLowerCase() || ''
+/**
+ * Parse one fenced block and require its immediately preceding marker.
+ *
+ * @param {string[]} lines - Raw Markdown document lines.
+ * @param {object} token - Markdown fence token.
+ * @param {object} state - Mutable parse state for the document.
+ * @returns {object} Parsed published example.
+ * @throws {Error} A fence has no marker.
+ */
+function parseExample(lines, token, state) {
+  const [openingIndex] = token.map
+  assertFenceClosed(lines, token, state)
+  const marker = state.markersByEnd.get(openingIndex)
+  if (!marker || marker.level !== token.level) {
+    throw new Error(`${state.source}:${openingIndex + 1}: fenced example has no immediately preceding tested-example marker`)
+  }
+  state.consumedMarkers.add(marker.start)
+
+  const info = token.info.trim()
+  const language = info.split(/[\s,]+/u)[0]?.toLowerCase() || ''
   return {
-    closingIndex,
-    example: {
-      id: identifier,
-      source: state.source,
-      line: index + 1,
-      info: infoString,
-      language,
-      code: lines.slice(index + 1, closingIndex).join('\n'),
-    },
+    id: marker.identifier,
+    source: state.source,
+    line: openingIndex + 1,
+    info,
+    language,
+    code: token.content.replace(/\n$/u, ''),
   }
 }
 
@@ -123,36 +142,20 @@ function parseExampleAt(lines, index, state) {
  * @throws {Error} A marker does not precede a fenced example.
  */
 function assertMarkersConsumed(state) {
-  for (const [line, identifier] of state.markers) {
+  for (const [line, marker] of state.markers) {
     if (!state.consumedMarkers.has(line)) {
-      throw new Error(`${state.source}:${line + 1}: tested-example marker '${identifier}' does not precede a fenced example`)
+      throw new Error(`${state.source}:${line + 1}: tested-example marker '${marker.identifier}' does not precede a fenced example`)
     }
   }
 }
 
 /**
- * Consume one line and return the last line that can be skipped by the caller.
- *
- * @param {string[]} lines - Markdown document lines.
- * @param {number} index - Zero-based line index.
- * @param {object} state - Mutable parse state for the document.
- * @returns {number} Current line or closing-fence line for the parsed example.
- */
-function parseDocumentLine(lines, index, state) {
-  if (recordMarker(lines[index], index, state)) return index
-  const parsed = parseExampleAt(lines, index, state)
-  if (!parsed) return index
-  state.examples.set(parsed.example.id, parsed.example)
-  return parsed.closingIndex
-}
-
-/**
  * Parse every marked fenced example in one Markdown document.
  *
- * A marker must be the complete line immediately before its opening fence.
- * Fence delimiters follow CommonMark's matching character and minimum-length
- * rules, so a closing fence must use the same character and at least as many
- * delimiters as its opener.
+ * Markdown block tokens preserve CommonMark container structure, so fences
+ * inside block quotes and nested list items receive the same coverage checks
+ * as fences at the document root. The parser also removes container prefixes
+ * from the extracted example content.
  *
  * @param {string} markdown - Published Markdown source.
  * @param {string} source - Document name used in diagnostics.
@@ -160,10 +163,15 @@ function parseDocumentLine(lines, index, state) {
  * @throws {Error} A fence or marker violates the published example contract.
  */
 export function parseTestedExamples(markdown, source = '<markdown>') {
-  const lines = markdown.split(/\r?\n/u)
   const state = createParseState(source)
-  for (let index = 0; index < lines.length; index += 1) {
-    index = parseDocumentLine(lines, index, state)
+  const lines = markdown.split(/\r?\n/u)
+  const tokens = MARKDOWN.parse(markdown, {})
+  for (const token of tokens) {
+    recordMarker(token, state)
+    if (token.type === 'fence') {
+      const example = parseExample(lines, token, state)
+      state.examples.set(example.id, example)
+    }
   }
 
   assertMarkersConsumed(state)
