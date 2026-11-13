@@ -6,12 +6,12 @@ primary architecture reference is
 record remains at
 [`docs/design/initial-workflow.md`](design/initial-workflow.md), the accepted
 compilation boundary is recorded in
-[`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md),
+[`docs/adrs/adr-0001-compile-odw-workflow-from-typescript.md`](adrs/adr-0001-compile-odw-workflow-from-typescript.md),
 the deterministic and Flex routing decision is recorded in
-[`docs/adr-002-deterministic-tiered-review-cost.md`](adr-002-deterministic-tiered-review-cost.md),
+[`docs/adrs/adr-0002-deterministic-tiered-review-cost.md`](adrs/adr-0002-deterministic-tiered-review-cost.md),
 the application lint strategy is recorded in
-[`docs/adr-003-linting-strategy.md`](adr-003-linting-strategy.md), and delivery
-plans live under [`docs/execplans/`](execplans/).
+[`docs/adrs/adr-0003-linting-strategy.md`](adrs/adr-0003-linting-strategy.md),
+and delivery plans live under [`docs/execplans/`](execplans/).
 
 ## 1. Local validation
 
@@ -21,9 +21,44 @@ Run the full local gate before committing changes:
 make check
 ```
 
-This gate checks whitespace, Node syntax for ordinary Node modules, ODW
-dry-run, Node tests, Markdown lint, en-GB-oxendict spelling, and Mermaid
-diagrams.
+This gate checks formatting, Biome and Oxlint, Markdown lint, TypeScript and
+JavaScript syntax, documentation, workflow and CLI freshness, ODW dry-run, Node
+tests, spelling, and Mermaid diagrams.
+
+The lint stage runs `make docs-check`, which invokes `npm run docs:check`. That
+script runs `npm run docs:examples:check` before TypeDoc. The example gate
+covers the published user-facing documents in `scripts/tested-examples.mjs`:
+`README.md`, `docs/users-guide.md`, and `docs/migration-0.1.md`. Maintainer
+documents, including this guide, stay outside that scope. The gate parses
+CommonMark with `markdown-it` 14.3.0, pinned as a development dependency in
+`package.json` and installed by `npm ci`.
+
+Put a marker such as `<!-- tested-example: install-cli -->` immediately before
+each fenced code block in those documents. Identifiers use lower-case
+kebab-case and must be unique. The gate rejects unmarked or unterminated
+fences, malformed or orphan markers, and duplicate identifiers. The shared
+loader extracts the fenced content for the examples in
+`tests/tested-examples.test.mjs` and for the CLI, installer, and workflow
+behaviour tests. The parser and gate wiring are also covered by
+`tests/makefile-docs-gate.test.mjs`, `tests/docs-gate.test.mjs`, and
+`tests/ci-workflow-gate.test.mjs`.
+
+### Tested-example helper API
+
+Tests use `getTestedExample` from `scripts/tested-examples.mjs` to consume
+published examples. `parseTestedExamples(markdown, source = '<markdown>')`
+parses one document and returns a `Map` keyed by example identifier. It throws
+when a marker or fence violates the example contract, including malformed,
+missing, duplicate, or orphan markers, unmarked fences, and unterminated fences.
+`loadTestedExamples(rootDirectory = REPOSITORY_ROOT)` reads the three
+published documents and combines their examples into one `Map`; it propagates
+read errors and throws for invalid markers or duplicate identifiers across
+documents. `getTestedExample(identifier, examples = loadTestedExamples())`
+returns the matching example record and throws when the identifier is absent.
+
+The `typecheck` target runs `node --check` over the modules listed by the
+Makefile's `NODE_MODULES`, including `scripts/tested-examples.mjs` and
+`scripts/check-tested-examples.mjs`.
 
 Use focused commands while iterating:
 
@@ -51,7 +86,7 @@ recommended Unicorn and deslop rules to `adapters`, `bin/dakar-review.mjs`,
 rules; built-in categories remain off. The
 `adapters/pi/extensions/flex-tier.ts` file is linted but lies outside
 `tsconfig.json`. Pinned versions and the sole plugin-rule exception are
-recorded in [ADR 003](adr-003-linting-strategy.md), whose dated addendum
+recorded in [ADR 0003](adrs/adr-0003-linting-strategy.md), whose dated addendum
 records the TypeScript plugin configuration. Generated bundles and tests are
 outside the Oxlint application target. The generated bundles are checked
 through their source gates and freshness checks, while tests run under
@@ -128,7 +163,7 @@ The source tree has these responsibilities:
 - `config.ts` and `model-routing.ts`: argument defaults, the Flex lane roles
   (`luna`, `luna-medium`, `luna-low`, `terra`), and adapter/model selection;
 - `pricing.ts`: the versioned pricing table and `estimateWorstCaseUsd()`,
-  which prices uncached input at the cache-write band (ADR 002's worst case);
+  which prices uncached input at the cache-write band (ADR 0002's worst case);
 - `admission.ts`: the reserve-first budget controller (`admit()`) that
   enforces `budgetGbp` before any Flex call is dispatched;
 - `retry.ts`: the pure Flex retry schedule — deterministic FNV-1a jitter,
@@ -161,7 +196,7 @@ command introduced by the head under review.
 The internally facing interfaces follow the same ownership boundaries.
 `resolveWorkflowConfig()` returns the frozen `WorkflowConfig` passed into
 routing and planning; it validates and freezes the normalized policy hand-off
-and carries the ADR 002 Flex knobs (budget, Flex limits, retry schedule)
+and carries the ADR 0002 Flex knobs (budget, Flex limits, retry schedule)
 alongside the existing task and candidate limits. `modelForRole()`,
 `flexLaneRole()`, and the other model-routing helpers map that configuration to
 model, adapter, and service-tier selections. The host selects each Flex lane;
@@ -478,9 +513,9 @@ when the CLI enriches the result, and the pricing-table version.
 `renderSarifMarkdown()` are the only final projection paths.
 
 The Flex lanes are pinned in `model-routing.ts::FLEX_LANE_ROLES` and selected
-only by host code (`flexLaneRole()`); ADR 002 forbids an agent promoting itself
-to a costlier model or service tier, so lane choice never appears in a prompt.
-`adapters/pi/` is the Dakar-owned adapter contract for these lanes:
+only by host code (`flexLaneRole()`); ADR 0002 forbids an agent promoting
+itself to a costlier model or service tier, so lane choice never appears in a
+prompt. `adapters/pi/` is the Dakar-owned adapter contract for these lanes:
 
 - `adapters/pi/extensions/flex-tier.ts`: the pi extension that stamps
   `service_tier: "flex"` from the `before_provider_request` hook and logs the
@@ -585,16 +620,19 @@ independently of the living design; proposed records must remain visibly
 proposed until approved.
 
 Run `npm run docs:check` (or `make docs-check`) when adding or changing
-authored workflow or CLI symbols. The gate is TypeDoc's `notDocumented`
-validation, configured by `typedoc.json` over `bin`, `scripts`, and
-`src/workflows/dakar-review`: every module must open with a `/** … @module */`
-block and every exported declaration must carry a JSDoc block. It requires 100%
-documentation of that surface, treats warnings as errors, emits no
-documentation artefacts, and reports the qualified name of each undocumented
-declaration. It excludes the generated `workflows/dakar-review.js` artefact,
-ambient `*.d.ts` declarations, and tests; JSON Schema constants are tagged
-`@internal` so their `description` fields remain the per-field documentation.
-`make lint` and therefore `make check` run it automatically.
+authored workflow or CLI symbols. `npm run docs:check` validates the published
+example contract before running TypeDoc. The documentation scope and marker
+convention are described in Section 1. The symbol gate is TypeDoc's
+`notDocumented` validation, configured by `typedoc.json` over `bin`, `scripts`,
+and `src/workflows/dakar-review`: every module must open with a
+`/** … @module */` block and every exported declaration must carry a JSDoc
+block. It requires 100% documentation of that surface, treats warnings as
+errors, emits no documentation artefacts, and reports the qualified name of
+each undocumented declaration. It excludes the generated
+`workflows/dakar-review.js` artefact, ambient `*.d.ts` declarations, and tests;
+JSON Schema constants are tagged `@internal` so their `description` fields
+remain the per-field documentation. `make lint` and therefore `make check` run
+it automatically.
 
 The gate also validates the references inside those comments. `invalidLink`
 rejects a `{@link …}` that names no symbol, and also one that resolves to a

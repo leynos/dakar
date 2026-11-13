@@ -6,9 +6,9 @@ review workflows Date: 2026-07-14 Companion documents:
 [`docs/developers-guide.md`](developers-guide.md),
 [`docs/design/initial-workflow.md`](design/initial-workflow.md), and
 [`docs/roadmap.md`](roadmap.md) Accepted decision record:
-[`docs/adr-001-compile-odw-workflow-from-typescript.md`](adr-001-compile-odw-workflow-from-typescript.md)
+[`docs/adrs/adr-0001-compile-odw-workflow-from-typescript.md`](adrs/adr-0001-compile-odw-workflow-from-typescript.md)
 and
-[`docs/adr-002-deterministic-tiered-review-cost.md`](adr-002-deterministic-tiered-review-cost.md)
+[`docs/adrs/adr-0002-deterministic-tiered-review-cost.md`](adrs/adr-0002-deterministic-tiered-review-cost.md)
 
 ## 1. Problem
 
@@ -21,16 +21,19 @@ to decide whether the approach can beat CodeRabbit's user-supplied benchmark.
 
 > **Superseded benchmark framing.** The original per-file benchmark below
 > (USD 0.25 per reviewed file) predates
-> [ADR 002](adr-002-deterministic-tiered-review-cost.md), which reframes cost
-> as a hard **per-review** budget (`budgetGbp`, default £0.15, with mean and
-> 95th-percentile targets of £0.05 and £0.08) rather than a per-file ratio.
+> [ADR 0002](adrs/adr-0002-deterministic-tiered-review-cost.md), which reframes
+> cost as a **per-review admission budget** on estimated costs (`budgetGbp`,
+> default £0.15, with mean and 95th-percentile targets of £0.05 and £0.08)
+> rather than a per-file ratio. Provider-reported charges can exceed estimates
+> when actual token use exceeds the configured bounds.
 > The `api-key-support` ExecPlan's USD 0.25 acceptance and USD 0.11 stretch
 > figures are independent per-review USD delivery goals chosen for that
-> plan, not currency conversions of ADR 002's GBP targets; see the ExecPlan's
+> plan, not currency conversions of ADR 0002's GBP targets; see the ExecPlan's
 > "Purpose / big picture" section for the reconciliation and the worst-case
-> arithmetic (USD 0.1855625 for four finder packs and one audit, within the
-> USD 0.1905 default budget). That admits the initial calls, not a retry at
-> their maximum caps. §8 below names the ledger fields that carry the
+> arithmetic (an estimated USD 0.1855625 for four finder packs and one audit,
+> within the USD 0.1905 default admission budget). That admits the estimated
+> initial calls, not a retry at their maximum caps. §8 below names the ledger
+> fields that carry the
 > implemented accounting.
 
 Dakar is not a deterministic linter. The separate `odw-lint` project should own
@@ -83,7 +86,7 @@ Non-goals:
 ## 4. Architecture
 
 > **Superseded pipeline shape.**
-> [ADR 002](adr-002-deterministic-tiered-review-cost.md) moved
+> [ADR 0002](adrs/adr-0002-deterministic-tiered-review-cost.md) moved
 > configuration resolution and range preparation into deterministic CLI host
 > code before `odw run`, and review-history recording into deterministic CLI
 > host code after it. Separately, report rendering remains deterministic,
@@ -92,7 +95,7 @@ Non-goals:
 > `renderSarifMarkdown(sarif)`.
 > The workflow's phases are now Plan, Review, and Audit (one
 > issue-set audit call replaces per-candidate verification). Figure 1 and its
-> prose below describe the pre-ADR-002 shape for historical context; see
+> prose below describe the pre-ADR-0002 shape for historical context; see
 > [`docs/developers-guide.md`](developers-guide.md) §§2-4 for the current
 > module and phase map.
 
@@ -125,7 +128,7 @@ flowchart TD
 
 Figure 1: Dakar separates deterministic CLI and helper work from ODW agent
 orchestration. The CLI can repair review-history recording after a workflow
-record-phase failure. **This figure predates ADR 002**; under the current
+record-phase failure. **This figure predates ADR 0002**; under the current
 `deterministic-flex-v1` route, Resolve CodeRabbit config, Prepare review range,
 Synthesize report, and Record review history all run as CLI host code around a
 workflow whose only phases are Plan, Review (Luna Flex finder fan-out), and
@@ -170,7 +173,7 @@ identity is available. DeepWiki is supplementary and may be stale, so it is not
 evidence about the current head.
 
 ODW still receives one workflow file, but that runtime constraint does not
-require one source file. ADR 001 establishes typed source modules under
+require one source file. ADR 0001 establishes typed source modules under
 `src/workflows/dakar-review/` and a small compiler that produces the committed
 `workflows/dakar-review.js` artefact. The build concatenates a verbatim literal
 metadata banner, a flat esbuild bundle rooted at `main.ts`, and a generated
@@ -206,12 +209,12 @@ command construction, and shell quoting remains one shared authority.
 The generated artefact is never hand-edited. It remains committed because the
 installed CLI and direct ODW users need a ready workflow without TypeScript or
 esbuild at runtime. `docs/design/initial-workflow.md` defines the component
-contracts, while ADR 001 records why compilation is the selected boundary.
+contracts, while ADR 0001 records why compilation is the selected boundary.
 
 ## 5. Review pipeline
 
-> **Superseded by ADR 002.** Figure 3 and the per-kind model routing
-> described below are the pre-ADR-002 shape, kept for historical context and
+> **Superseded by ADR 0002.** Figure 3 and the per-kind model routing
+> described below are the pre-ADR-0002 shape, kept for historical context and
 > still visible as the illustrative `--dry-run` task graph
 > (`defaultTaskGraph()`). The live `deterministic-flex-v1` route instead
 > packs changed files into homogeneous Luna Flex finder evidence packs
@@ -246,7 +249,7 @@ flowchart LR
 ```
 
 Figure 3: Finder tasks propose candidates. Only verifier-approved candidates
-become findings. This diagram shows the pre-ADR-002 per-candidate verification
+become findings. This diagram shows the pre-ADR-0002 per-candidate verification
 and synthesis shape; see the superseded-content note above.
 
 The task graph starts with deterministic file classification because it gives
@@ -307,7 +310,7 @@ The invariant is simple: once Dakar reports a review as successfully recorded,
 a later prepare step on the same branch must not include the recorded head's
 ancestors again. Record failure must be visible.
 
-> **Superseded recovery behaviour.** ADR 002 moved recording out of the
+> **Superseded recovery behaviour.** ADR 0002 moved recording out of the
 > workflow entirely (see §4). The CLI now records every successful,
 > non-skipped result directly, in-process, rather than only recovering
 > after a workflow-side record-phase failure; a successful append stamps
@@ -324,7 +327,7 @@ ancestors again. Record failure must be visible.
 
 ## 8. Telemetry and cost accounting
 
-ADR 002 implements this section's original ledger aspiration (below) as
+ADR 0002 implements this section's original ledger aspiration (below) as
 `metrics.ledger: LedgerEntry[]` in `types.ts`, priced by the versioned
 `pricing.ts::DEFAULT_PRICING_TABLE` and enforced pre-dispatch by
 `admission.ts::admit()`. Each `LedgerEntry` carries `callId`, `phase`, `lane`
@@ -350,9 +353,9 @@ spend to review coverage and outcome.
 
 Cost recovery has three layers, now implemented as follows:
 
-- Budget control: a hard per-review `budgetGbp` (default £0.15), enforced
-  by reserve-first admission — the audit's worst case is reserved before any
-  Luna finder dispatch, so an unaffordable review refuses
+- Budget control: a per-review `budgetGbp` (default £0.15) applied to
+  estimated worst-case costs by reserve-first admission — the audit estimate is
+  reserved before any Luna finder dispatch, so an unaffordable review refuses
   (`stage: "admission"`) before spending on finders it could not afford to
   conclude. `maxLunaFlexCalls`, `transactionMaxFiles`, and `maxAuditCandidates`
   remain as complementary bounded caps. The default admits four initial finder
@@ -361,10 +364,12 @@ Cost recovery has three layers, now implemented as follows:
 - Attribution: `ledger` entries carry cost per call, phase, lane, and model;
   `admissionRefusals` and `lunaDowngrades` record what did not run, or ran only
   partially, and why.
-- Evaluation: compare `metrics.ledgerTotalEstimatedUsd` (and, once
-  populated, the summed `reportedUsd`) against the hard `budgetGbp` converted
-  through `pricingTableVersion`'s `usdPerGbp` snapshot, not against a per-file
-  ratio (see the superseded-benchmark note in §1).
+- Evaluation: compare `metrics.ledgerTotalEstimatedUsd` and, once populated,
+  the summed provider-reported `reportedUsd` against the configured `budgetGbp`
+  converted through `pricingTableVersion`'s `usdPerGbp` snapshot, not against a
+  per-file ratio (see the superseded-benchmark note in §1). Admission bounds
+  estimates; provider-reported charges can exceed them when actual usage is
+  higher than the estimator's assumptions.
 
 The cost model stores the pricing table version used for each estimate in every
 ledger entry. Provider prices change, so old runs remain auditable without
@@ -422,8 +427,8 @@ a usable configuration. Nested values follow their own schemas' unknown-key
 rules instead of inheriting the boundary's, so a value such as
 `modelSpecSchema` still rejects extra fields.
 
-The workflow result contains (post-ADR 002; see the superseded notes in §4, §7,
-and §8 for what changed):
+The workflow result contains (post-ADR 0002; see the superseded notes in §4,
+§7, and §8 for what changed):
 
 - `sarif`: the canonical SARIF 2.1.0 run containing normalized candidates,
   Terra decisions, deterministic gate evidence, provenance, dispositions,

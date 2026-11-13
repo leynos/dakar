@@ -12,6 +12,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { repoRoot, cliPath, runCli, spawnCli, spawnCliSync as spawnSync, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
+import { getTestedExample } from '../scripts/tested-examples.mjs'
 
 test('CLI skips the review without invoking ODW when nothing is unreviewed', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-skip-'))
@@ -40,17 +41,51 @@ test('CLI skips the review without invoking ODW when nothing is unreviewed', () 
     { env: { XDG_CONFIG_HOME: xdgConfig } },
   )
   const result = JSON.parse(output)
+  const documentedSkip = JSON.parse(getTestedExample('users-guide-skipped-result').code)
 
-  assert.equal(result.ok, true)
-  assert.equal(result.skipped, true)
-  assert.match(result.reason, /No unreviewed commits/u)
+  assert.equal(result.ok, documentedSkip.ok)
+  assert.equal(result.skipped, documentedSkip.skipped)
+  assert.equal(result.reason, documentedSkip.reason)
+  assert.ok(result.config.endsWith(documentedSkip.config.slice(3)))
+  assert.ok(result.stateFile.endsWith(documentedSkip.stateFile.slice(3)))
   assert.equal(result.resolvedConfig, undefined)
-  assert.equal(typeof result.headCommit, 'string')
+  assert.equal(typeof result.headCommit, typeof documentedSkip.headCommit)
   assert.ok(result.headCommit.length > 0)
   assert.equal(result.recorded, undefined)
   assert.equal(existsSync(marker), false)
   // A skipped review records nothing: no reviews.toml under the trusted state root.
   assert.equal(existsSync(join(stateRoot, 'reviews.toml')), false)
+})
+
+test('the published branch-review command prepares the selected base', (t) => {
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  const toolDirectory = join(tempRoot, 'bin')
+  mkdirSync(toolDirectory)
+  execFileSync('git', ['-C', targetRepo, 'update-ref', 'refs/remotes/origin/main', base])
+  const cliShim = join(toolDirectory, 'dakar-review')
+  writeFileSync(cliShim, `#!/bin/sh\nexec '${process.execPath}' '${cliPath}' "$@"\n`)
+  chmodSync(cliShim, 0o755)
+  writePreparedEchoOdw(join(toolDirectory, 'odw'), { captureArgs: true })
+
+  const result = spawnSync('/bin/bash', ['-ec', getTestedExample('users-guide-review-branch').code], {
+    cwd: targetRepo,
+    env: {
+      ...process.env,
+      PATH: `${toolDirectory}:${process.env.PATH}`,
+      DAKAR_SKIP_CONTEXT_WARMUP: '1',
+      XDG_CONFIG_HOME: join(tempRoot, 'config'),
+      XDG_STATE_HOME: join(tempRoot, 'state'),
+    },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  assert.equal(result.status, 0, result.stderr)
+  const output = JSON.parse(result.stdout)
+
+  assert.equal(output.reviewBase, base)
+  assert.equal(output.commitCount, 1)
+  assert.equal(output.receivedArgs.prepared.reviewBase, base)
 })
 
 test('CLI skip result honours --format markdown by emitting the JSON fallback', () => {
@@ -122,8 +157,12 @@ test('CLI fails with a prepare envelope without invoking ODW when refs are inval
 
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
-  assert.match(result.stderr, /"stage":\s*"prepare"/u)
-  assert.match(result.stderr, /"ok":\s*false/u)
+  const documentedError = JSON.parse(getTestedExample('users-guide-cli-error').code)
+  const error = JSON.parse(result.stderr)
+  assert.equal(typeof error.stage, typeof documentedError.stage)
+  assert.equal(error.stage, 'prepare')
+  assert.equal(error.ok, documentedError.ok)
+  assert.equal(typeof error.error, typeof documentedError.error)
   assert.equal(existsSync(marker), false)
 })
 

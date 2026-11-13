@@ -1,4 +1,4 @@
-# Implement the ADR 002 deterministic-tiered review route
+# Implement the ADR 0002 deterministic-tiered review route
 
 This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
@@ -17,31 +17,34 @@ today.
 
 After this change, running `dakar-review` on a real branch produces a useful
 semantic code review whose measured provider spend is below USD 0.25, with a
-stretch goal below USD 0.11. Today one review can launch agents for
-configuration resolution, range preparation, up to eight finder tasks, up to
-thirty per-candidate verifications, synthesis rendering, and history recording,
-with no cost ceiling at all. This plan implements the vertical slice of
-[ADR 002](../adr-002-deterministic-tiered-review-cost.md) (roadmap steps 7.1
-through 7.4): deterministic host code absorbs every derivable phase, the
+stretch goal below USD 0.11. Before this plan, one review could launch agents
+for configuration resolution, range preparation, up to eight finder tasks, up
+to thirty per-candidate verifications, synthesis rendering, and history
+recording, without a per-call cost admission estimate. This plan implements the
+vertical slice of
+[ADR 0002](../adrs/adr-0002-deterministic-tiered-review-cost.md) (roadmap steps
+7.1 through 7.4): deterministic host code absorbs every derivable phase, the
 remaining model work routes to two OpenAI Flex-tier lanes (`gpt-5.6-luna` for
 bounded finder transactions, `gpt-5.6-terra` for one issue-set audit), and an
-admission controller enforces a hard per-review budget before any call is
-dispatched.
+admission controller applies a per-review budget to estimated worst-case token
+costs before calls are dispatched.
 
 Cost-goal framing (expert-panel finding, adopted): the USD 0.25 and USD 0.11
 figures are independently chosen delivery goals, not currency conversions of
-ADR 002's GBP targets. The current hard ordinary-review budget is £0.15, or USD
-0.1905 at the pricing table's seed exchange snapshot; the admission controller
-enforces the GBP budget through that versioned snapshot. The current default
-caps (four Luna transactions plus one Terra audit, uncached input priced at the
-cache-write band) total USD 0.1855625, leaving USD 0.0049375 inside the default
-budget. The USD 0.11 stretch goal is therefore a typical-case goal — reachable
-only when fewer transactions fire or cached input reduces spend — and the USD
-0.25 acceptance goal still has headroom. The earlier recorded USD 0.133
-isolated worst case belongs to the pre-amendment cost model and is historical
-evidence, not the current default-cap total. Terra dominates the ceiling, so
-`terraMaxInputTokens` is the lever that matters if cost must come down later,
-not the Luna caps.
+ADR 0002's GBP targets. The configured ordinary-review admission budget is
+£0.15, or USD 0.1905 at the pricing table's seed exchange snapshot; it limits
+versioned cost estimates, not provider billing. The current default caps (four
+Luna transactions plus one Terra audit, uncached input priced at the
+cache-write band) total an estimated USD 0.1855625, leaving estimated headroom
+of USD 0.0049375. The USD 0.11 stretch goal is therefore a typical-case goal —
+reachable only when fewer transactions fire or cached input reduces spend — and
+the USD 0.25 acceptance goal is measured against provider-reported usage. M7
+later showed an estimate below reported cost: pi wrote about 28k cache tokens
+against the 13k `adapterOverheadTokens` assumption on an uncached call. The
+earlier recorded USD 0.133 isolated estimate belongs to the pre-amendment cost
+model and is historical evidence, not the current default-cap total. Terra
+dominates the estimate envelope, so `terraMaxInputTokens` is the lever that
+matters if expected cost must come down later, not the Luna caps.
 
 Success is observable: a live review of a selected estate pull request
 completes end to end, the result carries a per-call cost ledger with
@@ -50,7 +53,7 @@ target.
 
 ## Constraints
 
-- The compiled-artefact contract from ADR 001 holds throughout:
+- The compiled-artefact contract from ADR 0001 holds throughout:
   `workflows/dakar-review.js` is generated, never hand-edited; source lives in
   `src/workflows/dakar-review/` in erasable-syntax TypeScript with explicit
   `.ts` sibling imports, ambient (never imported) Open Dynamic Workflows (ODW)
@@ -73,7 +76,7 @@ target.
   Every live invocation must use the cheapest configuration that can answer the
   question being asked.
 - Agents may not promote themselves to a more expensive model or service
-  tier; lane selection is host code (ADR 002 decision principle).
+  tier; lane selection is host code (ADR 0002 decision principle).
 - Prose, comments, and commit messages use en-GB Oxford English. All commit
   gates run before each commit (delegated to a scrutineer agent).
 - Every milestone's exit criteria include updating this plan's `Progress`,
@@ -113,8 +116,8 @@ conflict in `Decision Log`, and escalate.
   depends on it, using provider-side evidence (the Responses API echoes the
   applied `service_tier` in the response body), not configuration echo. The
   fallback is a thin host-side Responses API adapter script (Node built-in
-  `fetch`, no runtime dependency) registered as an ODW adapter command; ADR 002
-  rejected a bespoke wrapper only "solely to select Flex", so a proven
+  `fetch`, no runtime dependency) registered as an ODW adapter command; ADR
+  0002 rejected a bespoke wrapper only "solely to select Flex", so a proven
   plumb-through failure is a documented justification.
 - Risk: Flex processing latency (requests can take many minutes; the
   provider's own SDK default timeout is 10 minutes) may exceed ODW agent or CLI
@@ -142,7 +145,7 @@ conflict in `Decision Log`, and escalate.
   defects the per-candidate route caught. Severity: medium. Likelihood: low.
   Mitigation: the audit lands first on the existing standard-tier adapters (M3)
   so its behaviour is validated in isolation from Flex plumbing; the audit
-  prompt is explicitly adversarial per ADR 002; M7 inspects accepted findings
+  prompt is explicitly adversarial per ADR 0002; M7 inspects accepted findings
   by hand on the tiny and small corpus entries where ground truth is easy to
   establish.
 - Risk: it may not be possible to observe a genuine Flex
@@ -365,7 +368,7 @@ conflict in `Decision Log`, and escalate.
     reservation by `flexAttempts` (the historical recorded arithmetic would
     refuse every £0.10-budget review — 0.09375 x 3 = 0.28125 USD against the
     historical USD 0.127 budget — and
-    contradicts ADR 002 scheduling rule 6 on unbilled
+    contradicts ADR 0002 scheduling rule 6 on unbilled
     resource-unavailable attempts plus the recorded M5 no-re-charge
     decision); making partial-coverage reviews non-recordable
     (contradicts the recorded M5/M7 downgrade-and-continue design;
@@ -426,7 +429,7 @@ conflict in `Decision Log`, and escalate.
     docstrings (100.00%, threshold 80.00%), and the 68,667-byte generated
     workflow fresh.
 - [x] (2026-08-17) Budget documentation reconciled with the current
-  implementation and ADR 002 amendment: `budgetGbp` defaults to £0.15 (USD
+  implementation and ADR 0002 amendment: `budgetGbp` defaults to £0.15 (USD
   0.1905 at pricing table 2026-07-18), and the four-default-finder-plus-audit
   cap totals USD 0.1855625. The earlier £0.10/USD 0.127 budget and USD 0.133
   isolated worst-case figures remain only as clearly labelled historical
@@ -442,10 +445,10 @@ conflict in `Decision Log`, and escalate.
   already exists and is already tested.
 - Observation: the CLI's record-recovery path (`recoverRecordFailure`,
   `bin/dakar-review.mjs:333-368`) already calls `appendReview` directly and is
-  exactly the shape ADR 002 wants as the primary path. Evidence: recon report on
-  `bin/dakar-review.mjs`. Impact: M2 promotes an existing fallback to the main
-  path rather than writing new recording logic.
-- Observation: current OpenAI prices match ADR 002 Table 1 exactly, and a
+  exactly the shape ADR 0002 wants as the primary path. Evidence: recon report
+  on `bin/dakar-review.mjs`. Impact: M2 promotes an existing fallback to the
+  main path rather than writing new recording logic.
+- Observation: current OpenAI prices match ADR 0002 Table 1 exactly, and a
   larger `gpt-5.6-sol` tier exists above Terra. Evidence: pricing page scrape,
   2026-07-18. Impact: the pricing-table seed data can be committed with
   confidence; `sol` is out of scope but the table schema and the ledger `lane`
@@ -458,14 +461,14 @@ conflict in `Decision Log`, and escalate.
   provider-scoped, `model_service_tier`). The earlier "successful" Codex probe
   was therefore billed at standard rates, silently — exactly the failure mode
   the Ambiguity tolerance names. Evidence: `captured-requests.jsonl` in the
-  scratchpad; four-variant probe transcript, 2026-07-18. Impact: ADR 002's
+  scratchpad; four-variant probe transcript, 2026-07-18. Impact: ADR 0002's
   premise that "Codex CLI can select Flex directly" is falsified for the
   installed version; M0 is a no-go on the Codex path and the plan's designated
   fallback (direct Responses API adapter) is on the table. Escalated for
   direction.
 - Observation (M0): each `codex exec` call carries roughly 20,100 input
   tokens of Codex harness overhead before any evidence pack (probe usage:
-  20,128 input tokens for a one-line prompt), against ADR 002's
+  20,128 input tokens for a one-line prompt), against ADR 0002's
   `transactionMaxInputTokens` of 12,000 for the whole transaction. Evidence:
   `codex-probe.jsonl` usage block, 2026-07-18. Impact: through Codex, every
   Luna transaction would cost roughly 32k input tokens rather than 12k,
@@ -545,7 +548,7 @@ conflict in `Decision Log`, and escalate.
 
 ## Decision log
 
-- Decision: implement ADR 002 as a vertical slice (roadmap 7.1-7.4),
+- Decision: implement ADR 0002 as a vertical slice (roadmap 7.1-7.4),
   deferring SARIF envelope adoption, deterministic gate running, and the
   adjudicated comparison corpus (roadmap 7.5). Rationale: the delivery goal is
   a minimally useful live review below USD 0.25; the deferred items do not
@@ -561,7 +564,7 @@ conflict in `Decision Log`, and escalate.
   arm. Rationale: keeping both pipelines selectable would roughly double the
   orchestration and test surface of every subsequent milestone for a comparison
   that runs once against fixtures. The tag preserves a runnable legacy arm at
-  zero maintenance cost. This deliberately collapses ADR 002's staged
+  zero maintenance cost. This deliberately collapses ADR 0002's staged
   default-cutover (migration step 10) for this single-operator repository;
   `metrics.routingPolicy` is retained so results are self-describing.
   Date/Author: 2026-07-18, planning agent, adopting expert-panel finding.
@@ -572,11 +575,11 @@ conflict in `Decision Log`, and escalate.
   CLI already imports both helper scripts. Moving prepare before `odw run` and
   record after it makes the workflow a pure model-orchestration unit and
   deletes four agent calls. Date/Author: 2026-07-18, planning agent.
-- Decision: this slice deviates from ADR 001's "preserve dry-run output and
+- Decision: this slice deviates from ADR 0001's "preserve dry-run output and
   phase names" compatibility clause: the dry-run result loses `synthesisModel`,
   `synthesisAdapter`, and `synthesisSchema`, and the phase list in `meta.js`
-  shrinks to Plan, Review, Audit. Rationale: ADR 001's non-goal was "change
-  review behaviour" incidentally during the compiler migration; ADR 002 is an
+  shrinks to Plan, Review, Audit. Rationale: ADR 0001's non-goal was "change
+  review behaviour" incidentally during the compiler migration; ADR 0002 is an
   accepted decision that changes review behaviour deliberately. The dry-run
   characterization test is updated red-first in M2/M3 and the users' guide
   documents the new shape in M6. Date/Author: 2026-07-18, planning agent,
@@ -659,10 +662,11 @@ conflict in `Decision Log`, and escalate.
   next attempt. After the full default initial envelope, no headroom remains
   for a maximum-cost retry, although smaller retries can still fit. Under
   budget pressure the review degrades to fewer retries, then partial coverage,
-  then deferral, never past the ceiling. Rationale: the hard ceiling must bound
-  actual worst-case spend including retries, without repealing the ordinary
-  budget or the retry policy as upfront chain reservation would. Date/Author:
-  2026-07-19, implementing agent, per operator direction.
+  then deferral, while admitted estimates stay within the ceiling. Rationale:
+  the configured ceiling must bound estimated worst-case cost including
+  retries, without repealing the ordinary budget or the retry policy as upfront
+  chain reservation would. Date/Author: 2026-07-19, implementing agent, per
+  operator direction.
 - Decision (round-4 batch dispositions): malformed `DAKAR-USAGE`
   telemetry is now an explicit parse outcome — the harness returns structured
   `{ line, category }` diagnostics (categories `invalid-json`, `non-object`,
@@ -689,7 +693,7 @@ conflict in `Decision Log`, and escalate.
   Codex path; evidence packs are host-built so finder and audit calls need no
   agentic file access; (b) upgrade Codex CLI hoping a newer version transmits
   the key — unverified, touches shared system tooling, and retains the harness
-  overhead; (c) accept standard pricing through Codex — violates ADR 002 and
+  overhead; (c) accept standard pricing through Codex — violates ADR 0002 and
   roughly doubles the cost model. Recommendation: (a). Resolution: the operator
   directed a source-level confirmation and an evaluation of `goose` and `pi`
   before rolling a bespoke adapter. All three were done (see Surprises).
@@ -701,7 +705,7 @@ conflict in `Decision Log`, and escalate.
   preferred alternative order (codex confirmed broken upstream; goose lacks
   request-side tier support; pi works through a supported extension point, so
   no bespoke API client is required). Milestone M4 is re-specified accordingly,
-  and ADR 002's adapter contract section carries a matching amendment.
+  and ADR 0002's adapter contract section carries a matching amendment.
   Date/Author: 2026-07-18, implementing agent, per operator direction.
 
 ## Outcomes & retrospective
@@ -806,7 +810,7 @@ Verified external facts (2026-07-18):
   evidence.
 - Pricing (USD per million tokens, short context): Luna Flex 0.50 input /
   0.05 cached / 0.625 cache-write / 3.00 output; Terra Flex 1.25 / 0.125 /
-  1.5625 / 7.50 — matching ADR 002 Table 1. Both models support Flex.
+  1.5625 / 7.50 — matching ADR 0002 Table 1. Both models support Flex.
 - Codex CLI: `CODEX_API_KEY=<key> codex exec --json "task"` authenticates
   with a platform API key (billed to the API, not a ChatGPT subscription) and
   reports `input_tokens`, `cached_input_tokens`, and `output_tokens`.
@@ -884,7 +888,7 @@ cache-write band and the two admission inequalities. Seed the pricing table
 with the verified 2026-07-18 rates (`pricingTableVersion: "2026-07-18"`) and
 the exchange snapshot (`usdPerGbp: 1.27`, a versioned datum, not a constant).
 The worst-case estimator prices uncached input at the cache-write band,
-matching ADR 002's stated worst case.
+matching ADR 0002's stated worst case.
 
 Red first: `tests/workflow-pricing.test.mjs` and
 `tests/workflow-admission.test.mjs` assert the worked examples from the
@@ -954,7 +958,7 @@ severity ranking, and a new `maxAuditCandidates` cap (default 30, configurable)
 `over-audit-cap`, never silently dropped. Add `AUDIT_SCHEMA` to `schemas.ts`
 (shape in Interfaces) and `auditPrompt` to `prompts.ts`, receiving the
 compacted candidates, changed-line map, policy context, and remaining budget,
-with the adversarial duties from ADR 002's Terra boundary section. `main.ts`
+with the adversarial duties from ADR 0002's Terra boundary section. `main.ts`
 re-pairs returned verdicts to compacted candidates by `candidateId`; unknown or
 missing ids become auditable discards. `resolveWorkflowConfig` gains
 `maxAuditCandidates` and `routingPolicy` (recorded in metrics; sole value
@@ -994,7 +998,7 @@ evidence packs respecting `transactionMaxFiles` (default 5), recording
 truncation in metrics. In `main.ts`, route finder tasks through the admission
 controller to the Luna lane and the audit to the Terra lane, reserving the
 audit's worst-case estimate before any Luna dispatch. `resolveWorkflowConfig`
-gains the remaining ADR 002 limit knobs with ADR defaults.
+gains the remaining ADR 0002 limit knobs with ADR defaults.
 
 Red first: routing tests prove finder tasks receive the Luna adapter and never
 exceed four calls; orchestration tests prove admission refusal of the audit
@@ -1005,7 +1009,7 @@ lane, that they rely on `PI_CODING_AGENT_DIR` extension auto-discovery rather
 than `-e`, and that `adapters/pi/extensions/flex-tier.ts` sets `service_tier`
 (cheap regression guards — the authoritative effective-configuration evidence
 is the M0 capture-server and live-probe transcripts, cited in
-`Artefacts and notes`, satisfying ADR 002's verification clause).
+`Artefacts and notes`, satisfying ADR 0002's verification clause).
 
 Validation: full `make check` via scrutineer; dry run shows lanes, caps, and
 pricing-table version.
@@ -1031,7 +1035,7 @@ case must fit inside the outer `odw run` wait. With the slice defaults —
 from M0 (expected around 120-300 s for Flex) — the worst-case single-call chain
 is bounded and the whole review must fit the harness's outer `--timeout 3600`.
 M5 lands a computed constant (`worstCaseReviewSeconds`) and a test asserting it
-is below the outer timeout the harness passes. The slice reduces ADR 002's
+is below the outer timeout the harness passes. The slice reduces ADR 0002's
 default `flexAttempts` from 6 to 3 for this reason; the `Decision Log` gains an
 entry when the exact numbers are fixed against M0 measurements.
 
@@ -1049,7 +1053,7 @@ re-pay cost, cost fields in results, the new dry-run shape),
 `docs/developers-guide.md` (lane architecture, adapter contract, ledger
 location), `docs/dakar-review-design.md` (mark the superseded per-candidate
 verification and agent-wrapped phases; reconcile the benchmark statement with
-ADR 002's per-review targets and this plan's independent USD delivery goals),
+ADR 0002's per-review targets and this plan's independent USD delivery goals),
 and `docs/roadmap.md` checkboxes for completed 7.x tasks. Run the complete gate
 suite through a scrutineer agent.
 
@@ -1159,7 +1163,7 @@ Quality criteria:
 - Gates: `make check` (formatting, docstrings, markdownlint, nixie,
   typecheck, workflow freshness, ODW dry run, tests, spelling) passes at every
   commit, run via scrutineer.
-- ADR 002 verification subset delivered by this slice: a blocking
+- ADR 0002 verification subset delivered by this slice: a blocking
   admission refusal launches no model calls; config, prepare, rendering, and
   recording launch no model calls; no ordinary review exceeds the Luna and
   audit caps; a retryable Flex failure retries with bounded backoff and never
@@ -1234,7 +1238,7 @@ M7 live ledger (running record; spend total updated per run):
   rejected it as `not_applicable`, correctly reasoning that the contract test
   enforces the mechanically testable pinned-full-SHA invariant and an
   allow-list would defeat the PR's purpose (Dependabot SHA ownership) — the
-  adversarial issue-set audit doing precisely its ADR 002 job. Running M7
+  adversarial issue-set audit doing precisely its ADR 0002 job. Running M7
   spend: roughly USD 0.14.
 - `frankie` 102 (medium, 2026-07-18): complete, `verdict: pass`,
   0 findings, 0 discarded; two Luna packs, zero candidates, audit correctly
@@ -1431,7 +1435,7 @@ its result unchanged.
 
 Revised after the three-panel expert review (structure and contracts; cost and
 failure modes; alternatives and viability). Material changes: cost-goal framing
-corrected (USD goals declared independent of ADR 002's GBP targets; historical
+corrected (USD goals declared independent of ADR 0002's GBP targets; historical
 recorded pre-amendment worst case USD 0.133 stated; stretch goal identified as
 typical-case); cache-write band added to the pricing interfaces and worked
 examples; admission inequalities made normative; M0 strengthened to require
@@ -1440,10 +1444,10 @@ split into M3 (audit on standard adapters) and M4 (Flex lanes) for fault
 isolation; M2 split into four stages with a test-harness refactor first and the
 `legacy-route-final` tag recorded; audit response given its own `AUDIT_SCHEMA`;
 `WorkflowArgs.prepared` contract and result echo pinned; skip-shape and dry-run
-deviations from ADR 001 recorded as decisions; timeout budget made explicit with
-`flexAttempts` reduced to 3 for the slice; corpus SHAs pinned with fail-closed
-checks; harness state-root guard made code-level; ledger gained `reportedUsd`
-and the `standard` lane; escalation adapter `pi-luna-flex-medium`
+deviations from ADR 0001 recorded as decisions; timeout budget made explicit
+with `flexAttempts` reduced to 3 for the slice; corpus SHAs pinned with
+fail-closed checks; harness state-root guard made code-level; ledger gained
+`reportedUsd` and the `standard` lane; escalation adapter `pi-luna-flex-medium`
 pre-registered; living-document updates added to every milestone's exit
 criteria. Remaining work is unchanged in intent: prove plumbing, build the cost
 machinery, take over deterministic phases, land the audit, then Flex, then
@@ -1453,7 +1457,7 @@ validate live.
 
 M0 through M7 are complete and the plan status is COMPLETE. Since the
 post-panel revision: the adapter vehicle changed from Codex CLI to pi per
-operator direction after the M0 probe falsified the Codex premise (ADR 002
+operator direction after the M0 probe falsified the Codex premise (ADR 0002
 carries the amendment); M7 live validation surfaced and fixed five defects
 (models.json schema, ODW null-on-failure agent semantics, parallel
 slot-nulling, the silent zero-coverage pass, and the cwd-fragile extension

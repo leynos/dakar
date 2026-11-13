@@ -264,10 +264,10 @@ preserving the installed workflow, CLI, state, and result contracts.
 ### 5.1. Adopt the source-to-artefact boundary
 
 This step establishes the architectural and compiler contracts before moving
-behaviour. See `docs/dakar-review-design.md` §4 and ADR 001.
+behaviour. See `docs/dakar-review-design.md` §4 and ADR 0001.
 
 - [x] 5.1.1. Accept the TypeScript source and generated ODW artefact decision.
-  - Success: ADR 001 and the companion designs agree on source ownership,
+  - Success: ADR 0001 and the companion designs agree on source ownership,
     module boundaries, rejected alternatives, and compatibility invariants.
 - [x] 5.1.2. Add the fail-closed compiler, TypeScript restriction, and freshness
   gates without behavioural decomposition.
@@ -337,26 +337,30 @@ fundamentals.
   - Success: publication preserves the structured result and discard audit
     rather than posting unverified candidate noise.
 
-## 7. Deterministic-tiered review cost (ADR 002)
+## 7. Deterministic-tiered review cost (ADR 0002)
 
 Idea: if deterministic host code owns every derivable decision and the two
-Flex-tier model lanes are admitted against a hard budget, an ordinary review
-becomes provably affordable — mean at or below £0.05, hard ceiling £0.10 —
-without losing high-severity recall (an acceptance target that task 7.5.3
-evaluates).
+Flex-tier model lanes are admitted against a £0.15 budget using per-call cost
+estimates, the default estimated envelope fits the budget and observed mean
+provider spend can meet the £0.05 target without losing high-severity recall
+(an acceptance target that task 7.5.3 evaluates). The original £0.10 figure was
+the historical budget benchmark; admission estimates do not guarantee
+provider-reported charges will stay within the configured budget.
 
-This phase implements [ADR 002](adr-002-deterministic-tiered-review-cost.md).
-It supersedes the USD 0.25 per-file benchmark used by phase 4 with ADR 002's
-per-review targets (`targetCostPerReviewGbp = 0.11`); the phase 4 ledger and
-pricing-table tasks become prerequisites rather than parallel work. The
-immediate delivery goal is a minimally useful live review below USD 0.25 of
-provider spend, with a stretch goal below USD 0.11.
+This phase implements
+[ADR 0002](adrs/adr-0002-deterministic-tiered-review-cost.md). It supersedes
+the USD 0.25 per-file benchmark used by phase 4 with ADR 0002's per-review
+targets (`targetCostPerReviewGbp = 0.11`); the phase 4 ledger and pricing-table
+tasks become prerequisites rather than parallel work. The immediate delivery
+goal is a minimally useful live review below USD 0.25 of provider spend, with a
+stretch goal below USD 0.11.
 
 ### 7.1. Pricing table, cost ledger, and admission control
 
-This step answers whether Dakar can bound worst-case review cost before any
-model call is dispatched. Subsumes 4.3.1. See ADR 002 §"Cost budget and
-admission control".
+This step answers whether Dakar can estimate and admit worst-case review cost
+before any model call is dispatched. Provider-reported charges can exceed an
+admission estimate when actual usage is higher. Subsumes 4.3.1. See ADR 0002
+§"Cost budget and admission control".
 
 - [x] 7.1.1. Land the versioned pricing table with a foreign-exchange
   snapshot.
@@ -366,7 +370,7 @@ admission control".
   - Requires 7.1.1.
   - Success: every model call records model, service tier, reasoning effort,
     estimated worst-case cost, and provider-reported token usage separately.
-- [x] 7.1.3. Add the admission controller with the hard ordinary-review
+- [x] 7.1.3. Add the admission controller with the ordinary-review estimate
   budget.
   - Requires 7.1.2.
   - Success: the required audit is reserved first, and an optional call whose
@@ -376,7 +380,7 @@ admission control".
 ### 7.2. Deterministic host takeover of agent-wrapped phases
 
 This step answers whether removing model mediation from derivable phases
-preserves the workflow contract while eliminating their spend. See ADR 002
+preserves the workflow contract while eliminating their spend. See ADR 0002
 §"Deterministic host boundary" and migration step 2.
 
 - [x] 7.2.1. Call config resolution and range preparation in-process from the
@@ -395,7 +399,7 @@ preserves the workflow contract while eliminating their spend. See ADR 002
 ### 7.3. Flex lanes: Luna transactions and the Terra issue-set audit
 
 This step answers whether one bounded audit can replace per-candidate
-verification without material recall loss. See ADR 002 §"Luna Flex
+verification without material recall loss. See ADR 0002 §"Luna Flex
 transactional boundary", §"Terra Flex boundary", and §"Flex scheduling and
 failure policy".
 
@@ -410,7 +414,7 @@ failure policy".
   - Requires 7.1.1.
   - Success: the provider request contains `service_tier = "flex"` and the
     pinned per-lane reasoning effort for both adapters (Codex CLI cannot
-    send the tier; see the ADR 002 amendment of 2026-07-18).
+    send the tier; see the ADR 0002 amendment of 2026-07-18).
 - [x] 7.3.3. Route finder tasks to bounded Luna Flex transactions and the
   audit to Terra Flex.
   - Requires 7.3.1 and 7.3.2.
@@ -427,7 +431,7 @@ failure policy".
 ### 7.4. Live cost validation on the estate corpus
 
 This step answers whether the implemented route meets the delivery goal on real
-branches. See ADR 002 §"Verification".
+branches. See ADR 0002 §"Verification".
 
 - [x] 7.4.1. Build the candidate-branch harness for API-key live runs.
   - Requires 7.2 and 7.3.
@@ -438,21 +442,21 @@ branches. See ADR 002 §"Verification".
   - Success: an ordinary review completes with useful findings below USD 0.25
     provider spend; results record whether the USD 0.11 stretch was met.
 
-### 7.5. Deferred ADR 002 completions
+### 7.5. Deferred ADR 0002 completions
 
 - [x] 7.5.1. Adopt SARIF 2.1.0 as the canonical findings envelope.
   - Requires 7.3.3.
-  - See ADR 002 §"Findings and hand-off format" and roadmap 6.1.1.
+  - See ADR 0002 §"Findings and hand-off format" and roadmap 6.1.1.
 - [x] 7.5.2. Run configured deterministic gates with short-circuit before
   semantic review.
   - Requires 7.2.1.
-  - See ADR 002 §"Deterministic gate short-circuit".
+  - See ADR 0002 §"Deterministic gate short-circuit".
 - [ ] 7.5.3. Compare legacy and deterministic-flex routes on adjudicated
   fixtures.
   - Requires 7.4.2 and 3.3.1.
-  - Success: the acceptance criteria in ADR 002 §"Verification" hold. The
+  - Success: the acceptance criteria in ADR 0002 §"Verification" hold. The
     deterministic-flex route is already the sole live route in this
-    repository: ADR 002's staged default-cutover guideline (migration step
+    repository: ADR 0002's staged default-cutover guideline (migration step
     10) was superseded by the recorded decision in the Decision Log of
     `docs/execplans/api-key-support.md`, so this comparison validates
     review quality retrospectively against the `legacy-route-final` tag

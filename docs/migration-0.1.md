@@ -7,6 +7,7 @@ This signpost records the installation changes for Dakar 0.1.
 Direct `bun install -g` installation is no longer supported. Install from a
 Dakar checkout with:
 
+<!-- tested-example: migration-0-1-install-contract -->
 ```bash
 ./install.sh
 ```

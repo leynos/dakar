@@ -10,16 +10,18 @@ Dakar is an
 (ODW) code-review workflow and an installable `dakar-review` command-line
 interface (CLI). Deterministic host code owns everything derivable —
 configuration, review range, rendering, and history — while two bounded
-Flex-tier model lanes do the judgement, under a hard per-review budget enforced
-before any call is dispatched.
+Flex-tier model lanes do the judgement, under a per-review admission budget
+calculated from estimated worst-case token use before any call is dispatched.
+Provider-reported charges can exceed those estimates when actual usage is
+higher than the estimator's assumptions.
 
 ______________________________________________________________________
 
 ## Why Dakar?
 
-- **A hard cost ceiling, not a cost report**: the Terra audit's worst-case
-  estimate is reserved first, every finder call passes admission control, and a
-  review that cannot afford its audit refuses before spending anything.
+- **A per-review admission budget**: the Terra audit's worst-case estimate is
+  reserved first, every finder call passes admission control, and a review that
+  cannot afford its audit refuses before dispatching finder calls.
 - **Deterministic where determinism is possible**: no model is paid to run
   a shell command and echo its JSON. Range preparation, report rendering, and
   review-history recording are host code with tests.
@@ -35,6 +37,7 @@ ______________________________________________________________________
 
 ### Installation
 
+<!-- tested-example: readme-install-cli -->
 ```bash
 ./install.sh   # installs dakar-review globally with Bun
 export OPENAI_API_KEY="sk-..."
@@ -42,6 +45,7 @@ export OPENAI_API_KEY="sk-..."
 
 ### Basic usage
 
+<!-- tested-example: readme-review-commands -->
 ```bash
 # Review the current branch's unreviewed commits against origin/main
 dakar-review --base origin/main --telemetry
@@ -65,11 +69,12 @@ deterministically, runs one Terra Flex issue-set audit, and renders the report
 deterministically. The CLI records the reviewed head only after a successful
 audit.
 
+<!-- tested-example: readme-review-flow -->
 ```mermaid
 flowchart TD
   A[CLI: resolve config and read AGENTS.md] --> B[CLI: prepare review range]
   B -->|nothing unreviewed| S[Skip without any model call]
-  B -->|unreviewed commits| C{Reserve Terra audit budget}
+  B -->|unreviewed commits| C{Reserve Terra audit estimate}
   C -->|cannot afford audit| R[Refuse: stage admission, zero spend]
   C -->|reserved| D[Plan at most 4 Luna evidence packs]
   D --> E[Luna Flex finder calls under admission control]
@@ -111,7 +116,7 @@ ______________________________________________________________________
   result interpretation.
 - [Developer's guide](docs/developers-guide.md) — building, testing, and
   extending the workflow.
-- [ADR 002](docs/adr-002-deterministic-tiered-review-cost.md) — why the
+- [ADR 0002](docs/adrs/adr-0002-deterministic-tiered-review-cost.md) — why the
   pipeline is deterministic-first with Flex-tier lanes.
 - [Roadmap](docs/roadmap.md) — planned features and progress.
 
