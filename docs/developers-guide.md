@@ -29,7 +29,9 @@ The lint stage runs `make docs-check`, which invokes `npm run docs:check`. That
 script runs `npm run docs:examples:check` before TypeDoc. The example gate
 covers the published user-facing documents in `scripts/tested-examples.mjs`:
 `README.md`, `docs/users-guide.md`, and `docs/migration-0.1.md`. Maintainer
-documents, including this guide, stay outside that scope.
+documents, including this guide, stay outside that scope. The gate parses
+CommonMark with `markdown-it` 14.3.0, pinned as a development dependency in
+`package.json` and installed by `npm ci`.
 
 Put a marker such as `<!-- tested-example: install-cli -->` immediately before
 each fenced code block in those documents. Identifiers use lower-case
@@ -40,6 +42,19 @@ loader extracts the fenced content for the examples in
 behaviour tests. The parser and gate wiring are also covered by
 `tests/makefile-docs-gate.test.mjs`, `tests/docs-gate.test.mjs`, and
 `tests/ci-workflow-gate.test.mjs`.
+
+### Tested-example helper API
+
+Tests use `getTestedExample` from `scripts/tested-examples.mjs` to consume
+published examples. `parseTestedExamples(markdown, source = '<markdown>')`
+parses one document and returns a `Map` keyed by example identifier. It throws
+when a marker or fence violates the example contract, including malformed,
+missing, duplicate, or orphan markers, unmarked fences, and unterminated fences.
+`loadTestedExamples(rootDirectory = REPOSITORY_ROOT)` reads the three
+published documents and combines their examples into one `Map`; it propagates
+read errors and throws for invalid markers or duplicate identifiers across
+documents. `getTestedExample(identifier, examples = loadTestedExamples())`
+returns the matching example record and throws when the identifier is absent.
 
 The `typecheck` target runs `node --check` over the modules listed by the
 Makefile's `NODE_MODULES`, including `scripts/tested-examples.mjs` and
