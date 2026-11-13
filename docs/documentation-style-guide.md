@@ -724,6 +724,8 @@ contents of the manual.
   `ignore` skips both compilation and execution.
 - Put function attributes after the doc comment.
 
+Replace `my_crate` below with the crate's Rust import name.
+
 ```rust,no_run
 /// Returns the sum of `a` and `b`.
 ///
@@ -737,7 +739,7 @@ contents of the manual.
 /// # Examples
 ///
 /// ```rust
-/// # fn add(a: i32, b: i32) -> i32 { a + b }
+/// # use my_crate::add;
 /// assert_eq!(add(2, 3), 5);
 /// ```
 #[inline]

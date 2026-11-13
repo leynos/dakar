@@ -160,6 +160,7 @@ test('CLI fails with a prepare envelope without invoking ODW when refs are inval
   const documentedError = JSON.parse(getTestedExample('users-guide-cli-error').code)
   const error = JSON.parse(result.stderr)
   assert.equal(typeof error.stage, typeof documentedError.stage)
+  assert.equal(error.stage, 'prepare')
   assert.equal(error.ok, documentedError.ok)
   assert.equal(typeof error.error, typeof documentedError.error)
   assert.equal(existsSync(marker), false)

@@ -1,8 +1,10 @@
 /**
- * @file Validate the ODW dry-run contract exposed by the review workflow.
+ * Validate the ODW dry-run contract exposed by the review workflow.
  *
  * The tests launch the workflow in dry-run mode so schema and routing metadata
  * stay executable without dispatching live review agents.
+ *
+ * @module
  */
 
 import { execFileSync } from 'node:child_process'
@@ -43,9 +45,13 @@ function runDryRun(args = {}) {
 
 function runDocumentedDryRun(identifier) {
   const example = getTestedExample(identifier)
+  const workflowPath = /^odw run (\S+)/mu.exec(example.code)?.[1]
+  assert.equal(workflowPath, 'workflows/dakar-review.js', `${identifier} must run the published review workflow`)
   const args = /--args '([^']+)'/u.exec(example.code)?.[1]
   assert.ok(args, `${identifier} must provide a complete JSON argument object`)
-  return runDryRun(JSON.parse(args))
+  const parsedArgs = JSON.parse(args)
+  assert.equal(parsedArgs.dryRun, true, `${identifier} must set dryRun to true`)
+  return runDryRun(parsedArgs)
 }
 
 test('the published direct ODW examples run as dry runs', () => {

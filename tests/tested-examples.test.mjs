@@ -5,14 +5,15 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
+import { readFileSync, rmSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import fc from 'fast-check'
 import { load as loadYaml } from 'js-yaml'
 import { loadTestedExamples, parseTestedExamples } from '../scripts/tested-examples.mjs'
+import { runCli, setUpRecordRepo } from './cli-test-support.mjs'
 
 const REPOSITORY_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const EXPECTED_EXAMPLES = [
@@ -267,6 +268,30 @@ test('published shell, JSON, and YAML examples pass their language parsers', () 
       assert.match(example.code, /^flowchart\s/u, `${example.id} must remain a renderable Mermaid flowchart`)
     }
   }
+})
+
+test('the published README dry-run command completes without a review', (t) => {
+  const example = loadTestedExamples(REPOSITORY_ROOT).get('readme-review-commands')
+  const command = example.code.split('\n').find((line) => /^dakar-review\s+.*--dry-run(?:\s|$)/u.test(line))
+  assert.ok(command, 'the README must publish a dakar-review --dry-run command')
+  const [executable, ...args] = command.trim().split(/\s+/u)
+  assert.equal(executable, 'dakar-review')
+  assert.equal(args.includes('--telemetry'), false, 'the dry-run example must not run the telemetry review')
+
+  const { tempRoot, targetRepo, base } = setUpRecordRepo()
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
+  execFileSync('git', ['-C', targetRepo, 'update-ref', 'refs/remotes/origin/main', base])
+  const result = JSON.parse(runCli([
+    ...args,
+    '--repo-root', targetRepo,
+    '--runs-root', join(tempRoot, 'runs'),
+    '--timeout', '20',
+  ], { env: { XDG_CONFIG_HOME: join(tempRoot, 'config'), XDG_STATE_HOME: join(tempRoot, 'state') } }))
+
+  assert.equal(result.ok, true)
+  assert.equal(result.dryRun, true)
+  assert.equal(result.workflowVersion, 'divide-and-conquer-v1')
+  assert.equal(result.repoRoot, targetRepo)
 })
 
 test('custom checks example is accepted by Dakar policy validation', async () => {
