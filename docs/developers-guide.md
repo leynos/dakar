@@ -52,9 +52,11 @@ when a marker or fence violates the example contract, including malformed,
 missing, duplicate, or orphan markers, unmarked fences, and unterminated fences.
 `loadTestedExamples(rootDirectory = REPOSITORY_ROOT)` reads the three
 published documents and combines their examples into one `Map`; it propagates
-read errors and throws for invalid markers or duplicate identifiers across
-documents. `getTestedExample(identifier, examples = loadTestedExamples())`
-returns the matching example record and throws when the identifier is absent.
+file-read errors and throws for invalid markers or duplicate identifiers across
+documents. Call it explicitly before using
+`getTestedExample(identifier, examples)`, which reads only from the supplied
+`Map`, returns the matching example record and throws when the identifier is
+absent. The lookup rejects a missing or non-`Map` index with a `TypeError`.
 
 The `typecheck` target runs `node --check` over the modules listed by the
 Makefile's `NODE_MODULES`, including `scripts/tested-examples.mjs` and

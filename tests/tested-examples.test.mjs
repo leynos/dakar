@@ -12,7 +12,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import fc from 'fast-check'
 import { load as loadYaml } from 'js-yaml'
-import { loadTestedExamples, parseTestedExamples } from '../scripts/tested-examples.mjs'
+import { getTestedExample, loadTestedExamples, parseTestedExamples } from '../scripts/tested-examples.mjs'
 import { runCli, setUpRecordRepo } from './cli-test-support.mjs'
 
 const REPOSITORY_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -62,6 +62,15 @@ function nextAvailableOrphanIdentifier(identifiers) {
 test('published examples are marked, unique, and present in the coverage inventory', () => {
   const examples = loadTestedExamples(REPOSITORY_ROOT)
   assert.deepEqual([...examples.keys()].toSorted(), [...EXPECTED_EXAMPLES].toSorted())
+})
+
+test('example lookup requires a previously loaded index', () => {
+  const example = { id: 'fixture' }
+  const examples = new Map([['fixture', example]])
+
+  assert.equal(getTestedExample('fixture', examples), example)
+  assert.throws(() => getTestedExample('fixture'), /previously loaded tested-example Map/u)
+  assert.throws(() => getTestedExample('missing', examples), /No published tested example/u)
 })
 
 test('the shared loader rejects an unmarked fence', () => {

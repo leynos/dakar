@@ -189,7 +189,7 @@ export function parseTestedExamples(markdown, source = '<markdown>') {
  *
  * @param {string} rootDirectory - Repository root containing the documents.
  * @returns {Map<string, object>} Examples keyed by unique stable identifier.
- * @throws {Error} A marker is invalid or duplicated across documents.
+ * @throws {Error} A document cannot be read, or a marker is invalid or duplicated across documents.
  */
 export function loadTestedExamples(rootDirectory = REPOSITORY_ROOT) {
   const examples = new Map()
@@ -206,14 +206,18 @@ export function loadTestedExamples(rootDirectory = REPOSITORY_ROOT) {
 }
 
 /**
- * Return one published example, loading the documents when no index is given.
+ * Return one published example from a previously loaded index.
  *
  * @param {string} identifier - Stable tested-example identifier.
  * @param {Map<string, object>} examples - Previously loaded example index.
  * @returns {object} The published example identified by `identifier`.
+ * @throws {TypeError} The example index is not a `Map`.
  * @throws {Error} No published example has that identifier.
  */
-export function getTestedExample(identifier, examples = loadTestedExamples()) {
+export function getTestedExample(identifier, examples) {
+  if (!(examples instanceof Map)) {
+    throw new TypeError('A previously loaded tested-example Map is required')
+  }
   const example = examples.get(identifier)
   if (!example) throw new Error(`No published tested example has identifier '${identifier}'`)
   return example

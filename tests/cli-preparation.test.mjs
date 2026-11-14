@@ -12,9 +12,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { repoRoot, cliPath, runCli, spawnCli, spawnCliSync as spawnSync, setUpRecordRepo, writePreparedEchoOdw } from './cli-test-support.mjs'
-import { getTestedExample } from '../scripts/tested-examples.mjs'
+import { getTestedExample, loadTestedExamples } from '../scripts/tested-examples.mjs'
 
 test('CLI skips the review without invoking ODW when nothing is unreviewed', () => {
+  const examples = loadTestedExamples()
   const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-skip-'))
   const targetRepo = join(tempRoot, 'repo')
   const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
@@ -41,7 +42,7 @@ test('CLI skips the review without invoking ODW when nothing is unreviewed', () 
     { env: { XDG_CONFIG_HOME: xdgConfig } },
   )
   const result = JSON.parse(output)
-  const documentedSkip = JSON.parse(getTestedExample('users-guide-skipped-result').code)
+  const documentedSkip = JSON.parse(getTestedExample('users-guide-skipped-result', examples).code)
 
   assert.equal(result.ok, documentedSkip.ok)
   assert.equal(result.skipped, documentedSkip.skipped)
@@ -58,6 +59,7 @@ test('CLI skips the review without invoking ODW when nothing is unreviewed', () 
 })
 
 test('the published branch-review command prepares the selected base', (t) => {
+  const examples = loadTestedExamples()
   const { tempRoot, targetRepo, base } = setUpRecordRepo()
   t.after(() => rmSync(tempRoot, { recursive: true, force: true }))
   const toolDirectory = join(tempRoot, 'bin')
@@ -68,7 +70,7 @@ test('the published branch-review command prepares the selected base', (t) => {
   chmodSync(cliShim, 0o755)
   writePreparedEchoOdw(join(toolDirectory, 'odw'), { captureArgs: true })
 
-  const result = spawnSync('/bin/bash', ['-ec', getTestedExample('users-guide-review-branch').code], {
+  const result = spawnSync('/bin/bash', ['-ec', getTestedExample('users-guide-review-branch', examples).code], {
     cwd: targetRepo,
     env: {
       ...process.env,
@@ -123,6 +125,7 @@ test('CLI skip result honours --format markdown by emitting the JSON fallback', 
 })
 
 test('CLI fails with a prepare envelope without invoking ODW when refs are invalid', () => {
+  const examples = loadTestedExamples()
   const tempRoot = mkdtempSync(join(tmpdir(), 'dakar-cli-prepare-fail-'))
   const targetRepo = join(tempRoot, 'repo')
   const xdgConfig = mkdtempSync(join(tmpdir(), 'dakar-empty-xdg-config-'))
@@ -157,7 +160,7 @@ test('CLI fails with a prepare envelope without invoking ODW when refs are inval
 
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
-  const documentedError = JSON.parse(getTestedExample('users-guide-cli-error').code)
+  const documentedError = JSON.parse(getTestedExample('users-guide-cli-error', examples).code)
   const error = JSON.parse(result.stderr)
   assert.equal(typeof error.stage, typeof documentedError.stage)
   assert.equal(error.stage, 'prepare')
