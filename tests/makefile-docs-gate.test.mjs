@@ -53,10 +53,11 @@ test('check reaches the documentation gate', () => {
   assert.match(dryRun('check'), new RegExp(`^${DOCS_SCRIPT}$`, 'm'))
 })
 
-test('the docs:check script assembles the TypeDoc options file', () => {
+test('the docs:check script runs example validation before TypeDoc', () => {
   const { scripts } = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
 
-  assert.equal(scripts['docs:check'], 'typedoc --options typedoc.json')
+  assert.equal(scripts['docs:examples:check'], 'node scripts/check-tested-examples.mjs')
+  assert.equal(scripts['docs:check'], 'npm run docs:examples:check && typedoc --options typedoc.json')
   assert.ok(existsSync(join(REPO_ROOT, 'typedoc.json')), 'the referenced options file must exist')
 })
 

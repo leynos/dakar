@@ -4,7 +4,7 @@ Status: First routed workflow pass and compiled source boundary implemented
 Audience: Developers implementing and operating Dakar workflows Date:
 2026-07-14 Companion documents:
 [`docs/dakar-review-design.md`](../dakar-review-design.md) and
-[`docs/adr-001-compile-odw-workflow-from-typescript.md`](../adr-001-compile-odw-workflow-from-typescript.md)
+[`docs/adrs/adr-0001-compile-odw-workflow-from-typescript.md`](../adrs/adr-0001-compile-odw-workflow-from-typescript.md)
 
 ## Problem
 
@@ -473,7 +473,7 @@ graph inside a monolithic prompt.
 Current ODW realities shape the runtime artefact:
 
 - `workflows/dakar-review.js` must use one literal `meta` export, injected
-  primitives, a top-level return, and no runtime imports. ADR 001 requires the
+  primitives, a top-level return, and no runtime imports. ADR 0001 requires the
   artefact to be compiled from ordinary TypeScript modules rather than making
   the runtime file the maintainable source boundary.
 - Deterministic filesystem and git work stay in local helpers or host-invoked
@@ -556,7 +556,7 @@ calls ambient ODW primitives.
 The compiler concatenates `meta.js` verbatim, a flat esbuild ESM bundle rooted
 at `main.ts`, and `return await workflowMain()`. It rejects loader hazards
 before replacing the committed artefact. The compiler mechanism and generated
-artefact policy are normative in ADR 001; the contributor rules belong in
+artefact policy are normative in ADR 0001; the contributor rules belong in
 `docs/developers-guide.md`.
 
 ## Scoping bounded tasks

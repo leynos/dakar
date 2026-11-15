@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 003: Add Oxlint application rules
+# Architectural decision record (ADR) 0003: Add Oxlint application rules
 
 ## Status
 

@@ -9,6 +9,7 @@ result.
 
 Install Dakar's review command from a checkout with the canonical installer:
 
+<!-- tested-example: users-guide-install-cli -->
 ```bash
 ./install.sh
 ```
@@ -55,6 +56,7 @@ installation contract, lock recovery procedure, and prerequisite changes.
 Dakar reviews only commits that have not already been recorded for the current
 branch. From the repository root, the preferred command is:
 
+<!-- tested-example: users-guide-review-branch -->
 ```bash
 dakar-review --repo-root "$PWD" --base origin/main
 ```
@@ -67,14 +69,13 @@ Before invoking ODW, the CLI resolves configuration and prepares the review
 range itself, host-side, with no model calls: it calls
 `scripts/review-state.mjs prepare` in-process and passes the result as the
 workflow's `prepared` argument. If nothing is unreviewed, the CLI prints the
-skip result and exits without invoking ODW at all. The equivalent direct ODW
-invocation therefore also needs a `prepared` object built the same way; it is
-shown here for illustration only, and `dakar-review` is the supported path:
+skip result and exits without invoking ODW at all. A direct ODW dry run checks
+the workflow contract without preparing a review or invoking model agents:
 
+<!-- tested-example: users-guide-direct-workflow -->
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
-           "repoRoot":"/path/to/dakar","prepared":{"...":"see prepare output"}}'
+odw run workflows/dakar-review.js --source . --wait --timeout 20 \
+  --args '{"dryRun":true}'
 ```
 
 `workflows/dakar-review.js` is a pre-generated runtime artefact included with
@@ -86,7 +87,7 @@ Set `OPENAI_API_KEY` before running a live review. The default
 `pi` coding agent (`@earendil-works/pi-coding-agent`) with Dakar's own
 `adapters/pi/` extension and provider catalogue; `pi` must be installed and on
 `PATH`. The CLI sets `PI_CODING_AGENT_DIR` to point `pi` at that catalogue and
-warns on stderr, without failing, if `OPENAI_API_KEY` is unset. ADR 002's
+warns on stderr, without failing, if `OPENAI_API_KEY` is unset. ADR 0002's
 staged-cutover guideline for this default was superseded by a recorded operator
 decision (see roadmap task 7.5.3).
 
@@ -143,11 +144,11 @@ or values below a minimum use the option's default rather than fail. For
 and the ledger" and "Retries, downgrades, and deferral" below for what each
 knob controls.
 
-- `--budget-gbp <number>` sets the hard admission budget in GBP. The default is
-  `0.15`, raised from ADR 002's historical `0.1` hard-budget setting because,
-  at pricing table 2026-07-18, the reserve-first audit left less than one
-  finder pack's worst case inside that old benchmark (see the ADR's 2026-08-13
-  amendment).
+- `--budget-gbp <number>` sets the per-review admission budget for estimated
+  costs in GBP. The default is `0.15`; ADR 0002 raised it from the historical
+  `0.1` setting because, at pricing table 2026-07-18, the reserve-first audit
+  left less than one finder pack's worst case inside that old benchmark (see
+  the ADR's 2026-08-13 amendment).
 - `--max-luna-calls <number>` caps the Luna Flex finder calls. The default is
   `4`. It composes with `--max-tasks`: the effective finder-pack cap is the
   smaller of the two.
@@ -215,6 +216,7 @@ _Table: CodeRabbit configuration support levels in the current route._
 
 Executable custom checks use this validated subset:
 
+<!-- tested-example: users-guide-custom-checks -->
 ```yaml
 pre_merge_checks:
   custom_checks:
@@ -286,6 +288,7 @@ evidence about the head under review.
 
 For a syntax and contract check that does not call review agents, run either:
 
+<!-- tested-example: users-guide-dry-run -->
 ```bash
 dakar-review --dry-run --repo-root "$PWD"
 npm run odw:dry-run
@@ -293,37 +296,35 @@ npm run odw:dry-run
 
 Dry-run output includes the workflow version, default finder model set,
 synthesis model and adapter, task kinds, limits, default task graph, and JSON
-Schemas used for candidate, verifier, and synthesis handoffs.
+Schemas used for candidate, verifier, and audit handoffs.
 
 By default, `dakar-review` stays quiet until the workflow finishes so standard
 output is easy to parse. To watch ODW progress while keeping the final result
 machine-readable, pass `--telemetry`:
 
+<!-- tested-example: users-guide-telemetry -->
 ```bash
-dakar-review --repo-root "$PWD" --base origin/main --telemetry
+dakar-review --dry-run --repo-root "$PWD" --telemetry
 ```
 
 Telemetry follows `odw logs <run-id> --follow` and writes the live ODW event
 stream to standard error. The final JSON or Markdown result still goes to
 standard output, so callers can redirect the channels independently:
 
+<!-- tested-example: users-guide-telemetry-redirect -->
 ```bash
-dakar-review --repo-root "$PWD" --telemetry > review.json
+dakar-review --dry-run --repo-root "$PWD" --telemetry > review.json
 ```
 
 ## Review history
 
 Review history is stored outside the repository under the XDG state directory:
 
-```plaintext
-$XDG_STATE_HOME/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml
-```
+The file is
+`$XDG_STATE_HOME/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml`.
 
-When `XDG_STATE_HOME` is unset, Dakar uses:
-
-```plaintext
-~/.local/state/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml
-```
+When `XDG_STATE_HOME` is unset, Dakar uses
+`~/.local/state/dakar/<repo-owner>/<repo-name>/<branch-slug>/reviews.toml`.
 
 The CLI records the reviewed head commit in-process, after the workflow returns
 a completed result, stamping `recorded.recordedBy: "dakar-review"`. A later run
@@ -340,21 +341,22 @@ available in the result and review history.
 
 To isolate a trial run from normal review history, pass `stateRoot`:
 
+<!-- tested-example: users-guide-state-root -->
 ```bash
 dakar-review \
+  --dry-run \
   --repo-root "$PWD" \
   --base origin/main \
   --state-root /tmp/dakar-review-state
 ```
 
-The equivalent direct ODW invocation, once a matching `prepared` object has
-been produced by `scripts/review-state.mjs prepare`, is:
+The equivalent direct ODW dry run accepts the same state root without writing
+review history:
 
+<!-- tested-example: users-guide-state-root-direct-workflow -->
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
-           "repoRoot":"/path/to/dakar","stateRoot":"/tmp/dakar-review-state",
-           "prepared":{"...":"see prepare output"}}'
+odw run workflows/dakar-review.js --source . --wait --timeout 20 \
+  --args '{"dryRun":true,"stateRoot":"/tmp/dakar-review-state"}'
 ```
 
 ## What the workflow returns
@@ -401,12 +403,13 @@ from that document and must not evolve independently. Raw `candidates`,
 If the branch has already been reviewed, the CLI's host-side prepare step
 prints the skip result without invoking ODW:
 
+<!-- tested-example: users-guide-skipped-result -->
 ```json
 {
   "ok": true,
   "skipped": true,
   "reason": "No unreviewed commits remain for this branch.",
-  "config": ".../config.yaml",
+  "config": ".../df12-code-review.yaml",
   "stateFile": ".../reviews.toml",
   "headCommit": "..."
 }
@@ -414,97 +417,23 @@ prints the skip result without invoking ODW:
 
 Dry-run output is also JSON, but it describes the contract instead of a review:
 
+<!-- tested-example: users-guide-dry-run-result -->
 ```json
 {
   "ok": true,
   "dryRun": true,
   "workflowVersion": "divide-and-conquer-v1",
-  "config": ".../df12-code-review.yaml",
-  "repoRoot": "/path/to/repo",
-  "models": [
-    "gpt-5.5/low",
-    "gpt-5.5/medium",
-    "gpt-5.5/high",
-    "gpt-5.4-mini/medium",
-    "gpt-5.3-codex-spark/medium"
-  ],
-  "synthesisModel": "gpt-5.5/high",
-  "synthesisAdapter": "codex-high",
   "routingPolicy": "deterministic-flex-v1",
   "taskKinds": ["docs", "config", "tests", "source", "review-summary"],
-  "limits": {
-    "maxTasks": 8,
-    "maxCandidates": 30,
-    "maxFindings": 20,
-    "maxAuditCandidates": 30
-  },
-  "lanes": {
-    "luna": {
-      "role": "luna", "model": "gpt-5.6-luna",
-      "adapter": "pi-luna-flex-high", "serviceTier": "flex", "reasoning": "high"
-    },
-    "luna-medium": {
-      "role": "luna-medium", "model": "gpt-5.6-luna",
-      "adapter": "pi-luna-flex-medium", "serviceTier": "flex",
-      "reasoning": "medium"
-    },
-    "luna-low": {
-      "role": "luna-low", "model": "gpt-5.6-luna",
-      "adapter": "pi-luna-flex", "serviceTier": "flex", "reasoning": "low"
-    },
-    "terra": {
-      "role": "terra", "model": "gpt-5.6-terra",
-      "adapter": "pi-terra-flex-high", "serviceTier": "flex", "reasoning": "high"
-    }
-  },
   "budgetGbp": 0.15,
-  "budgetUsd": 0.1905,
-  "pricingTableVersion": "2026-08-13",
-  "reservedAuditUsd": 0.10625,
-  "reservedAuditChainUsd": 0.31875,
-  "flexLimits": {
-    "maxLunaFlexCalls": 4,
-    "transactionMaxFiles": 5,
-    "transactionMaxInputTokens": 12000,
-    "transactionMaxOutputTokens": 2000,
-    "terraMaxInputTokens": 48000,
-    "terraMaxOutputTokens": 5000,
-    "adapterOverheadTokens": 13000
-  },
-  "flexRetry": {
-    "flexAttempts": 3,
-    "flexInitialBackoffSeconds": 30,
-    "flexMaxBackoffSeconds": 120,
-    "flexJitterSeconds": 10,
-    "perCallTimeoutSeconds": 300
-  },
-  "worstCaseReviewSeconds": 2020,
-  "defaultTaskGraph": [
-    {
-      "taskId": "source-1",
-      "kind": "source",
-      "assignedModel": "gpt-5.5/high",
-      "adapter": "codex-high",
-      "model": "gpt-5.5",
-      "role": "high",
-      "maxFindings": 6,
-      "verificationPolicy": "verify-all"
-    }
-  ],
-  "candidateSchema": { "type": "object" },
-  "verdictSchema": { "type": "object" },
-  "auditSchema": { "type": "object" }
+  "pricingTableVersion": "2026-08-13"
 }
 ```
 
-The schemas, lanes, and task graph above are shown abbreviated; the real
-dry-run emits the full `candidateSchema`, `verdictSchema`, and `auditSchema`,
-plus one task per changed-file group (source, tests, config, docs). The dry-run
-no longer includes `synthesisSchema`: the report is rendered by deterministic
-host code, not a model call. `synthesisModel` and `synthesisAdapter` remain in
-the dry run for the `--synthesis-model` and `--synthesis-reasoning` flags, but,
-as noted above, they no longer select the model or adapter used for the audit
-call.
+The full dry-run also reports the resolved models, lanes, limits, admission
+estimates, retry settings, task graph, and schemas. It includes
+`synthesisModel` and `synthesisAdapter` for the corresponding CLI flags; the
+report itself is rendered by deterministic host code, not a model call.
 
 `dakar-review --format markdown` prints `reportMarkdown` when a live result has
 one. Machine users should prefer the default `--format json`.
@@ -512,10 +441,11 @@ one. Machine users should prefer the default `--format json`.
 On CLI or ODW process failures, `dakar-review` exits non-zero and prints a JSON
 error object to standard error:
 
+<!-- tested-example: users-guide-cli-error -->
 ```json
 {
   "ok": false,
-  "stage": "cli",
+  "stage": "...",
   "error": "..."
 }
 ```
@@ -565,8 +495,10 @@ The following optional limits are supported:
   `over_audit_cap`.
 - `maxLunaFlexCalls`: maximum finder evidence packs, default `4`.
 - `transactionMaxFiles`: maximum files per finder pack, default `5`.
-- `budgetGbp`: hard per-review budget in GBP, default `0.15`, converted to
-  USD through the pricing table's `usdPerGbp` snapshot.
+- `budgetGbp`: per-review admission budget applied to estimated costs, default
+  `0.15`, converted to USD through the pricing table's `usdPerGbp` snapshot.
+  Provider-reported charges can exceed the estimates when actual usage is
+  higher than the configured token bounds.
 - `routingPolicy`: recorded in metrics and the dry run; the only supported
   value is `deterministic-flex-v1`.
 - `lunaReasoning`: `high` (default), `medium`, or `low`; `medium` and `low`
@@ -580,29 +512,29 @@ The following optional limits are supported:
 
 Example:
 
+<!-- tested-example: users-guide-tuning-workflow -->
 ```bash
-odw run workflows/dakar-review.js --source . --wait --timeout 3600 \
-  --args '{"config":"examples/df12-code-review.yaml","base":"origin/main",
-           "repoRoot":"/path/to/dakar","prepared":{"...":"see prepare output"},
-           "maxTasks":4,"maxFindings":5}'
+odw run workflows/dakar-review.js --source . --wait --timeout 20 \
+  --args '{"dryRun":true,"maxTasks":4,"maxFindings":5}'
 ```
 
 ## Cost, budget, and the ledger
 
-Every finder and audit call runs through an admission controller that enforces
-the hard `budgetGbp` before any model call is dispatched. The audit's
-worst-case cost is reserved first, before any Luna finder call, so an
-unaffordable review refuses outright (`stage: "admission"`) rather than
-spending on finders it cannot afford to conclude. Refused finder packs are
-listed in `admissionRefusals` and never consume any budget.
+Every finder and audit call passes admission based on estimated worst-case
+token cost against `budgetGbp` before a model call is dispatched. This budget
+constrains Dakar's admission estimates; provider-reported charges can be higher
+when actual usage exceeds the estimator's assumptions. The audit estimate is
+reserved first, before any Luna finder call, so a review that cannot afford its
+audit refuses (`stage: "admission"`) before spending on finders it cannot
+afford to conclude. Refused finder packs are listed in `admissionRefusals` and
+do not consume the estimated budget.
 
 Retries are not free: each retry attempt is admitted against the remaining
-budget before it runs, and every admitted attempt is charged to the ledger. The
-reserve-first audit reservation stays one attempt's worst case, so the ordinary
-defaults keep working, while the hard ceiling still bounds the actual
-worst-case spend including retries. A retry refused by the remaining budget
-stops retrying: the finder pack downgrades or the audit defers rather than
-exceeding the ceiling (see "Retries, downgrades, and deferral" below).
+estimated budget before it runs, and every admitted attempt is charged to the
+ledger. The reserve-first audit reservation stays one attempt's worst-case
+estimate, so the ordinary defaults keep working. Admission estimates bound the
+attempts Dakar accepts; provider-reported charges can exceed those estimates
+when actual token use is higher (see "Retries, downgrades, and deferral" below).
 
 Because admission refuses any finder pack beyond the ordinary budget, a gate
 reviewing a large task branch may need to raise `--budget-gbp` to admit more
@@ -647,9 +579,10 @@ candidates. An audit call that exhausts its retries, or whose next retry the
 budget refuses, defers the whole review instead: the result is `ok: false`,
 `stage: "deferred"`, no `recordInput` is present, and the CLI exits non-zero
 without recording anything, so the head remains unreviewed. A budget-refused
-retry keeps the actual spend within the hard ceiling rather than overrunning
-it; the deferral or downgrade reason names the budget so operators can tell it
-apart from a capacity exhaustion.
+retry keeps estimated admitted spend within the configured budget; provider-
+reported charges can still exceed that estimate when actual token use is
+higher. The deferral or downgrade reason names the budget so operators can
+distinguish it from a capacity exhaustion.
 
 The dry run reports `reservedAuditChainUsd` alongside `reservedAuditUsd`: the
 former is the audit's chain-level worst case (one attempt's reserve times

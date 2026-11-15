@@ -1,8 +1,10 @@
 /**
- * @file Validate the ODW dry-run contract exposed by the review workflow.
+ * Validate the ODW dry-run contract exposed by the review workflow.
  *
  * The tests launch the workflow in dry-run mode so schema and routing metadata
  * stay executable without dispatching live review agents.
+ *
+ * @module
  */
 
 import { execFileSync } from 'node:child_process'
@@ -11,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { getTestedExample, loadTestedExamples } from '../scripts/tested-examples.mjs'
 
 function runDryRun(args = {}) {
   const runsRoot = mkdtempSync(join(tmpdir(), 'dakar-odw-dry-run-'))
@@ -39,6 +42,41 @@ function runDryRun(args = {}) {
   assert.notEqual(jsonStart, -1, `dry-run output did not include JSON:\n${output}`)
   return JSON.parse(output.slice(jsonStart))
 }
+
+function runDocumentedDryRun(identifier, examples) {
+  const example = getTestedExample(identifier, examples)
+  const workflowPath = /^odw run (\S+)/mu.exec(example.code)?.[1]
+  assert.equal(workflowPath, 'workflows/dakar-review.js', `${identifier} must run the published review workflow`)
+  const args = /--args '([^']+)'/u.exec(example.code)?.[1]
+  assert.ok(args, `${identifier} must provide a complete JSON argument object`)
+  const parsedArgs = JSON.parse(args)
+  assert.equal(parsedArgs.dryRun, true, `${identifier} must set dryRun to true`)
+  return runDryRun(parsedArgs)
+}
+
+test('the published direct ODW examples run as dry runs', () => {
+  const examples = loadTestedExamples()
+  for (const identifier of [
+    'users-guide-direct-workflow',
+    'users-guide-state-root-direct-workflow',
+    'users-guide-tuning-workflow',
+  ]) {
+    const result = runDocumentedDryRun(identifier, examples)
+    assert.equal(result.ok, true, `${identifier} must complete`)
+    assert.equal(result.dryRun, true, `${identifier} must not dispatch model agents`)
+    assert.equal(result.workflowVersion, 'divide-and-conquer-v1')
+  }
+})
+
+test('the published dry-run result matches the workflow output', () => {
+  const examples = loadTestedExamples()
+  const documented = JSON.parse(getTestedExample('users-guide-dry-run-result', examples).code)
+  const result = runDryRun()
+
+  for (const [key, value] of Object.entries(documented)) {
+    assert.deepEqual(result[key], value, `documented dry-run field '${key}' must match`)
+  }
+})
 
 test('dry-run exposes routed workflow contract', () => {
   const result = runDryRun({

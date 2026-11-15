@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 002: Prefer deterministic review stages and Flex-tier residual judgement
+# Architectural decision record (ADR) 0002: Prefer deterministic review stages and Flex-tier residual judgement
 
 ## Status
 
@@ -35,6 +35,12 @@ admission boundaries remain unchanged. The CLI also performs advisory,
 review-head-checked CodeGraph warmup and propagates trace context into MCP and
 ODW subprocesses. See `docs/developers-guide.md` and
 `docs/dakar-review-design.md` for the current implementation contract.
+
+Amended (2026-11-15): clarify that `budgetGbp` is an admission ceiling applied
+to estimated worst-case cost before dispatch. It does not cap provider-reported
+charges: actual token use may exceed the estimator's assumptions, so reported
+charges can exceed the estimate and configured budget. This clarification does
+not change the accepted default or admission rule.
 
 ## Date
 
@@ -720,8 +726,8 @@ runs provide the normal verification path.
 - [OpenAI Flex processing][openai-flex]
 - [OpenAI API pricing][openai-pricing]
 - [Codex configuration reference][codex-config]
-- [`docs/dakar-review-design.md`](dakar-review-design.md)
-- [`docs/roadmap.md`](roadmap.md)
+- [`docs/dakar-review-design.md`](../dakar-review-design.md)
+- [`docs/roadmap.md`](../roadmap.md)
 
 [^1]: `df12-build` distinguishes host-enforced contracts from prompt-enforced
     instructions, runs deterministic gates before reviewer agents, and reserves

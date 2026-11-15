@@ -31,9 +31,9 @@ entrypoint still prepares, reviews, verifies, synthesizes, records, and skips a
 head already present in review history.
 
 This plan implements the accepted decision in
-`docs/adr-001-compile-odw-workflow-from-typescript.md`. The user explicitly
-approved implementation before WI-1, and WI-0 records the corresponding ADR
-acceptance transition.
+`docs/adrs/adr-0001-compile-odw-workflow-from-typescript.md`. The user
+explicitly approved implementation before WI-1, and WI-0 records the
+corresponding ADR acceptance transition.
 
 ## Constraints
 
@@ -91,7 +91,7 @@ If implementation cannot satisfy a constraint, stop, record the conflict in the
 - Live smoke: stop before using a non-disposable repository, non-isolated state
   root, or non-bounded ODW run.
 - Ambiguity: stop when two valid module boundaries would expose materially
-  different contracts not resolved by ADR 001 or the current tests.
+  different contracts not resolved by ADR 0001 or the current tests.
 
 ## Risks
 
@@ -142,12 +142,12 @@ If implementation cannot satisfy a constraint, stop, record the conflict in the
   restrictions, source-test boundary, and freshness gate.
 - [x] (2026-07-13 23:41Z) Verified external ODW, esbuild, TypeScript, and Node
   type-stripping contracts with authoritative sources.
-- [x] (2026-07-13 23:41Z) Recorded the proposed architecture in ADR 001 and the
+- [x] (2026-07-13 23:41Z) Recorded the proposed architecture in ADR 0001 and the
   companion Dakar design documents.
 - [x] (2026-07-14 00:49Z) Incorporated Logisphere community-of-experts review
   of architecture, interfaces, tests, operability, and documentation.
 - [x] (2026-07-14 02:05Z) WI-0: Recorded the user's explicit implementation
-  approval by accepting ADR 001 and moving this plan to `IN PROGRESS`.
+  approval by accepting ADR 0001 and moving this plan to `IN PROGRESS`.
 - [x] (2026-07-14 02:18Z) WI-1: Preserved the existing 57-test workflow
   characterization baseline before source movement; the dry-run contract and
   helper-level security and planning cases remain executable.
@@ -374,7 +374,7 @@ If implementation cannot satisfy a constraint, stop, record the conflict in the
 
 ## Outcomes & retrospective
 
-Planning outcome: ADR 001, the living design, component design, developer
+Planning outcome: ADR 0001, the living design, component design, developer
 conventions, roadmap, and this ExecPlan describe one consistent
 source-to-artefact boundary. Planning initially left the user guide unchanged
 because the proposed refactor changes no current user behaviour. During
@@ -413,8 +413,8 @@ boundary before ODW sees the file.
 The normative sources for implementation are:
 
 - `AGENTS.md` for repository invariants and validation.
-- `docs/adr-001-compile-odw-workflow-from-typescript.md` for the architectural
-  decision accepted in WI-0.
+- `docs/adrs/adr-0001-compile-odw-workflow-from-typescript.md` for the
+  architectural decision accepted in WI-0.
 - `docs/dakar-review-design.md` §§4 and 12 for architecture and verification.
 - `docs/design/initial-workflow.md` for component and workflow contracts.
 - `docs/developers-guide.md` for contributor conventions.
@@ -462,7 +462,7 @@ into calls as data. `main.ts` remains the only caller of ODW primitives.
 
 ### WI-0: Record the approval transition
 
-The user explicitly approved this ExecPlan on 2026-07-14. WI-0 changed ADR 001
+The user explicitly approved this ExecPlan on 2026-07-14. WI-0 changed ADR 0001
 from `Proposed` to `Accepted`, recorded the approval date, and moved this plan
 through `APPROVED` to implementation. With that gate satisfied, implementation
 proceeded through WI-8. All work items are now complete and the plan status is
@@ -646,7 +646,7 @@ orchestration only to reduce line count.
 
 ### WI-7: Synchronize contributor and user documentation
 
-Synchronize ADR 001 with any approved implementation deviations; do not change
+Synchronize ADR 0001 with any approved implementation deviations; do not change
 its acceptance status here. Update the module tree and final function
 interfaces in `docs/dakar-review-design.md`, `docs/design/initial-workflow.md`,
 and `docs/developers-guide.md`.
@@ -996,11 +996,11 @@ implementation. A change that alters ownership or introduces a cycle requires a
 the Dakar-specific module and test boundaries, preserves every public and state
 contract, and leaves implementation behind the required approval gate.
 
-The user subsequently approved the plan, and ADR 001 was accepted before WI-1
+The user subsequently approved the plan, and ADR 0001 was accepted before WI-1
 began.
 
-2026-07-15: Implementation is complete. ADR 001 is accepted, all work items are
-complete, and the final deterministic validation passed all 115 tests.
+2026-07-15: Implementation is complete. ADR 0001 is accepted, all work items
+are complete, and the final deterministic validation passed all 115 tests.
 
 2026-07-16: Documentation validation made the external docstring review
 reproducible as `npm run docstrings`; 103 of 103 counted symbols are

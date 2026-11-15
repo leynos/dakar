@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { getTestedExample, loadTestedExamples } from '../scripts/tested-examples.mjs'
 
 const repoRoot = resolve(new URL('..', import.meta.url).pathname)
 const installPath = join(repoRoot, 'install.sh')
@@ -195,7 +196,12 @@ test('install script installs a callable CLI from a clean checkout', (t) => {
   const installFixture = makeCleanInstallFixture(t)
   const bunInstall = mkdtempSync(join(tmpdir(), 'dakar-bun-install-'))
   t.after(() => rmSync(bunInstall, { recursive: true, force: true }))
-  execFileSync(join(installFixture, 'install.sh'), {
+  const examples = loadTestedExamples()
+  const readmeInstall = getTestedExample('readme-install-cli', examples)
+  assert.equal(getTestedExample('users-guide-install-cli', examples).code.trim(), './install.sh')
+  assert.equal(getTestedExample('migration-0-1-install-contract', examples).code.trim(), './install.sh')
+  assert.match(readmeInstall.code, /^\.\/install\.sh\b/u)
+  execFileSync('/bin/bash', ['-ec', readmeInstall.code], {
     cwd: installFixture,
     env: { ...process.env, BUN_INSTALL: bunInstall, NODE_ENV: 'production' },
     encoding: 'utf8',

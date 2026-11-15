@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 001: Compile the ODW workflow from TypeScript
+# Architectural decision record (ADR) 0001: Compile the ODW workflow from TypeScript
 
 ## Status
 
@@ -11,7 +11,7 @@ remaining incompatible binding collision. Zod is the sole approved third-party
 runtime package: its pinned modules are bundled into the artefact, and the
 build rejects runtime inputs outside the source manifest and Zod package. This
 amendment accompanies the linting strategy in
-[ADR 003](adr-003-linting-strategy.md).
+[ADR 0003](adr-0003-linting-strategy.md).
 
 ## Date
 

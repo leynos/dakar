@@ -38,14 +38,14 @@ document for a task, then follow the inline links.
 
 ## Decision records
 
-- [ADR 001: Compile the ODW workflow from TypeScript](adr-001-compile-odw-workflow-from-typescript.md)
+- [ADR 0001: Compile the ODW workflow from TypeScript](adrs/adr-0001-compile-odw-workflow-from-typescript.md)
   — why the workflow is authored as a typed module tree compiled to a single
   artefact.
-- [ADR 002: Deterministic review stages and Flex-tier residual judgement](adr-002-deterministic-tiered-review-cost.md)
+- [ADR 0002: Deterministic review stages and Flex-tier residual judgement](adrs/adr-0002-deterministic-tiered-review-cost.md)
   — why deterministic host logic runs first and residual judgement uses
   Flex-tier models under a cost budget.
-- [ADR 003: Add Oxlint application rules](adr-003-linting-strategy.md) — the
-  pinned Unicorn and deslop profiles, application lint scope, and their one
+- [ADR 0003: Add Oxlint application rules](adrs/adr-0003-linting-strategy.md) —
+  the pinned Unicorn and deslop profiles, application lint scope, and their one
   documented rule conflict.
 
 ## Reference
@@ -69,6 +69,6 @@ document for a task, then follow the inline links.
     — plan for the routed finder-and-verifier pass.
   - [Compile the review workflow from typed modules](execplans/compile-dakar-review-workflow.md)
     — plan for moving the workflow to a compiled TypeScript source boundary.
-  - [Implement the ADR 002 deterministic-tiered review route](execplans/api-key-support.md)
+  - [Implement the ADR 0002 deterministic-tiered review route](execplans/api-key-support.md)
     — completed plan for the deterministic-flex route, its live validation,
     and the df12-build gate enablement.

@@ -148,7 +148,7 @@ export interface WorkflowConfig {
   readonly agentInstructions: AgentInstructions | null
   /** Non-blank base ref to diff against, defaulting to `origin/main`. */
   readonly baseRef: string
-  /** Hard review budget in GBP, bounded to £0.01–£10 and defaulting to £0.10. */
+  /** Per-review admission budget in GBP, bounded to £0.01–£10 and defaulting to £0.15. */
   readonly budgetGbp: number
   /** Raw `config` argument, defaulting to empty (auto-resolution) when blank. */
   readonly configArg: string

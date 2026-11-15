@@ -97,7 +97,7 @@ function git(repoRoot, args, allowFailure = false) {
   try {
     return execFileSync('git', ['-C', repoRoot, ...args], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', allowFailure ? 'pipe' : 'inherit'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim()
   } catch (error) {
     if (allowFailure) {
