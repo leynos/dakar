@@ -5,9 +5,10 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import fc from 'fast-check'
@@ -62,6 +63,22 @@ function nextAvailableOrphanIdentifier(identifiers) {
 test('published examples are marked, unique, and present in the coverage inventory', () => {
   const examples = loadTestedExamples(REPOSITORY_ROOT)
   assert.deepEqual([...examples.keys()].toSorted(), [...EXPECTED_EXAMPLES].toSorted())
+})
+
+test('the repository loader rejects duplicate identifiers across published documents', (t) => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'dakar-tested-examples-'))
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }))
+
+  const usersGuideDirectory = join(fixtureRoot, 'docs')
+  mkdirSync(usersGuideDirectory)
+  const duplicateExample = '<!-- tested-example: duplicate -->\n```bash\necho ready\n```\n'
+  writeFileSync(join(fixtureRoot, 'README.md'), duplicateExample)
+  writeFileSync(join(usersGuideDirectory, 'users-guide.md'), duplicateExample)
+
+  assert.throws(
+    () => loadTestedExamples(fixtureRoot),
+    /docs\/users-guide\.md:\d+: duplicate tested-example identifier 'duplicate'/u,
+  )
 })
 
 test('example lookup requires a previously loaded index', () => {
@@ -241,9 +258,13 @@ test('the shared loader rejects an unterminated fence', () => {
   )
 })
 
-test('the shared loader rejects a missing marker identifier', () => {
+test('the shared loader rejects a missing or invalid marker identifier', () => {
   assert.throws(
     () => parseTestedExamples('<!-- tested-example: -->\n```bash\necho ready\n```', 'fixture.md'),
+    /missing a valid identifier/u,
+  )
+  assert.throws(
+    () => parseTestedExamples('<!-- tested-example: Bad_Id -->\n```bash\necho ready\n```', 'fixture.md'),
     /missing a valid identifier/u,
   )
 })
