@@ -186,7 +186,7 @@ test('prepare surfaces stderr when a required Git command fails', () => {
   assert.throws(
     () => prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'main', head: 'missing/head' }),
     (error) => {
-      assert.match(error.stderr, /fatal:/u)
+      assert.match(error.stderr, /missing\/head/u)
       return true
     },
   )

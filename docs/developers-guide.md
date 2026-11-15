@@ -13,6 +13,9 @@ the application lint strategy is recorded in
 [`docs/adrs/adr-0003-linting-strategy.md`](adrs/adr-0003-linting-strategy.md),
 and delivery plans live under [`docs/execplans/`](execplans/).
 
+The tested-example gate's scope and parser decision are recorded in the
+[Dakar review design](dakar-review-design.md#tested-user-facing-documentation-examples).
+
 ## 1. Local validation
 
 Run the full local gate before committing changes:

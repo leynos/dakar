@@ -545,6 +545,23 @@ already-reviewed skip. Future telemetry work still needs end-to-end fixtures
 that exercise quiet mode, telemetry mode, failed record recovery, AGENTS-aware
 prompting, and pricing-table changes in combination.
 
+### Tested user-facing documentation examples
+
+The published README, user's guide, and migration guide are executable parts of
+the user contract, so their fenced examples are marked and checked against the
+behaviour they describe. The shared example loader owns that document list;
+maintainer documentation is intentionally outside the gate. Each published
+fence must have a unique lower-case kebab-case marker immediately before it.
+The gate rejects missing or malformed markers, unmarked or unterminated fences,
+and duplicate identifiers, then exposes the extracted examples to CLI,
+installer, and workflow tests.
+
+The gate parses CommonMark with `markdown-it` 14.3.0, pinned as a development
+dependency and installed by `npm ci`. Using a parser keeps fence recognition
+aligned with Markdown semantics; keeping it in development dependencies adds no
+runtime dependency to the shipped workflow or CLI. `npm run docs:check` runs
+`npm run docs:examples:check` before TypeDoc.
+
 ## 13. References
 
 - [CodeRabbit configuration reference](https://docs.coderabbit.ai/reference/configuration)
