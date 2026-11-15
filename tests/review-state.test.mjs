@@ -179,6 +179,19 @@ test('prepare fails closed when the merge base cannot be resolved', () => {
   )
 })
 
+test('prepare surfaces stderr when a required Git command fails', () => {
+  const repo = createRepo()
+  const stateRoot = mkdtempSync(join(tmpdir(), 'dakar-state-'))
+
+  assert.throws(
+    () => prepare({ 'repo-root': repo, 'state-root': stateRoot, base: 'main', head: 'missing/head' }),
+    (error) => {
+      assert.match(error.stderr, /fatal:/u)
+      return true
+    },
+  )
+})
+
 test('CLI parser rejects missing option values', () => {
   const repo = createRepo()
   assert.throws(
