@@ -72,3 +72,6 @@ document for a task, then follow the inline links.
   - [Implement the ADR 0002 deterministic-tiered review route](execplans/api-key-support.md)
     — completed plan for the deterministic-flex route, its live validation,
     and the df12-build gate enablement.
+  - [Specify nested `AGENTS.md` discovery and precedence](execplans/2-3-1-specify-nested-agents-md-files.md)
+    — plan for roadmap item 2.3.1: instruction scope, precedence, and
+    diagnostics for nested `AGENTS.md` files.
