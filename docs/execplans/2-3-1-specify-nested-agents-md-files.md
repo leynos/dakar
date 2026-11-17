@@ -5,7 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: DRAFT (awaiting design review and user approval)
+Status: DRAFT (design review applied; awaiting user approval; see "Approval
+questions")
 
 Branch: `2-3-1-specify-nested-agents-md-files`
 
@@ -22,30 +23,37 @@ Dakar reads only the repository-root `AGENTS.md`, from the trusted review base
 commit (by default `origin/main`), truncates it to 24,000 characters, and
 passes it to every prompt. Large repositories, especially monorepos, put further
 `AGENTS.md` files in subdirectories, for example `packages/api/AGENTS.md`, and
-expect those to govern only the files beneath them. Dakar ignores them.
+expect them to govern only the files beneath them. Dakar ignores them.
 
-Roadmap item 2.3.1 asks for a specification, not yet a prompt change: "the
-design defines which instruction files apply to each changed path and how
-conflicts are reported." Roadmap item 2.3.2 ("Prototype task-level instruction
-packs") will later feed the selected instruction text into finder and audit
-prompts. This plan therefore delivers four things:
+Roadmap item 2.3.1 asks for a specification: "the design defines which
+instruction files apply to each changed path and how conflicts are reported."
+Roadmap item 2.3.2 ("Prototype task-level instruction packs") will later feed
+the selected text into finder and audit prompts and report diagnostics in the
+review result. This plan reads "conflicts" in two senses and the design states
+that reading in its first paragraph: semantic disagreement between instruction
+texts, which a fixed precedence order resolves; and structural anomalies (a
+symbolic link named `AGENTS.md`, an oversized file, an instruction file changed
+by the reviewed change, a file moved between instruction scopes), which produce
+diagnostics with stable codes.
 
-1. A written, accepted design: a new architecture decision record (ADR),
-   `docs/adrs/adr-0004-scope-nested-agents-instructions.md`, and a rewritten
-   `docs/dakar-review-design.md` §6 that define discovery, applicability,
-   precedence, bounds, and diagnostic reporting.
-2. An executable specification of that design: a pure, side-effect-free
-   resolver module shared by the CLI now and by the workflow in 2.3.2, proved
-   correct for its core rules with LemmaScript and Dafny and covered by unit and
-   `fast-check` property tests.
-3. A discovery adapter that reads every `AGENTS.md` from the trusted base
-   commit using Git, never the working tree, and turns anomalies into
-   diagnostics instead of crashes.
-4. An observable report. After this change a user with a nested layout can
-   run the CLI and see on standard error (stderr) which instruction files were
-   discovered, which apply to which group of changed paths, and which were
-   skipped, truncated, or changed in the reviewed range, without any change to
-   standard output (stdout), the workflow arguments, or the prompts.
+This plan delivers:
+
+1. An accepted design: a new architecture decision record (ADR),
+   `docs/adrs/adr-0004-scope-nested-agents-instructions.md`, and revisions to
+   `docs/dakar-review-design.md` §§2, 3, 4, 6, 11, and 12.
+2. An executable specification: a pure resolver shared by the CLI now and the
+   workflow in 2.3.2. Its kernel (segment-wise ancestry and budget selection)
+   is proved for all inputs with LemmaScript and Dafny; its policy layer is
+   covered by table tests and `fast-check` properties.
+3. A Git adapter that discovers instruction files by ancestry from the trusted
+   base commit, never from the working tree or the reviewed head.
+4. Two user-visible trust fixes that the design depends on: the root
+   `AGENTS.md` is loaded through the new adapter (a committed symbolic link is
+   skipped instead of its target path being read as text, an oversized file is
+   truncated instead of crashing the CLI, and a `--repo-root` inside a
+   subdirectory still finds the repository-root file); and the pi agent
+   adapters stop loading `AGENTS.md` and `CLAUDE.md` from the agent's working
+   copy, which today lets a pull request instruct its own reviewer.
 
 A small example. Given this tree at the trusted base:
 
@@ -56,961 +64,1050 @@ packages/api/src/AGENTS.md
 packages/web/agents.md
 ```
 
-and a review range that changes `packages/api/src/routes.ts`,
-`packages/api-client/index.ts`, and `packages/web/app.tsx`, the design says:
+and a change to `packages/api/src/routes.ts`, `packages/api-client/index.ts`,
+and `packages/web/app.tsx`, the design says:
 
-- `packages/api/src/routes.ts` is governed by the chain `AGENTS.md`, then
-  `packages/api/AGENTS.md`, then `packages/api/src/AGENTS.md` (root first,
-  nearest last; the nearest wins any conflict).
-- `packages/api-client/index.ts` is governed by `AGENTS.md` only: directory
-  ancestry is compared segment by segment, so `packages/api` is not an ancestor
+- `packages/api/src/routes.ts` has the instruction chain `AGENTS.md`,
+  `packages/api/AGENTS.md`, `packages/api/src/AGENTS.md` (root first, nearest
+  last); the nearest file wins any conflict.
+- `packages/api-client/index.ts` has the chain `AGENTS.md` only, because
+  ancestry is compared segment by segment and `packages/api` is not an ancestor
   of `packages/api-client`.
-- `packages/web/app.tsx` is governed by `AGENTS.md` only, and a
-  `case-variant-ignored` diagnostic reports that `packages/web/agents.md` is
-  not an instruction file because the name match is exact and case-sensitive.
+- `packages/web/app.tsx` has the chain `AGENTS.md` only, and a
+  `name-case-variant` diagnostic reports that `packages/web/agents.md` is not
+  an instruction file, because the name match is exact and case-sensitive.
 
-Today the same run prints nothing about instruction scope. After the change,
-stderr carries one line such as:
+After this change, a developer can observe that result directly with the new
+integration test `tests/instruction-discovery.test.mjs`, which builds that
+repository and asserts the report returned by
+`discoverInstructionScope(reader, { baseRef, headRef, changedPaths })`. A user
+observes the two trust fixes through the CLI. The design names the review
+result JSON (beside the existing `ignoredPolicyKeys`) and SARIF tool
+notifications as the user-facing reporting surface that 2.3.2 implements.
 
-```plaintext
-dakar-review: instructions {"event":"instruction_scope","type":"summary","trustedCommit":"<sha>","discovered":3,"applied":3,"groups":[{"chain":["AGENTS.md","packages/api/AGENTS.md","packages/api/src/AGENTS.md"],"changedPathCount":1},{"chain":["AGENTS.md"],"changedPathCount":2}],"diagnostics":[{"code":"case-variant-ignored","path":"packages/web/agents.md"}]}
-```
+Preserved behaviour: the `agentInstructions` workflow argument keeps its shape
+(`{ source, content, truncated }`), source label (`<sha>:AGENTS.md`),
+24,000-code-unit truncation, and error prefixes; Git failures while loading
+trusted instructions still fail the run closed; stdout remains reserved for the
+final JSON or Markdown result; `workflows/dakar-review.js` is unchanged.
+Deliberately changed behaviour: the symbolic-link, oversized-file, subdirectory
+`--repo-root`, and pi context-file cases above.
 
-Preserved behaviour: the root `AGENTS.md` continues to reach prompts through
-the existing `agentInstructions` workflow argument with the same source label,
-24,000-character truncation, and failure messages; stdout remains reserved for
-the final JSON or Markdown result; the generated workflow
-`workflows/dakar-review.js` is unchanged. Deliberately changed behaviour: an
-oversized root `AGENTS.md` that today crashes the CLI with a Node `ENOBUFS`
-buffer error (if confirmed in `EP-M4`) is instead truncated and reported, and a
-committed symbolic link named `AGENTS.md`, whose link target text is today read
-as instructions, is instead skipped with a diagnostic.
+## Approval questions
+
+These need an explicit answer when approving the plan. The plan proceeds with
+the stated default if the user approves without comment.
+
+1. Test runner (decision D2). The request names `bun:test`; the repository
+   runs every suite with `node --test`, and `make test` and CI would never run a
+   `bun:test` file. Default: use `node:test` with `fast-check`.
+2. Reporting surface (decision D1). The panel recommended deferring the stderr
+   scope report drafted earlier, because 2.3.2 will report in the result JSON
+   and a stderr event would become a provisional contract. Default: no new
+   stderr event in 2.3.1; the root diagnostics print one human-readable warning
+   line each. Alternative: reinstate a provisional stderr `instruction_scope`
+   event (adds about 250 code and 70 documentation lines).
+3. pi context files (decision D10). Default: add `--no-context-files` to every
+   pi Flex adapter in `odw.config.json`. This changes live agent behaviour:
+   agents stop seeing the working copy's `AGENTS.md`, `CLAUDE.md`, and global
+   context files, and see only what Dakar puts in the prompt.
+4. Proof tooling location (decision D9). `lemmascript@0.6.10` transitively
+   installs cloud-provider SDKs (through `lemmascript-claimcheck` and
+   `claimcheck`). Default: an isolated `proofs/` package with its own exact
+   pins and lockfile, installed only by `make proofs` and the CI proof job,
+   instead of a root `devDependency`.
+5. Roadmap follow-ups (decision D12). Default: add three follow-up tasks to
+   `docs/roadmap.md` (NUL-delimited changed paths, single resolution of the
+   trusted base, and excluding instruction files from context warm-up), and
+   make the last a prerequisite of 2.3.2.
 
 ## Constraints
 
 - Implementation begins only after the user explicitly approves this plan.
-- Do not change prompt text, the `agentInstructions` workflow argument shape,
+- Do not change prompt text, the `agentInstructions` argument shape,
   `workflowArgsSchema`, the workflow result shape, SARIF output, or
-  `workflows/dakar-review.js`. Feeding nested instructions to agents is roadmap
-  item 2.3.2.
-- Keep stdout reserved for the final JSON or Markdown result. All instruction
-  scope reporting goes to stderr (`AGENTS.md` repository rule).
-- Read instruction files only from the trusted instruction commit (the
-  resolved `--base` ref, default `origin/main`, exactly as
-  `readAgentInstructions()` in `bin/dakar-review.mjs` does today). Never read
-  instruction text from the working tree or the reviewed head: a pull request
-  must not be able to instruct its own reviewer.
-- The resolver kernel and policy modules are pure: no `node:` imports, no
-  file system, no Git, no clock, no randomness, no `Date.now()`,
-  `Math.random()`, or argument-less `new Date()`. They live under
-  `src/workflows/dakar-review/` because both the CLI (which already imports
+  `workflows/dakar-review.js`. Feeding nested instructions to agents and
+  reporting diagnostics in the result belong to 2.3.2.
+- Keep stdout reserved for the final JSON or Markdown result (`AGENTS.md`
+  repository rule). Warnings go to stderr.
+- Read instruction text only from the trusted instruction commit: the
+  resolved `--base` ref (default `origin/main`), as `readAgentInstructions()` in
+  `bin/dakar-review.mjs` does today. Never read instruction text from the
+  working tree, the reviewed head, or `prepared.reviewBase` (which, once review
+  history exists, is a commit the change author wrote). ADR 0004 records this
+  as a rule that must not be unified away.
+- Git failures (cannot resolve the base, cannot list, cannot read, timeout,
+  buffer overflow) fail closed with the existing error prefixes
+  `cannot resolve trusted review base <ref>`, `cannot inspect <sha>:AGENTS.md`,
+  and `cannot read <sha>:AGENTS.md`. Only per-entry content anomalies degrade
+  to diagnostics.
+- The kernel and policy modules are pure: no `node:` imports, no file system,
+  no Git, no clock, no randomness (`Date.now()`, `Math.random()`, and
+  argument-less `new Date()` are forbidden by `AGENTS.md`). They live in
+  `src/workflows/dakar-review/` because the CLI (which already imports
   `pricing.ts` and `retry.ts` from there) and, in 2.3.2, the workflow consume
-  them. They must use erasable TypeScript syntax and explicit `.ts` sibling
-  imports, and must be acyclic ES modules.
-- Git and file access live only in the host adapter
-  `scripts/instruction-discovery.mjs`. Domain modules must not import from
-  `scripts/` or `bin/`.
+  them. Use erasable TypeScript, explicit `.ts` sibling imports, and acyclic ES
+  modules.
+- Git access lives only in the adapter `scripts/instruction-discovery.mjs`.
+  Domain modules never import from `scripts/` or `bin/`.
+- The adapter imports the TypeScript policy module, so it must be bundled into
+  `bin/dakar-review.bundle.mjs`. Do **not** add it to `EXTERNAL_MODULES` in
+  `scripts/build-cli.mjs`: the scripts listed there (`review-config.mjs` among
+  them) stay outside the bundle and import no `.ts` file, and the installed CLI
+  cannot load TypeScript from `node_modules` (see the module comment in
+  `scripts/build-cli.mjs`). Follow `scripts/context-warmup.mjs`, which is
+  bundled.
 - Every new JavaScript or TypeScript module starts with a `/** … @module */`
-  block, and every exported declaration has a JSDoc block, because
-  `make docs-check` runs TypeDoc with zero-warning validation.
-- `bin/dakar-review.bundle.mjs` is generated by `make workflow-build`
-  (`npm run cli:build`); never edit it by hand. Commit it regenerated whenever
-  `bin/dakar-review.mjs` or a module it bundles changes, because
-  `make workflow-check` rejects a stale bundle.
-- `typos.toml` is generated; repository spelling exceptions go in
-  `typos.local.toml` as narrow patterns.
-- Pin every new tool exactly in `package.json` (`AGENTS.md`). The shipped
-  workflow keeps no new runtime dependency. The only authorized new dependency
-  is `lemmascript` as an exact-pinned development dependency (requested by the
-  user for the proof); Dafny is an external prover binary pinned in CI and in
-  the Makefile documentation.
-- Keep `biome lint` cognitive complexity below 10 for `bin/dakar-review.mjs`
-  (`biome.json`); keep new functions small enough that Oxlint's Unicorn and
-  deslop profiles (`oxlint.config.mjs`) pass without suppressions.
+  block and documents every export, because `make docs-check` runs TypeDoc with
+  zero-warning validation. Do not use `@file` headers.
+- `bin/dakar-review.bundle.mjs` is generated by `make workflow-build`; never
+  edit it by hand; commit it regenerated with any change to a module it bundles.
+  `typos.toml` is generated; exceptions go in `typos.local.toml`.
+- Pin every tool exactly (`AGENTS.md`). The shipped CLI and workflow gain no
+  runtime dependency. The only new dependency is `lemmascript`, exact-pinned in
+  the isolated `proofs/package.json` (approval question 4). Dafny 4.11.0 is an
+  external prover pinned by version and SHA-256 in CI.
+- Keep Biome cognitive complexity below 10 in `bin/dakar-review.mjs`, and keep
+  Oxlint (Unicorn and deslop profiles in `oxlint.config.mjs`) free of findings
+  and suppressions.
 - Prose, comments, and commit messages use en-GB Oxford spelling and follow
-  `docs/documentation-style-guide.md` (sentence-case headings, 80-column prose
-  wrap, labelled code fences, captioned tables and diagrams).
-- Completed ExecPlans under `docs/execplans/` are historical; do not edit
-  them.
-- Run `make check-fmt`, `make typecheck`, `make lint`, and `make test` (and,
-  from `EP-M2`, `make proofs`) sequentially after each milestone, and commit
-  only when every gate passes.
+  `docs/documentation-style-guide.md`.
+- Do not edit completed ExecPlans in `docs/execplans/`.
+- Run `make check-fmt`, `make typecheck`, `make lint`, `make test`, and
+  `make workflow-check` sequentially after every milestone, plus `make proofs`
+  from `EP-M2` onwards; commit only when every gate passes.
 
 ## Tolerances (exception triggers)
 
 Comparison base: `379128f` (the `main` commit this branch starts from).
-Counting command, run from the repository root after each milestone:
+Counting command, run from the repository root:
 
 ```bash
 git diff --numstat 379128f -- . \
   ':(exclude)docs/execplans/2-3-1-specify-nested-agents-md-files.md' \
   ':(exclude)bin/dakar-review.bundle.mjs' \
-  ':(exclude)package-lock.json' \
+  ':(exclude)proofs/package-lock.json' \
   ':(exclude)typos.toml' \
   ':(exclude)src/workflows/dakar-review/*.dfy.gen'
 ```
 
-Every limit below measures net lines (additions minus deletions) per category,
-and every category is enforced independently. This ExecPlan file is excluded
-from every count. Generated artefacts are excluded as listed above and governed
-by their own rules: `bin/dakar-review.bundle.mjs` and `typos.toml` are
-regenerated by repository tooling, `*.dfy.gen` files are regenerated by `lsc`,
-and `package-lock.json` is limited by the dependency tolerance instead.
+Every limit measures net lines (additions minus deletions), and every category
+is enforced independently. This ExecPlan file is excluded from every count.
+Generated artefacts are excluded from line counts as listed and are governed
+instead by their own tooling: the CLI bundle and `typos.toml` by repository
+build targets, `*.dfy.gen` by `lsc`, and `proofs/package-lock.json` by the
+dependency tolerance.
 
 Classification by purpose: code is TypeScript and JavaScript under `src/`,
-`scripts/`, `bin/dakar-review.mjs`, and `tests/`, plus hand-maintained Dafny
-proof files (`*.dfy`) and Makefile recipe lines; configuration is
-`package.json`, `.github/workflows/*.yml`, `LemmaScript-files.txt`,
-`typos.local.toml`, and Makefile variable or `.PHONY` lines; documentation is
-every other Markdown file.
+`scripts/`, `bin/dakar-review.mjs`, and `tests/`, handwritten Dafny (`*.dfy`),
+and Makefile recipe lines; configuration is `package.json` files,
+`odw.config.json`, `.github/workflows/*.yml`, `typos.local.toml`, `.gitignore`,
+and Makefile variable and `.PHONY` lines; documentation is every other Markdown
+file.
 
-- Files: if implementation changes more than 26 non-ExecPlan files, counting
-  generated files, stop and escalate.
-- Code: if code exceeds 2,100 net lines, stop and escalate. Estimate: kernel
-  module 140, policy module 260, discovery adapter 230, CLI wiring 70, unit and
-  table tests 420, property tests 260, adapter integration tests 280, CLI
-  end-to-end tests 180, Dafny proof additions 160, total 2,000; the contingency
-  is small because the proof file is the main unknown and has its own probe
-  (`EP-M0`).
-- Configuration: if configuration exceeds 70 net lines, stop and escalate.
-  Estimate: `package.json` 4, Makefile variables 4, CI proof step 25,
-  `LemmaScript-files.txt` 2, `typos.local.toml` up to 6.
-- Documentation: if documentation exceeds 650 net lines, stop and escalate.
-  Estimate: ADR 0004 230, design §§3 and 6 140, users' guide 70, developers'
-  guide 100, skill guide 10, contents index 6, roadmap 2, repository layout 6.
-- Dependencies: if `lemmascript` at the pinned version adds more than 40
-  packages to `package-lock.json`, or any other dependency is needed, stop and
+- Files: if more than 32 non-ExecPlan files change (generated files
+  included), stop and escalate. Estimate: 14 new and 16 modified.
+- Code: if code exceeds 2,500 net lines, stop and escalate. Estimate: kernel
+  150, policy 320, adapter 300, CLI wiring 40, kernel tests 200, policy tests
+  300, property tests 320, adapter integration tests 380, CLI and bundle test
+  changes 100, Dafny helper lemmas 180; total 2,290. The contingency covers the
+  proof, the main unknown, which also has its own probe (`EP-M0`).
+- Configuration: if configuration exceeds 110 net lines, stop and escalate.
+  Estimate: `proofs/package.json` 15, Makefile 14, CI proof job 50,
+  `odw.config.json` 10, `typos.local.toml` 6, `.gitignore` 2.
+- Documentation: if documentation exceeds 750 net lines, stop and escalate.
+  Estimate: ADR 0004 270, design document 170, users' guide 50, developers'
+  guide 130, skill guide 6, contents index 8, roadmap 30, repository layout 10,
+  README 6.
+- Dependencies: if `proofs/package-lock.json` resolves more than 400
+  packages, if the root `package-lock.json` changes at all, or if any other
+  dependency is needed, stop and escalate.
+- Interface: if a change to the workflow argument schema, prompts, stdout
+  result shape, SARIF output, or a new CLI flag appears necessary, stop and
   escalate.
-- Interface: if any change to the workflow argument schema, prompt text,
-  stdout result shape, or a new CLI flag appears necessary, stop and escalate;
-  those belong to 2.3.2 or need approval.
-- Architecture: if the resolver cannot stay pure, or the trusted-commit read
-  rule must change, stop and escalate.
-- Proof: if the `EP-M0` probe shows that the pinned LemmaScript release
-  cannot model the kernel, or a proof obligation in `EP-M2` remains open after
-  three focused attempts, stop and escalate rather than weakening the
-  specification or adding `//@ assume`.
-- Iterations: if a focused test or gate still fails after three attempts at
-  a fix, stop and escalate.
-- Time: if any milestone takes more than four hours of active work, stop and
+- Architecture: if the resolver cannot stay pure, or the trusted-commit rule
+  must change, stop and escalate.
+- Proof: if the `EP-M0` probe shows that LemmaScript cannot model the kernel,
+  or a proof obligation in `EP-M2` remains open after three focused attempts,
+  stop and escalate. Never weaken a postcondition or add `//@ assume`.
+- Iterations: if a focused test or gate still fails after three fix attempts,
+  stop and escalate.
+- Time: if a milestone takes more than four hours of active work, stop and
   escalate.
-- Ambiguity: if the design review or implementation exposes two valid
-  readings that materially change applicability or precedence, stop and present
-  the options.
+- Ambiguity: if implementation exposes two valid readings that change
+  applicability or precedence, stop and present the options.
 
 Historical evidence: none of the five completed plans in `docs/execplans/`
 records a budget increase in its decision log or revision notes. The closest
-comparable, `docs/execplans/api-key-support.md`, set "roughly 25 files or 2,500
-lines" across all categories; `docs/execplans/divide-and-conquer-workflow.md`
-set five files and 350 production lines and finished without recorded growth.
-Those plans did not separate categories, so they cannot calibrate the
-documentation budget; the documentation estimate above is therefore built
-bottom-up from the sections that must change.
+comparable plan, `docs/execplans/api-key-support.md`, set "roughly 25 files or
+2,500 lines" across all categories;
+`docs/execplans/divide-and-conquer-workflow.md` set five files and 350
+production lines. Neither separated categories, so the estimates above are
+built bottom-up. The design review found that the first draft's 26-file limit
+was already below its own named scope; this revision removes the stderr report
+milestone and recounts.
 
 ## Risks
 
-- Risk: the pinned LemmaScript release (a technology preview; `npm view`
-  shows 0.6.10 as the latest at planning time, while the house skill was
-  written against 0.5.22) may not translate nested loops over `string[][]` or
-  may need `//@` annotations the codebase's linters reject. Severity: medium.
-  Likelihood: medium. Mitigation: the `EP-M0` probe runs first on a scratch
-  copy; the kernel is written over plain arrays and integers to stay inside the
-  documented fragment; the proof tolerance forces escalation instead of a
-  vacuous proof.
-- Risk: `lemmascript` depends on `ts-morph`, which bundles its own
-  TypeScript compiler, so the lockfile may grow substantially. Severity: low.
-  Likelihood: medium. Mitigation: the dependency tolerance caps the package
-  count; the fallback, if exceeded, is an exact-pinned
-  `npx --package=lemmascript@<version>` invocation in the Makefile, which needs
-  user approval because it departs from the `package.json` pinning rule.
-- Risk: Dafny is installed on the development host
-  (`~/.local/bin/dafny`, version 4.11.0) but not in CI. Severity: medium.
-  Likelihood: high. Mitigation: `EP-M6` adds a pinned CI step; `make proofs` is
-  a separate target so `make check` stays runnable on hosts without Dafny, and
-  the plan records that local proof runs need Dafny 4.11.0.
-- Risk: changed paths come from `git diff --name-only` without `-z` in
-  `scripts/review-state.mjs::changedFiles()`, so Git C-quotes paths with
-  unusual bytes (for example `"src/caf\303\251.ts"`). Quoted paths would not
-  match any ancestor directory except the root. Severity: medium. Likelihood:
-  low. Mitigation: the resolver treats a path that begins with a double quote,
-  contains an empty, `.`, or `..` segment, or is absolute as malformed and
-  reports `unresolvable-path` (root chain only). Fixing the quoting in
-  `review-state.mjs` changes a shared contract that also feeds
-  `path_instructions` matching, so it is recorded in `Surprises & discoveries`
-  as a follow-up rather than done here.
-- Risk: the trusted instruction commit (`--base`) differs from the trusted
-  gate-configuration commit (`prepared.reviewBase`, which may be the last
-  reviewed head). Severity: low. Likelihood: certain (existing behaviour).
-  Mitigation: keep the existing `--base` rule for all instruction files so root
-  and nested files always come from one commit; record the divergence in ADR
-  0004 as a known limitation.
-- Risk: the review panel may prefer to defer all CLI wiring to 2.3.2 or to
-  move reporting into the workflow result. Severity: low. Likelihood: medium.
-  Mitigation: the design review explicitly tests that choice; milestones
-  `EP-M1` to `EP-M4` stand on their own if `EP-M5` is dropped.
-- Risk: very wide repositories may contain thousands of tracked files;
-  `git ls-tree -r` lists all of them. Severity: low. Likelihood: low.
-  Mitigation: run `git ls-tree` with a raised `maxBuffer` (64 MiB) and a
-  streaming-free parse; if listing fails, emit an `instruction-discovery`
-  failure diagnostic and continue with the root-only behaviour, never failing
-  the review for nested discovery.
+- Risk: LemmaScript is a technology preview. Version 0.6.10 is the latest at
+  planning time, while the house skill documents 0.5.22. It may not translate
+  the kernel, or a seeded fault may fail translation instead of verification,
+  which would make a negative control pass for the wrong reason. Severity:
+  medium. Likelihood: medium. Mitigation: the `EP-M0` probe; the kernel uses
+  only arrays, integers, and `while` loops; every seeded fault's failure output
+  must name the violated postcondition; the proof tolerance forces escalation.
+- Risk: the proof tool's dependency tree (cloud SDKs through
+  `lemmascript-claimcheck`) is large and security-sensitive. Severity: medium.
+  Likelihood: certain. Mitigation: the isolated `proofs/` package, installed
+  only for proof runs with `npm ci --ignore-scripts`; the dependency tolerance.
+- Risk: Dafny is installed on the development host (`~/.local/bin/dafny`,
+  4.11.0) but not in CI, and proofs outside `make check` can drift. Severity:
+  medium. Likelihood: high. Mitigation: a dedicated CI job (added in `EP-M2`,
+  not at the end) downloads the pinned release archive, checks its SHA-256, runs
+  `make proofs`, and checks that regenerated `.dfy.gen` files match the
+  committed ones; `make check` runs `make proofs` when `dafny --version`
+  reports 4.11.0 and otherwise prints a skip notice.
+- Risk: changed paths come from `git diff --name-only` without `-z`
+  (`scripts/review-state.mjs::changedFiles()`), so with Git's default
+  `core.quotePath` every non-ASCII path arrives C-quoted (for example
+  `"src/caf\303\251.ts"`) and cannot match a nested scope. Severity: medium.
+  Likelihood: medium for non-English repositories. Mitigation: the policy
+  reports such paths as `path-unresolvable` and gives them the root chain only;
+  the adapter's own range queries use `-z`; a follow-up roadmap task fixes
+  `changedFiles()` (approval question 5).
+- Risk: `--base` is resolved twice (here and in `review-state.mjs`), and a
+  local branch or tag literally named `origin/main` shadows the remote-tracking
+  ref. Severity: low. Likelihood: low. Mitigation: unchanged from today;
+  recorded in ADR 0004 known limitations and a roadmap follow-up.
+- Risk: context warm-up indexes the working-tree `AGENTS.md` and changed
+  Markdown (`scripts/context-warmup.mjs`), so an added `AGENTS.md` can still
+  reach agents through CodeGraph retrieval. Severity: medium. Likelihood:
+  medium once 2.3.2 lands. Mitigation: out of scope for 2.3.1; recorded as a
+  prerequisite follow-up for 2.3.2.
+- Risk: adding `--no-context-files` to the pi adapters removes context the
+  agents currently see, which could change review quality. Severity: low.
+  Likelihood: low; the trusted root text is already in every prompt.
+  Mitigation: approval question 3; the users' guide explains the change.
 
 ## Progress
 
-- [x] (2026-11-17T14:04Z) Branch renamed, repository reconnaissance (two
-  Wyvern scouts), and prior-art research completed.
-- [x] (2026-11-17) Initial draft written.
-- [ ] Community-of-experts design review completed and findings applied.
-- [ ] Plan approved by the user.
-- [ ] `EP-M0` LemmaScript feasibility probe (prototype).
-- [ ] `EP-M1` design recorded: ADR 0004 and design §§3 and 6.
-- [ ] `EP-M2` ancestry and budget kernel with proof and tests.
-- [ ] `EP-M3` instruction-scope policy with diagnostics and property tests.
-- [ ] `EP-M4` trusted Git discovery adapter; root loading unified on it.
-- [ ] `EP-M5` CLI stderr scope report with end-to-end tests.
-- [ ] `EP-M6` documentation, CI proof step, roadmap closure.
+- [x] (2026-11-17T14:04Z) Branch renamed; repository reconnaissance (two
+  Wyvern scouts) and prior-art research completed.
+- [x] (2026-11-17T14:10Z) Initial draft written and committed.
+- [x] (2026-11-17T14:16Z) Community-of-experts design review (three panellists
+  covering six lenses) completed; verdict "proceed with conditions".
+- [x] (2026-11-17T14:40Z) Review findings applied in this revision.
+- [ ] Plan approved by the user (with answers to the approval questions).
+- [ ] `EP-M0` feasibility probes (prototype).
+- [ ] `EP-M1` design recorded: ADR 0004 and design document.
+- [ ] `EP-M2` proved kernel, isolated proof package, CI proof job.
+- [ ] `EP-M3` pure instruction-scope policy.
+- [ ] `EP-M4` trusted Git discovery adapter, root loading, pi context fix.
+- [ ] `EP-M5` documentation and roadmap closure.
 
 ## Surprises & discoveries
 
-- Observation: root `AGENTS.md` is read from the resolved `--base` commit,
-  not the working tree or reviewed head. Evidence:
+- Observation: root `AGENTS.md` is read from the resolved `--base` commit, not
+  the working tree or reviewed head. Evidence:
   `bin/dakar-review.mjs::readAgentInstructions()` runs
   `git ls-tree -z <commit> -- AGENTS.md` then `git show <commit>:AGENTS.md`;
   `tests/cli.test.mjs` "CLI reads AGENTS.md from the resolved commit when the
-  named ref moves". Impact: nested discovery adopts the same trust rule, and
-  several documents that say "the reviewed repository's `AGENTS.md`" need
-  precise wording.
-- Observation: `readAgentInstructions()` does not inspect the tree entry
-  mode, so a committed symbolic link named `AGENTS.md` would have its target
-  path read as instruction text; it also uses `spawnSync` with the default 1 MiB
-  `maxBuffer`, so a larger file probably fails with `ENOBUFS` before
-  truncation. Evidence: code reading only; both are unverified and are
-  confirmed with red tests in `EP-M4`. Impact: the shared adapter fixes both.
-- Observation: context warm-up indexes `AGENTS.md` from the working tree
-  (`scripts/context-warmup.mjs`, candidate list
-  `['AGENTS.md', 'README.md', …]`), while prompts use the trusted base. Impact:
-  out of scope here; recorded in ADR 0004 as a known divergence for 2.3.2 to
-  reconcile.
-- Observation: changed paths are produced without `-z`
-  (`scripts/review-state.mjs::changedFiles()`), so Git may C-quote unusual
-  paths. Impact: see `Risks`; propose a follow-up roadmap task.
-- Observation: the repository's test runner is Node's built-in `node:test`
-  (`npm test` is `node --test`; every suite imports `node:test`). No suite uses
-  `bun:test`. Impact: see decision D2.
-- Observation: `scripts/build-workflow.mjs` enforces its runtime-module
-  manifest against esbuild's metafile, not against a directory listing, so a
-  pure module in `src/workflows/dakar-review/` that `main.ts` does not import
-  does not break the workflow build. Impact: the new modules need no manifest
-  entry until 2.3.2 imports them.
+  named ref moves". Impact: nested discovery adopts the same trust rule.
+- Observation: the pi agent runtime loads `AGENTS.md` and `CLAUDE.md` by
+  default. Evidence: `pi --help` on the host lists
+  `--no-context-files, -nc  Disable AGENTS.md and CLAUDE.md discovery and
+  loading`;
+  the pi adapters in `odw.config.json` run
+  `pi -p --no-session --provider openai-flex --model … --thinking …` without
+  it, and ODW runs agents in a copy of the reviewed working tree. Impact: the
+  head's (untrusted) instructions already reach agents, bypassing the trusted
+  base. Fixed in `EP-M4` (decision D10).
+- Observation: `readAgentInstructions()` ignores the tree entry mode, so a
+  committed symbolic link named `AGENTS.md` has its target path read as
+  instruction text; it uses `spawnSync`'s default 1 MiB `maxBuffer`; and with a
+  `--repo-root` inside a subdirectory, `ls-tree -- AGENTS.md` looks in that
+  subdirectory while `show <sha>:AGENTS.md` reads the repository root.
+  Evidence: code reading; confirmed by red tests in `EP-M4`.
+- Observation: the trusted gate configuration is read from
+  `prepared.reviewBase` (`bin/dakar-review.mjs::readTrustedGateConfig()`),
+  which may be a previously reviewed head written by the change author. Impact:
+  out of scope; a separate security follow-up is recommended in the final
+  report to the user.
+- Observation: `lemmascript@0.6.10` depends on `ts-morph` and
+  `lemmascript-claimcheck`, which pulls in `claimcheck` and cloud-provider
+  SDKs. Evidence: `npm view` during the design review. Impact: decision D9.
+- Observation: the repository's runner is `node:test`; no suite uses
+  `bun:test`. Impact: decision D2.
+- Observation: `docs/execplans/compile-dakar-review-workflow.md` (decision
+  dated 2026-07-14) declined to adopt df12-build's "Bun, BDD, LemmaScript, or
+  Dafny test stack". Impact: this plan reverses that for one kernel, at the
+  user's explicit request for exhaustive proofs of contractual logic; ADR 0004
+  and D9 record the reversal and its narrow scope.
+- Observation: `git ls-tree <sha> -- dir/` lists one directory
+  non-recursively, `git --literal-pathspecs` treats `[` and `*` in directory
+  names literally, and `git cat-file --batch` returns
+  `<oid> <type> <size>\n<bytes>\n` per object. Evidence: planning probe on a
+  scratch repository (see `Artefacts and notes`). Impact: ancestry discovery
+  needs no recursive listing.
+- Observation: `scripts/build-workflow.mjs` checks `RUNTIME_MODULES` against
+  esbuild's metafile, not a directory listing, so a module `main.ts` does not
+  import does not break the workflow build. Impact: no manifest change until
+  2.3.2.
 
 ## Decision log
 
-- D1. Decision: deliver 2.3.1 as an accepted design plus an executable,
-  proved specification and a stderr-only observable report; defer prompt
-  integration, workflow arguments, and SARIF notifications to 2.3.2. Rationale:
-  the roadmap success criterion is a design definition; shipping the resolver
-  now lets 2.3.2 build on proved behaviour, and stderr reporting lets users
-  validate nested layouts without changing any machine contract. The rejected
-  alternative, wiring nested text into prompts now, would pre-empt 2.3.2's
-  packing experiment and its cost evaluation. Date/Author: 2026-11-17, planning
-  agent (subject to design review).
-- D2. Decision: write tests with `node:test`, `node:assert/strict`, and
-  `fast-check` 4.9.0, not `bun:test`. Rationale: the request mentions
-  `bun:test`, but `make test` runs `node --test` and every existing suite uses
-  `node:test`; a `bun:test` suite would not run under `make test` or CI's
-  `make check`, and would add a second runner. The behavioural intent (unit,
-  behavioural, and end-to-end tests run by the gate) is met with the
-  repository's runner. The user may overrule this at approval time.
-  Date/Author: 2026-11-17, planning agent.
+- D1. Decision: deliver 2.3.1 as an accepted design, a proved and tested pure
+  resolver, a Git adapter exercised by integration tests, and the root and pi
+  trust fixes. Defer prompt integration, the result-JSON and SARIF reporting
+  surface, and any new stderr event to 2.3.2. Rationale: the success criterion
+  is a design definition; the design review (Wafflecat, Dinolump) showed that a
+  stderr report would become a provisional contract that 2.3.2 replaces, while
+  the result JSON is where agents read. Rejected alternative: a stderr
+  `instruction_scope` event now (approval question 2). Date/Author: 2026-11-17,
+  planning agent after design review.
+- D2. Decision: tests use `node:test`, `node:assert/strict`, and `fast-check`
+  4.9.0, not `bun:test`. Rationale: `make test` runs `node --test`; every
+  existing suite uses `node:test`; a `bun:test` suite would not run in the
+  gate. The behavioural intent of the request is met with the repository's
+  runner (approval question 1). Date/Author: 2026-11-17, planning agent;
+  endorsed by the design review.
 - D3. Decision: an instruction file is a regular Git blob (mode `100644` or
-  `100755`) whose final path segment is exactly `AGENTS.md`, read from the
-  trusted instruction commit. Rationale: matches today's root rule, the
-  `agents.md` convention, and Codex; exact case avoids platform-dependent
-  matching on case-insensitive file systems. `AGENTS.override.md`, `CLAUDE.md`,
-  and `.cursorrules` are out of scope; case variants of `AGENTS.md` are
-  reported, not loaded. Date/Author: 2026-11-17, planning agent.
-- D4. Decision: an instruction file in directory `d` applies to a changed
-  path `p` exactly when `d` is the root or a segment-wise prefix of `p`'s
-  parent directory. The applicable files form a chain ordered from the root to
-  the nearest directory. Rationale: this is the shared rule of the `agents.md`
-  specification ("the closest one takes precedence"), Codex (root-to-current
-  concatenation), Claude Code (nested files load for files in their directory),
-  and CodeRabbit (a guideline applies to its directory and subdirectories).
-  Segment-wise comparison prevents `packages/api` from matching
-  `packages/api-client`. Date/Author: 2026-11-17, planning agent.
-- D5. Decision: precedence, highest first, is (1) Dakar workflow schema,
-  output, and safety rules; (2) the resolved CodeRabbit review policy, including
-  `reviews.path_instructions`; (3) the nearest applicable `AGENTS.md`; then
-  each farther ancestor in turn, ending with the root. Non-conflicting guidance
-  from every level accumulates. Rationale: (1) preserves the 2.2.1 rule; (2)
-  the review policy is configuration chosen explicitly for reviewing, whereas
-  `AGENTS.md` addresses coding agents in general; (3) nearest-wins is the
-  common prior-art rule. Date/Author: 2026-11-17, planning agent (the ranking
-  of (2) above (3) is a named question for the design review).
-- D6. Decision: Dakar does not try to detect semantic disagreement between
-  instruction texts deterministically. "Conflicts" are reported in two classes:
-  deterministic structural diagnostics with stable codes (see
-  `Interfaces and dependencies`), reported now on stderr; and semantic
-  conflicts, which precedence resolves inside prompts and which 2.3.2 may
-  surface through model output. Rationale: prose conflict detection needs
-  judgement, which belongs to the audited model lane, not to deterministic host
-  code (ADR 0002). Date/Author: 2026-11-17, planning agent.
-- D7. Decision: bounds are a per-file cap of 24,000 UTF-16 code units
-  (unchanged), a discovery cap of 64 instruction files (shallowest first, then
-  by code-unit path order), and a per-chain budget of 48,000 code units
-  allocated nearest first, skipping any file that does not fit the remaining
-  budget. Rationale: the nearest file wins conflicts, so it is the most
-  important to keep whole; because one file is at most half the budget, the
-  nearest two files always survive. Date/Author: 2026-11-17, planning agent.
-- D8. Decision: an instruction file added, modified, deleted, or renamed in
-  the review range keeps its trusted-base version (or absence) and yields an
-  `instruction-changed-in-range` diagnostic. Rationale: the change is reviewed
-  as code; it cannot instruct its own reviewer. Date/Author: 2026-11-17,
-  planning agent.
-- D9. Decision: formal proof with LemmaScript and Dafny covers the pure
-  kernel (ancestry selection, ordering, and budget allocation); `fast-check`
-  properties with an independent oracle cover the policy layer that uses string
-  splitting, sorting, and maps outside the LemmaScript fragment; Git parsing is
-  covered by integration tests against real fixture repositories. Rationale: see
-  `Formal verification decision`. Date/Author: 2026-11-17, planning agent.
+  `100755`) whose final path segment is exactly `AGENTS.md`. Other spellings of
+  the name (`agents.md`, `Agents.md`) are reported, not loaded.
+  `AGENTS.override.md`, `CLAUDE.md`, and `.cursorrules` are out of scope.
+  Rationale: today's root rule, the `agents.md` convention, and Codex; exact
+  case avoids platform-dependent matching. Date/Author: 2026-11-17.
+- D4. Decision: a file in directory `d` applies to path `p` exactly when `d`
+  is the root or a segment-wise prefix of `p`'s parent directory. The chain is
+  ordered root first, nearest last. A deleted path keeps the chain of its old
+  location. A renamed path is governed by its destination chain; when the
+  source chain differs, the policy emits `path-scope-changed` and 2.3.2 must
+  show both chains for that path. Paths inside submodules resolve only to
+  ancestors outside the submodule. An `AGENTS.md` that is itself changed is
+  reviewed under its own trusted-base chain. Rationale: shared rule of
+  `agents.md`, Codex, Claude Code, and CodeRabbit; the rename rule closes the
+  "move code out of a strict scope" escape found in the pre-mortem.
+  Date/Author: 2026-11-17, revised after design review.
+- D5. Decision: precedence, highest first: (1) Dakar workflow schema, output,
+  and safety rules; (2) review policy from an operator-chosen configuration
+  (`source` `explicit` or `user` in `scripts/review-config.mjs`) or from the
+  repository's own CodeRabbit file (`source` `repository`); (3) the nearest
+  applicable `AGENTS.md`, then each farther ancestor, ending with the root; (4)
+  review policy from Dakar's bundled example configuration (`source`
+  `example`). Non-conflicting guidance from every level accumulates. Rationale:
+  operator and repository review policy is chosen for reviewing; the bundled
+  df12 house example must not override a repository's own `AGENTS.md` (finding
+  F7). Date/Author: 2026-11-17, revised after design review.
+- D6. Decision: Dakar does not detect semantic disagreement between texts
+  deterministically. Precedence resolves it inside prompts (2.3.2). Structural
+  conflicts produce diagnostics with stable `area-condition` codes (see
+  `Interfaces and dependencies`), each mapped to the SARIF rule id
+  `dakar/instruction/<code>`. Rationale: judgement belongs in the audited model
+  lane (ADR 0002). Date/Author: 2026-11-17.
+- D7. Decision: discovery is by ancestry, not by full-tree listing: the
+  adapter collects the ancestor directories of the changed paths (and rename
+  sources), lists each non-recursively with one batched
+  `git --literal-pathspecs ls-tree -z --full-tree <sha> -- <dir>/ …` call, and
+  reads accepted blobs through one `git cat-file --batch` process by object id.
+  There is no global file-count cap: every applicable file is loaded. Per-file
+  bounds: blobs over 4 MiB are not read (`entry-too-large`); text is truncated
+  to 24,000 UTF-16 code units (`content-truncated`). Rationale: a global
+  "shallowest 64" cap silently drops the deep files monorepos need (pre-mortem
+  scenario 1); `ls-tree -r -l` scales with repository size and forces blob
+  fetches in partial clones (scenario 2). Date/Author: 2026-11-17, revised
+  after design review.
+- D8. Decision: an `AGENTS.md` (any letter case) added, modified, deleted, or
+  renamed by the reviewed change keeps its trusted-base version (or absence)
+  and yields `range-instruction-changed` (warning). The adapter computes this
+  itself with `git diff --no-renames --name-only -z <mergeBase> <head>`, where
+  `mergeBase` is the merge base of the trusted commit and the head, so earlier
+  reviewed increments and rename sources are included. Rationale: the change is
+  reviewed as code and cannot instruct its own reviewer; findings F5 and F4
+  showed that `prepared.changedFiles` misses both cases. Date/Author:
+  2026-11-17, revised after design review.
+- D9. Decision: prove the kernel (segment prefix, applicable indices, and
+  budget selection) with LemmaScript and Dafny; cover the policy with table and
+  `fast-check` tests and an independent oracle; cover Git behaviour with
+  integration tests. Install LemmaScript in an isolated `proofs/` package. This
+  narrowly reverses the 2026-07-14 decision not to adopt the Dafny stack,
+  because the user requires exhaustive proof of contractual logic. Date/Author:
+  2026-11-17, revised after design review.
+- D10. Decision: add `--no-context-files` to every pi Flex adapter command in
+  `odw.config.json` and guard it in `tests/adapter-config.test.mjs`. Rationale:
+  without it the trust rule is fiction, because pi loads the working copy's
+  `AGENTS.md` and `CLAUDE.md` (approval question 3). Date/Author: 2026-11-17,
+  from design review finding F5 and host evidence.
+- D11. Decision: split applicability from budgeting. The 2.3.1 report carries
+  files and per-path chains only; budget selection is a separate kernel function
+  `selectWithinBudget(lengths, ranking, budget)` that keeps the longest prefix
+  of a priority ranking that fits and stops at the first file that does not.
+  For one chain ranked nearest first, the kept set is a contiguous run of the
+  nearest files. ADR 0004 specifies the 2.3.2 pack rule: rank files by
+  nearest-first position across the pack's chains, and require that the
+  governing file of every path in a pack survives, otherwise split the pack or
+  fail. The workflow argument transport (one JSON argv string, limited by Linux
+  to 128 KiB per argument) bounds total instruction text; ADR 0004 requires
+  2.3.2 to derive its budget from that limit or move the text to an arguments
+  file. Rationale: findings F2, F3, F9; greedy skipping could revive a rule a
+  nearer file had overridden. Date/Author: 2026-11-17.
+- D12. Decision: record three follow-ups in `docs/roadmap.md` with
+  `mapsplice` in `EP-M5`: NUL-delimited changed paths in `review-state.mjs`;
+  resolve `--base` once to a fully qualified ref and SHA shared with
+  `prepare()`; exclude instruction files from context warm-up (prerequisite of
+  2.3.2). Rationale: each is a real gap found here whose fix changes a shared
+  contract outside this item (approval question 5). Date/Author: 2026-11-17.
+- D13. Decision: ADR 0004 is written in `EP-M1`, after plan approval, with
+  status `Accepted` and the approval date. Rationale: removes the draft's
+  contradiction between "Proposed until approval" and approval preceding
+  `EP-M1`. Date/Author: 2026-11-17.
 
 ## Outcomes & retrospective
 
-Not started. Record outcomes at each milestone and reconcile the ADR, design
-document, users' guide, and developers' guide before marking the plan
-`COMPLETE`.
+Not started. Record outcomes at each milestone and reconcile ADR 0004, the
+design document, and both guides before marking the plan `COMPLETE`.
 
 ## Context and orientation
 
 Inspected base revision: `379128f` ("Adopt the documentation style guide and
-rename ADRs (#27)"). Line numbers below refer to that revision; relocate
-symbols with `grep -n '<symbol>' <file>`.
+rename ADRs (#27)"). Line numbers below refer to it; relocate symbols with
+`grep -n '<symbol>' <file>`.
 
 The CLI entry point is `bin/dakar-review.mjs`. `run()` parses options, resolves
 the repository root, and calls `buildWorkflowArgs()`, which resolves CodeRabbit
-configuration (`scripts/review-config.mjs::resolveReviewConfig()`), calls
-`readAgentInstructions(repoRoot, options.base || 'origin/main')`, and adds
+configuration (`scripts/review-config.mjs::resolveReviewConfig()`, whose result
+carries `source`: `explicit`, `repository`, `user`, or `example`), then calls
+`readAgentInstructions(repoRoot, options.base || 'origin/main')` and sets
 `workflowArgs.agentInstructions = { source, content, truncated }` when a root
-file exists. `readAgentInstructions()` (around line 491) uses
-`runTrustedInstructionGit()` (around line 469) to resolve the base with
-`git rev-parse --verify --quiet <base>^{commit}`, list `AGENTS.md` with
-`git ls-tree -z`, and read it with `git show`. Errors are thrown with the
-prefixes `cannot resolve trusted review base`,
-`cannot inspect <sha>:AGENTS.md`, and `cannot read <sha>:AGENTS.md`; the
-top-level `try` in `run()` turns them into `{ ok: false, stage: 'cli', error }`
-on stderr with exit status 1. In live mode (`options.dryRun` unset)
+file exists. `readAgentInstructions()` (around line
+491) uses `runTrustedInstructionGit()` (around line 469) to resolve the base
+with `git rev-parse --verify --quiet <base>^{commit}`, list `AGENTS.md` with
+`git ls-tree -z`, and read it with `git show`. Errors carry the prefixes listed
+in `Constraints`; the top-level `try` around `run()` prints
+`{ ok: false, stage: 'cli', error }` on stderr and exits 1. In live mode
 `prepareLiveReview()` calls `prepareReview()`, which runs
-`scripts/review-state.mjs::prepare()` and yields
-`workflowArgs.prepared.changedFiles`, a sorted array of repository-relative
-paths from `git diff --name-only <reviewBase>..<head>`. Dry-run never prepares
-a range, so it has no changed paths.
+`scripts/review-state.mjs::prepare()` and yields `prepared.changedFiles`, a
+sorted list from `git diff --name-only <reviewBase>..<head>`. Dry-run never
+prepares a range.
 
 Inside the workflow (`src/workflows/dakar-review/`), `config.ts`
-(`agentInstructionsSchema`) validates `agentInstructions`, `main.ts` passes it
-into `promptContext`, and `prompts.ts::agentInstructionsBlock()` renders it
-with the precedence sentence "Treat these as repository-local instructions when
-they do not conflict with the Dakar workflow schema, output, and safety rules:".
-`policy.ts` already matches CodeRabbit `reviews.path_instructions` globs per
-finder pack (`pathInstructionsFor()`, `policyPathMatches()`); that is the
-precedent for path-scoped policy in deterministic workflow code.
+(`agentInstructionsSchema`) validates `agentInstructions`; `prompts.ts`
+(`agentInstructionsBlock()`) renders it with the sentence "Treat these as
+repository-local instructions when they do not conflict with the Dakar workflow
+schema, output, and safety rules:" in the finder (`taskPrompt`) and audit
+(`auditPrompt`) prompts. `policy.ts` matches CodeRabbit
+`reviews.path_instructions` globs per finder pack (`pathInstructionsFor()`).
 `task-graph.ts` groups changed files into finder packs
-(`ReviewTask.files: string[]`) that can span several directories, which is why
-2.3.2 will need a set of chains per pack.
+(`ReviewTask.files: string[]`) that span several directories, which is why
+budgeting must work across chains (D11). `main.ts` returns `ignoredPolicyKeys`
+in the result, the precedent for reporting configuration that was read but not
+applied.
 
-Stderr diagnostics follow the pattern in `scripts/context-warmup.mjs`: an
-injected `report` function writes `dakar-review: <prefix> <JSON event>\n`,
-where the event object has an `event` name and a `type`. The new report follows
-that pattern.
+The ODW adapters live in `odw.config.json`; the pi Flex adapters
+(`pi-luna-flex`, `pi-luna-flex-medium`, `pi-luna-flex-high`, `pi-terra-flex`,
+`pi-terra-flex-high`) run
+`pi -p --no-session --provider openai-flex --model <model> --thinking <level>`.
+`tests/adapter-config.test.mjs` guards their command shapes.
 
-Existing tests that pin current behaviour (all `node:test`):
-`tests/cli.test.mjs` ("CLI dry-run prints one machine-readable JSON result",
+The CLI bundle is built by `scripts/build-cli.mjs` with esbuild;
+`EXTERNAL_MODULES` lists four plain `.mjs` scripts kept outside the bundle.
+`tests/cli-bundle.test.mjs` and `tests/install.test.mjs` guard the installed
+CLI.
+
+Existing tests that pin current behaviour (all `node:test`), in
+`tests/cli.test.mjs`: "CLI dry-run prints one machine-readable JSON result",
 "CLI includes repository AGENTS.md instructions in workflow args", "CLI omits
 agentInstructions when the trusted commit has no AGENTS.md", "CLI applies the
 trusted AGENTS.md truncation limit exactly", "CLI preserves trusted-instruction
-Git failure diagnostics", "CLI reads AGENTS.md from the resolved commit when
-the named ref moves", "CLI fails closed when the trusted instruction base is
-invalid", "CLI surfaces git failures while loading trusted instructions"),
-`tests/workflow-prompts.test.mjs`, `tests/workflow-config.test.mjs`, and
-`tests/cli-context-warmup.test.mjs`. Reusable helpers:
-`tests/cli-test-support.mjs` (`runCli`, `spawnCli`, `initFixtureRepo`,
-`writeFakeOdw`, `setUpAgentInstructionRepo`, `writePreparedEchoOdw`,
-`setUpCaptureRepo`) and `tests/helpers/run-workflow.mjs`. Property-test
-precedent: `tests/review-state.property.test.mjs` and
-`tests/workflow-properties.test.mjs` (`fast-check` 4.9.0).
+Git failure diagnostics" (a fake `git` that fails on the `ls-tree` or `show`
+operation and asserts the fallbacks `git ls-tree failed` and
+`git show failed`), "CLI reads AGENTS.md from the resolved commit when the
+named ref moves", "CLI fails closed when the trusted instruction base is
+invalid", and "CLI surfaces git failures while loading trusted instructions".
+Also `tests/workflow-prompts.test.mjs`, `tests/workflow-config.test.mjs`, and
+`tests/cli-context-warmup.test.mjs`. Helpers: `tests/cli-test-support.mjs`
+(`runCli`, `spawnCli`, `initFixtureRepo`, `writeFakeOdw`,
+`setUpAgentInstructionRepo`, `writePreparedEchoOdw`). Property-test precedent:
+`tests/review-state.property.test.mjs`.
 
-Tooling: Node 22.23.4 on the host; TypeScript 6.0.3 (`tsconfig.json` is strict
-with `noUncheckedIndexedAccess`, `erasableSyntaxOnly`, `verbatimModuleSyntax`);
-Biome 1.9.4 for cognitive complexity; Oxlint 1.82.0 with Unicorn and deslop
-profiles; TypeDoc 0.28.20; markdownlint-cli2 0.23.2; `nixie` for Mermaid;
-`typos-config-builder` for spelling. Dafny 4.11.0 is installed on the host at
-`~/.local/bin/dafny`; LemmaScript is not yet a dependency. Gates:
-`make check-fmt`, `make typecheck` (which includes `node --check`, `tsc`, and
-an ODW dry run, so the `odw` CLI must be on `PATH`), `make lint` (Biome,
-Oxlint, markdownlint after spelling, nixie, docs-check), `make test`
-(`node --test`), and `make workflow-check`. `make check` runs all of them.
+Tooling: Node 22.23.4; TypeScript 6.0.3 (`tsconfig.json`: strict,
+`noUncheckedIndexedAccess`, `erasableSyntaxOnly`, `verbatimModuleSyntax`);
+Biome 1.9.4; Oxlint 1.82.0; TypeDoc 0.28.20; markdownlint-cli2 0.23.2;
+`mdtablefix` (run by `make fmt` and checked by `make check-fmt`); `nixie`;
+`typos-config-builder`. Dafny 4.11.0 is on the host at `~/.local/bin/dafny`.
+Gates: `make check-fmt`, `make typecheck` (includes `node --check`, `tsc`, and
+an ODW dry run, so `odw` must be on `PATH`), `make lint`, `make test`,
+`make workflow-check`; `make check` runs all of them.
 
-Prior art consulted (via Firecrawl, 2026-11-17): the `agents.md` specification
-(nearest file wins; explicit user prompts override); OpenAI Codex (one file per
-directory from project root to the working directory, concatenated root first
-so nearer files override; 32 KiB combined cap; empty files skipped;
-`AGENTS.override.md`); Claude Code (nested files load on demand for files in
-their directories; nearer files take precedence; `paths` front-matter rules);
-CodeRabbit code guidelines (auto-discovered `AGENTS.md` applies to its
-directory and subdirectories; unusable sources are listed with reasons in the
-review summary without blocking the review).
+Prior art (Firecrawl, 2026-11-17): the `agents.md` specification (nearest file
+wins; explicit user prompts override); OpenAI Codex (root-to-directory
+concatenation, nearer files override, 32 KiB combined cap,
+`AGENTS.override.md`); Claude Code (nested files load on demand; nearer files
+take precedence; `paths` front matter for rules); CodeRabbit code guidelines
+(auto-discovered `AGENTS.md` applies to its directory subtree; unusable sources
+are listed with reasons without blocking the review).
 
-Skills and documents to load before implementation: `execplans` (this format),
-`odw-authoring` (workflow dialect; needed only to confirm the workflow artefact
-stays unchanged), `typescript-router` then `typescript-data-and-state` and
-`typescript-testing`, `fast-check`, `lemmascript`, `hexagonal-architecture`
-(keep the kernel and policy pure, with Git behind the adapter), `codegraph-mcp`
-(callers of `readAgentInstructions` and `buildWorkflowArgs`), and
-`en-gb-oxendict-style`. Read `docs/dakar-review-design.md` §§3, 6, 9, and 12;
-`docs/developers-guide.md` §§2, 3, and 6; `docs/users-guide.md` (sections "How
-much of the CodeRabbit format is honoured" and "Context tools");
+Skills and documents to load before implementation: `execplans`;
+`hexagonal-architecture` (pure kernel and policy; Git behind the adapter; ports
+as plain objects of functions, not classes); `typescript-router`, then
+`typescript-data-and-state` and `typescript-testing`; `fast-check`;
+`lemmascript`; `codegraph-mcp` (callers of `readAgentInstructions` and
+`buildWorkflowArgs`); `odw-authoring` (only to confirm the workflow artefact is
+untouched); `mapsplice` (roadmap edits); `en-gb-oxendict-style`. Read
+`docs/dakar-review-design.md` §§3, 4, 6, 9, 11, and 12;
+`docs/developers-guide.md` §§1, 2, 3, and 6; the users' guide sections "How
+much of the CodeRabbit format is honoured" and "Context tools";
 `docs/review-skill-design.md`;
-`docs/complexity-antipatterns-and-refactoring-strategies.md` §§3 and 5 (keep
-discovery free of the "bumpy road" pattern by using small classifiers and a
-dispatcher table for diagnostics); and `docs/documentation-style-guide.md` for
-ADR format.
+`docs/complexity-antipatterns-and-refactoring-strategies.md` §§3 and 5 (use
+small classifiers and a lookup table rather than a "bumpy road" of
+conditionals); and `docs/documentation-style-guide.md` (ADR format, captions,
+screen-reader sentences for Mermaid).
 
 ## Conformance basis
 
-Upstream artefacts inspected at `379128f`:
+Upstream artefacts inspected at `379128f`: `docs/roadmap.md` §2.3 (task 2.3.1,
+requiring the completed 2.2.1); `docs/dakar-review-design.md` §§6, 9, 11, and
+12; ADR 0002 (deterministic host work first; judgement only in model lanes);
+ADR 0001 (typed modules, one composition root); the repository `AGENTS.md`. No
+terms-of-reference document exists for Dakar; none is invented here.
 
-- `docs/roadmap.md` §2.3, task 2.3.1 (requires 2.2.1, complete).
-- `docs/dakar-review-design.md` §6 (repository policy and `AGENTS.md`), §9
-  (usefulness to agents), §11 (failure modes), §12 (verification targets).
-- ADR 0002 (`docs/adrs/adr-0002-deterministic-tiered-review-cost.md`):
-  deterministic host work before ODW; judgement only in model lanes.
-- ADR 0001: workflow compiled from typed modules; pure modules and one
-  composition root.
-- `AGENTS.md` (repository): stdout contract, documentation duties, gates.
-- No terms-of-reference document exists for Dakar; none is invented here.
+Requirements:
 
-Requirements derived for this plan:
-
-- `REQ-applicability`: for every changed path, the design and code define
-  the exact ordered set of instruction files that apply.
-- `REQ-precedence`: the design states one total precedence order covering
-  Dakar rules, review policy, and every applicable instruction file.
-- `REQ-conflict-reporting`: every deterministic anomaly in discovery or
-  application produces exactly one diagnostic with a stable code, reported
-  without failing the review.
-- `REQ-trust`: instruction text comes only from the trusted instruction
-  commit.
-- `REQ-bounds`: discovery and per-chain text are bounded, with nearest-first
-  retention.
-- `REQ-compat`: root-only behaviour, stdout, workflow arguments, and the
-  workflow artefact are unchanged.
+- `REQ-applicability`: for every changed path, the design and code define the
+  exact ordered set of instruction files that apply.
+- `REQ-precedence`: one total precedence order covers Dakar rules, review
+  policy by source, and every applicable instruction file.
+- `REQ-conflict-reporting`: every structural anomaly yields exactly one
+  diagnostic with a stable code and SARIF rule id; reporting never blocks the
+  review except for Git failures.
+- `REQ-trust`: instruction text that Dakar or its agent runtime uses comes only
+  from the trusted instruction commit.
+- `REQ-bounds`: per-file bounds are explicit; budget selection keeps a
+  contiguous nearest-first run.
+- `REQ-compat`: root-only workflow arguments, stdout, and the workflow
+  artefact are unchanged apart from the deliberate trust fixes.
 
 Gaps against the baseline: `GAP-nested` (nested files ignored), `GAP-symlink`
-(symlink entry read as text), `GAP-buffer` (likely `ENOBUFS` on large files),
-`GAP-visibility` (no report of which instructions apply).
+(symbolic link read as text), `GAP-buffer` (1 MiB buffer), `GAP-subdir`
+(subdirectory `--repo-root` inspects the wrong path), `GAP-pi-context` (pi
+loads untrusted context files).
 
 Trace links:
 
 ```plaintext
-roadmap 2.3.1 -> REQ-applicability -> ADR-0004 §Decision -> EP-M2, EP-M3
+roadmap 2.3.1 -> REQ-applicability -> ADR-0004 decision -> EP-M2, EP-M3
   -> tests/instruction-scope-kernel.test.mjs, make proofs
-roadmap 2.3.1 -> REQ-precedence -> ADR-0004 §Precedence, design §6 -> EP-M1 -> docs review; EP-M3 chain order tests
-roadmap 2.3.1 -> REQ-conflict-reporting -> ADR-0004 §Diagnostics -> EP-M3, EP-M5
-  -> tests/instruction-scope.property.test.mjs, tests/cli-instruction-scope.test.mjs
-design §6 trust rule -> REQ-trust, GAP-symlink, GAP-buffer -> EP-M4 -> tests/instruction-discovery.test.mjs
-REQ-bounds -> ADR-0004 §Bounds -> EP-M2 (allocation proof), EP-M4 (discovery cap)
-REQ-compat -> AGENTS.md stdout rule, ADR 0001 -> EP-M4, EP-M5 -> existing tests/cli.test.mjs suites unchanged, make workflow-check
-GAP-visibility -> EP-M5 -> tests/cli-instruction-scope.test.mjs
+roadmap 2.3.1 -> REQ-precedence -> ADR-0004 precedence, design §6 -> EP-M1
+roadmap 2.3.1 -> REQ-conflict-reporting -> ADR-0004 diagnostics -> EP-M3, EP-M4
+  -> tests/instruction-scope.test.mjs, tests/instruction-discovery.test.mjs
+REQ-trust, GAP-symlink, GAP-buffer, GAP-subdir -> EP-M4
+  -> tests/instruction-discovery.test.mjs, tests/cli.test.mjs
+REQ-trust, GAP-pi-context -> D10 -> EP-M4 -> tests/adapter-config.test.mjs
+REQ-bounds -> D7, D11 -> EP-M2 (selection proof), EP-M3, EP-M4
+REQ-compat -> EP-M4 -> existing tests/cli.test.mjs cases, make workflow-check
 ```
 
 ## Verification plan
 
 ### Abstract model
 
-A repository-relative path is a non-empty sequence of segments `s₁/…/sₙ/f`,
-each segment non-empty and neither `.` nor `..`. Its parent directory is the
-segment sequence `P(p) = ⟨s₁,…,sₙ⟩` (empty for a root-level file). A catalogue
-`C` is a finite set of instruction entries; each entry `e` has a directory
-`dir(e)` (a segment sequence, `⟨⟩` for the root) and a text length `len(e)` (a
-natural number after the per-file cap). By the Git axiom below, no two entries
-share a directory.
+A repository-relative path is a sequence of segments `s₁/…/sₙ/f`, each
+non-empty and neither `.` nor `..`. Its parent directory is `P(p) = ⟨s₁,…,sₙ⟩`
+(empty for a root-level file). A catalogue `C` is a finite list of instruction
+files with pairwise distinct directories `dir(e)` (the empty sequence for the
+root).
 
 - `isPrefix(d, q)` holds when `|d| ≤ |q|` and `d[i] = q[i]` for every
   `i < |d|`.
-- `chain(C, p)` is the sequence of entries `e ∈ C` with
-  `isPrefix(dir(e), P(p))`, sorted by `|dir(e)|` ascending.
-- `governing(C, p)` is the last element of `chain(C, p)` when non-empty.
-- `allocate(L, B)`, for chain lengths `L = ⟨l₀,…,lₖ⟩` in root-to-nearest
-  order and budget `B`, walks indices from `k` down to `0` keeping index `i`
-  when `lᵢ ≤ remaining` and subtracting `lᵢ`; it returns the kept indices in
-  ascending order.
+- `chain(C, p)` is the list of indices `i` with `isPrefix(dir(Cᵢ), P(p))`,
+  ordered by `|dir(Cᵢ)|` ascending.
+- `select(L, R, B)`, for lengths `L`, a ranking `R` (a list of distinct
+  indices into `L`), and budget `B ≥ 0`, returns the longest prefix `R[0..k)`
+  with `Σ L[R[j]] ≤ B` for `j < k`.
 
-Malformed paths (absolute, C-quoted, empty or dot segments) are rejected by the
-policy layer before the kernel is called and receive only the root entry plus an
-`unresolvable-path` diagnostic.
+Malformed paths (absolute, C-quoted, containing empty, `.`, or `..` segments,
+or backslashes) are rejected by the policy layer before the kernel runs; they
+receive the root chain only and are counted under `path-unresolvable`.
 
 ### Invariants and lemmas
 
-- `INV-sound` (`REQ-applicability`): every entry in `chain(C, p)` satisfies
-  `isPrefix(dir(e), P(p))`.
-- `INV-complete` (`REQ-applicability`): every `e ∈ C` with
-  `isPrefix(dir(e), P(p))` appears in `chain(C, p)`.
-- `INV-order` (`REQ-precedence`): directory depths in `chain(C, p)` are
-  strictly increasing, so the chain has no duplicates and its last element is
-  the nearest ancestor.
-- `INV-segment` (`REQ-applicability`): `isPrefix` compares whole segments;
-  `⟨packages, api⟩` is not a prefix of `⟨packages, api-client⟩`.
-- `INV-root` (`REQ-applicability`): if the root entry exists, it is the first
-  element of every chain.
-- `INV-locality`: adding an entry at directory `d` changes `chain(C, p)` only
-  for paths with `isPrefix(d, P(p))`, and for those it inserts exactly that
-  entry.
-- `INV-budget` (`REQ-bounds`): the kept lengths sum to at most `B`.
-- `INV-budget-nearest` (`REQ-bounds`): an index is dropped only if, at its
-  turn, its length exceeded the remaining budget; consequently, when every
-  `lᵢ ≤ B/2`, the two nearest entries are always kept.
-- `INV-budget-order`: kept indices are a strictly increasing subsequence of
-  the chain indices, preserving root-to-nearest rendering order.
+- `INV-sound` (`REQ-applicability`): every index in `chain(C, p)` refers to an
+  entry whose directory is a prefix of `P(p)`.
+- `INV-complete` (`REQ-applicability`): every entry whose directory is a
+  prefix of `P(p)` appears in `chain(C, p)`.
+- `INV-order` (`REQ-precedence`): directory depths along `chain(C, p)` are
+  strictly increasing, so there are no duplicates and the last index is the
+  nearest ancestor.
+- `INV-segment`: `isPrefix` compares whole segments; `⟨packages, api⟩` is not
+  a prefix of `⟨packages, api-client⟩`.
+- `INV-root`: if the root entry exists, it is first in every chain.
+- `INV-locality`: adding an entry at `d` changes `chain(C, p)` only when
+  `isPrefix(d, P(p))`, and then inserts exactly that entry.
+- `INV-select-fit` (`REQ-bounds`): the selected lengths sum to at most `B`.
+- `INV-select-prefix` (`REQ-bounds`): the result is a prefix of `R`, so for a
+  nearest-first ranking of one chain the kept files are a contiguous nearest
+  run and no farther file is kept while a nearer one is dropped.
+- `INV-select-maximal`: if the result is shorter than `R`, adding the next
+  ranked length would exceed `B`.
 - `INV-trust` (`REQ-trust`): instruction text equals the blob at the trusted
-  commit; working-tree and reviewed-head edits never change it.
+  commit; working-tree and head edits never change it; pi agents receive no
+  context file from their working copy.
 - `INV-diagnostic` (`REQ-conflict-reporting`): each skipped, ignored,
-  truncated, budget-dropped, changed-in-range, or unresolvable item yields
-  exactly one diagnostic with its code and repository-relative path, and
+  truncated, changed-in-range, scope-changed, or unresolvable item yields
+  exactly one diagnostic (or one count for `path-unresolvable`), and
   diagnostics are sorted by `(code, path)`.
 - `INV-determinism`: the policy result is identical under any permutation of
-  the catalogue entries and of the changed paths.
-- `INV-compat` (`REQ-compat`): for a repository whose only instruction file
-  is the root `AGENTS.md`, the workflow arguments are byte-identical to the
-  baseline.
-- `L-chain-from-filter`: `chain` equals the depth-sorted filter of `C` by
-  `isPrefix`; this connects the loop implementation to `INV-sound`,
+  the tree entries and the changed paths.
+- `INV-fail-closed`: every Git failure during trusted instruction loading
+  ends the run with exit status 1 and a `stage: "cli"` error carrying the
+  existing prefixes; no Git failure becomes a diagnostic.
+- `INV-compat` (`REQ-compat`): for a repository whose only instruction file is
+  a regular root `AGENTS.md` and whose `--repo-root` is the top level, the
+  workflow arguments are byte-identical to the baseline.
+- `L-chain-filter`: the loop in `applicableIndices` equals the depth-sorted
+  filter of `isPrefix`; it connects the implementation to `INV-sound`,
   `INV-complete`, and `INV-order`.
-- `L-allocate-spec`: the loop implementation of `allocate` equals the
-  recursive specification above; this connects it to the budget invariants.
+- `L-select-spec`: the loop in `selectWithinBudget` equals the recursive
+  specification of `select`; it connects the implementation to the selection
+  invariants.
 
 ### Axioms (trusted, not verified here)
 
-- `AXIOM-git-tree`: `git ls-tree -r -z -l <commit>` prints one record per
-  blob as `<mode> SP <type> SP <object> SP+ <size> TAB <path> NUL`, with
-  `/`-separated paths, no empty, `.`, or `..` segments, and at most one entry
-  per name in a directory (Git's tree format and `fsck` rules). Boundary:
-  `scripts/instruction-discovery.mjs` parser; exercised by integration tests
-  against real repositories.
-- `AXIOM-git-blob`: `git cat-file blob <object>` returns the exact blob
-  bytes. Boundary: discovery adapter.
-- `AXIOM-lemmascript-model`: LemmaScript at the pinned version translates the
-  kernel's supported fragment faithfully (arrays as sequences, `number` as
-  mathematical integers). Boundary: kernel module; mitigated by `fast-check`
-  running the same functions at runtime.
-- `AXIOM-dafny`: Dafny 4.11.0 and Z3 are sound. Boundary: `make proofs`.
-- `AXIOM-js-length`: `String.prototype.length` counts UTF-16 code units, and
-  `slice(0, n)` keeps the first `n` code units. Boundary: per-file cap.
+- `AXIOM-git-tree`: `git ls-tree -z` prints
+  `<mode> SP <type> SP <oid> TAB <path> NUL` per entry with `/`-separated paths
+  free of empty, `.`, and `..` segments, and a tree holds at most one entry per
+  name. With `--literal-pathspecs`, `--full-tree`, and a `dir/` pathspec it
+  lists that directory's entries non-recursively. Boundary: the adapter parser;
+  exercised by integration tests on real repositories.
+- `AXIOM-git-batch`: `git cat-file --batch` answers each object id with
+  `<oid> SP <type> SP <size> LF <bytes> LF`, or `<oid> SP missing LF`.
+  Boundary: the adapter.
+- `AXIOM-git-diff`: `git diff --no-renames --name-only -z A B` lists every path
+  whose blob differs between trees `A` and `B`, including both sides of a
+  rename. Boundary: the adapter's range query.
+- `AXIOM-pi-flag`: `pi --no-context-files` disables `AGENTS.md` and `CLAUDE.md`
+  discovery and loading (documented in `pi --help`). Boundary:
+  `odw.config.json`; Dakar cannot run a live canary in tests without spending
+  on a model call, so the command shape is guarded instead.
+- `AXIOM-lemmascript-model`: LemmaScript translates the kernel's fragment
+  faithfully (arrays as sequences, `number` as mathematical integers).
+  Mitigated by `fast-check` running the same shipped functions.
+- `AXIOM-dafny`: Dafny 4.11.0 and its bundled Z3 are sound.
+- `AXIOM-js-length`: `String.prototype.length` counts UTF-16 code units and
+  `slice(0, n)` keeps the first `n`. Boundary: per-file truncation.
 
 ### Methods per obligation
 
 - Obligation: `INV-sound`, `INV-complete`, `INV-order`, `INV-root`,
-  `INV-segment`, `L-chain-from-filter`. Method: formal proof (LemmaScript to
-  Dafny) plus a table test and a `fast-check` property against an independent
-  oracle. Rationale: these are the contractual core of 2.3.1; they must hold
-  for all inputs, and they sit inside the LemmaScript fragment. Domain: all
-  segment sequences and catalogues of distinct directories. Artefact:
-  `src/workflows/dakar-review/instruction-scope-kernel.ts` (`//@ verify`
-  annotations), `src/workflows/dakar-review/instruction-scope-kernel.dfy`
-  (helper lemmas only), `tests/instruction-scope-kernel.test.mjs`. Evidence:
-  `make proofs` reports every obligation verified with zero errors; before
-  helper lemmas are written it reports open postconditions. The table test
-  fails red with "Cannot find module" before the module exists. Discharge:
-  Dafny verification succeeds with no `assume`, no `{:axiom}` other than those
-  LemmaScript emits for declared externs (there should be none), and the `.dfy`
-  diff over `.dfy.gen` is additions only. Non-vacuity: the proof's
-  preconditions (distinct directories) are satisfied by the table witnesses
-  `⟨⟩`, `⟨packages⟩`, `⟨packages, api⟩`; a seeded fault that replaces the
-  segment comparison with a string-prefix test on joined paths, and a second
-  that uses `<` instead of `≤` on lengths, must each make `make proofs` fail on
-  the soundness or completeness postcondition and make the property test fail
-  with a shrunk counterexample such as `packages/api` against
-  `packages/api-client/x.ts`. Revert each fault with `git checkout --` on the
-  kernel file and delete any regenerated `.dfy.gen` difference.
-- Obligation: `INV-budget`, `INV-budget-nearest`, `INV-budget-order`,
-  `L-allocate-spec`. Method: formal proof plus a `fast-check` property
-  comparing against an independent oracle that enumerates the specification
-  directly. Rationale: allocation decides which instructions survive; it is
-  contractual and integer-only. Domain: arrays of natural numbers of length 0
-  to 64, budgets 0 to 200,000. Artefact: same kernel module and proof file;
-  `tests/instruction-scope.property.test.mjs`. Evidence: as above. Non-vacuity:
-  `fc.statistics` classification must show generated cases with no drops, some
-  drops, and all dropped; a seeded fault that allocates root first must fail
-  `INV-budget-nearest`.
-- Obligation: `INV-locality`, `INV-determinism`, `INV-diagnostic`.
-  Method: `fast-check` properties over generated trees and changed-path sets,
-  with an oracle that recomputes chains by brute-force string splitting written
-  independently in the test file. Rationale: these involve splitting, sorting,
-  and maps outside the LemmaScript fragment. Domain: trees of up to 6 levels
-  and 40 directories drawn from a small segment alphabet (`a`, `b`, `ab`,
-  `a-b`) so that prefix-collision cases occur often; changed paths up to 60.
-  Artefact: `tests/instruction-scope.property.test.mjs`. Evidence:
-  `node --test tests/instruction-scope.property.test.mjs` passes with recorded
-  seeds; failures print the seed and path for replay. Non-vacuity: classify and
-  require (via `fc.statistics` thresholds checked in the test) at least 10% of
-  runs with a nested chain of length at least 3 and at least 10% containing a
-  near-miss sibling such as `a` and `ab`; a seeded fault that forgets to sort
-  diagnostics must fail determinism.
-- Obligation: `INV-trust`, `GAP-symlink`, `GAP-buffer`, discovery cap.
-  Method: integration tests against real temporary Git repositories. Rationale:
-  the behaviour depends on Git's real output (`AXIOM-git-tree`). Artefact:
-  `tests/instruction-discovery.test.mjs`. Evidence: red first for symlink and
-  oversized cases against the old root reader (the oversized test documents
-  whether `ENOBUFS` actually occurred); green after the adapter lands.
-  Non-vacuity: the trust test commits different text at base and head and edits
-  the working tree, then asserts the base text; the test fails if the adapter
-  reads `HEAD`.
-- Obligation: `INV-compat`, `GAP-visibility`, stdout contract.
-  Method: CLI end-to-end tests with the fake ODW helper. Artefact: existing
-  `tests/cli.test.mjs` suites unchanged, new
-  `tests/cli-instruction-scope.test.mjs`. Evidence: existing suites pass
-  without modification; new suites assert stdout parses as one JSON value and
-  stderr contains exactly one `instruction_scope` summary event.
+  `INV-segment`, `L-chain-filter`. Method: formal proof (LemmaScript to Dafny),
+  a table test, and a `fast-check` property against an independent oracle.
+  Rationale: this is the contract 2.3.1 exists to define, it holds for all
+  inputs, and it fits the LemmaScript fragment. The proof's real value over
+  testing is the universally quantified segment-boundary guarantee. Domain: all
+  segment sequences; catalogues with distinct directories. Artefact:
+  `src/workflows/dakar-review/instruction-scope-kernel.ts` with `//@ verify`
+  annotations; `src/workflows/dakar-review/instruction-scope-kernel.dfy`
+  (helper lemmas only); `tests/instruction-scope-kernel.test.mjs`. Evidence:
+  `make proofs` reports zero errors; before the helper lemmas exist it reports
+  the open postconditions by name. Discharge: verification succeeds with no
+  `//@ assume`, no `{:axiom}`, and a `.dfy` diff over `.dfy.gen` that only adds
+  lines; the CI freshness check finds no difference between regenerated and
+  committed `.dfy.gen` files. Non-vacuity: the witnesses `⟨⟩`, `⟨packages⟩`, and
+  `⟨packages, api⟩` satisfy the distinctness precondition, and each produces a
+  non-empty chain for `packages/api/src/routes.ts`. Seeded fault A replaces the
+  element-wise comparison with a comparison of joined strings
+  (`prefix.join('/')` against the start of `path.join('/')`); fault B compares
+  lengths with `<` instead of `≤`. `EP-M0` first confirms that each fault
+  translates; then `make proofs` must fail naming `INV-segment` or
+  `INV-complete`, and the property test must shrink to a counterexample such as
+  `packages/api` against `packages/api-client/x.ts` (fault A) or the root file
+  at depth zero (fault B). Revert with `git checkout --` on the kernel and
+  restore the `.dfy.gen` file.
+- Obligation: `INV-select-fit`, `INV-select-prefix`, `INV-select-maximal`,
+  `L-select-spec`. Method: formal proof and a `fast-check` property comparing
+  with an oracle that computes running prefix sums directly. Domain: length
+  arrays of 0 to 64 natural numbers, rankings that are permutations of index
+  subsets, budgets 0 to 200,000. Artefact: the same kernel and proof files;
+  `tests/instruction-scope.property.test.mjs`. Non-vacuity: `fc.statistics`
+  must report cases with nothing dropped, some dropped, and everything dropped,
+  each above 10%; seeded fault C (skip a non-fitting file and continue, the
+  draft's greedy rule) must fail `INV-select-prefix` with a named postcondition
+  and a shrunk counterexample such as lengths `[1, 5, 23, 24]`, ranking
+  `[3, 2, 1, 0]`, budget 48.
+- Obligation: `INV-locality`, `INV-determinism`, `INV-diagnostic`,
+  malformed-path handling, rename scope changes. Method: `fast-check`
+  properties over generated trees and change sets, with an oracle in the test
+  file that recomputes chains by brute-force string splitting and does not
+  import the kernel. Domain: trees up to six levels and 40 directories over the
+  segment alphabet `a`, `b`, `ab`, `a-b`, `A` (so near-miss siblings and case
+  variants occur often), and up to 60 changed paths, renames, and malformed
+  paths. Artefact: `tests/instruction-scope.property.test.mjs` and the table
+  tests in `tests/instruction-scope.test.mjs`. Non-vacuity: classification
+  thresholds checked in the test (at least 10% of runs with a chain of length
+  three or more, at least 10% with a near-miss sibling, at least 5% with a
+  rename across scopes); seeded fault D (do not sort diagnostics) must fail
+  determinism.
+- Obligation: `INV-trust`, `INV-fail-closed`, `GAP-symlink`, `GAP-buffer`,
+  `GAP-subdir`, D7 discovery, D8 range changes. Method: integration tests on
+  real temporary Git repositories, plus the existing fake-`git`
+  failure-injection pattern. Artefact: `tests/instruction-discovery.test.mjs`
+  and `tests/cli.test.mjs`. Non-vacuity: the trust test commits different text
+  at base and head and edits the working tree, then asserts the base text, so
+  it fails if the adapter reads `HEAD` or the file system; the range test
+  renames `packages/api/AGENTS.md` and asserts a diagnostic for the source
+  path, so it fails if renames are detected.
+- Obligation: `INV-trust` for the agent runtime (`GAP-pi-context`).
+  Method: a configuration guard test (live canary excluded by `AXIOM-pi-flag`).
+  Artefact: `tests/adapter-config.test.mjs` asserts every adapter whose command
+  starts with `pi` contains `--no-context-files`. Non-vacuity: the test fails
+  on the current `odw.config.json`.
+- Obligation: `INV-compat`.
+  Method: the existing CLI suites, unchanged except the deliberate edits named
+  in `EP-M4`, plus `make workflow-check` proving the workflow artefact is
+  unchanged.
 
 ### Formal verification decision
 
-A formal proof is proportionate for the kernel because applicability and
-retention are the contract this roadmap item exists to define, they are pure
-integer and sequence computations, and an error would silently give the wrong
-instructions to a reviewer. LemmaScript keeps the proof attached to the shipped
-TypeScript rather than to a parallel model. Model checking adds nothing here:
-there is no concurrency or protocol state. The proof does not cover string
-normalization, Git parsing, or stderr formatting; those are covered by property
-and integration tests and the axioms above. Recorded as D9.
+A formal proof is proportionate for the kernel: applicability and budget
+selection are the contract this item defines, they are pure computations over
+sequences and integers, and an error would silently give a reviewer the wrong
+instructions in every run. LemmaScript keeps the proof attached to the shipped
+TypeScript. Model checking adds nothing, because there is no concurrency or
+protocol state. The proof does not cover path parsing, Git parsing, or
+diagnostic assembly; property tests, integration tests, and the axioms above
+cover those. Recorded as D9.
 
 ### Suggested BDD features
 
-The repository has no BDD runner and this plan does not add one. The following
-proposed scenarios are exercised by named `node:test` cases in
-`tests/cli-instruction-scope.test.mjs` (`EP-M5`) and
-`tests/instruction-scope.test.mjs` (`EP-M3`); the feature text lives only in
-this plan.
+The repository has no BDD runner and this plan adds none. These proposed
+scenarios are implemented as named `node:test` cases in
+`tests/instruction-discovery.test.mjs` (`EP-M4`), which drive the adapter and
+policy against real repositories, and the symbolic-link scenario is also a CLI
+case in `tests/cli.test.mjs`.
 
 ```gherkin
 Feature: Nested AGENTS.md instruction scope
-  Scenario: Nested instructions apply to files beneath their directory
+  Scenario: Nested instructions apply beneath their directory
     Given a trusted base with AGENTS.md and packages/api/AGENTS.md
-    And a review range that changes packages/api/src/routes.ts
-    When dakar-review prepares the review
-    Then stderr reports the chain AGENTS.md, packages/api/AGENTS.md for one changed path
-    And stdout contains exactly one JSON result
+    And a change to packages/api/src/routes.ts
+    When the instruction scope is discovered
+    Then the chain for that path is AGENTS.md, packages/api/AGENTS.md
 
   Scenario: Sibling directories with a shared prefix do not inherit
     Given a trusted base with packages/api/AGENTS.md
-    And a review range that changes packages/api-client/index.ts
-    Then the reported chain for that path is AGENTS.md only
+    And a change to packages/api-client/index.ts
+    Then the chain for that path is AGENTS.md only
 
-  Scenario: An instruction file changed in the range is not obeyed
-    Given packages/api/AGENTS.md differs between the base and the reviewed head
-    When dakar-review prepares the review
-    Then stderr reports instruction-changed-in-range for packages/api/AGENTS.md
-    And the applied text is the base version
+  Scenario: An instruction file changed by the review is not obeyed
+    Given packages/api/AGENTS.md differs between the trusted base and the head
+    When the instruction scope is discovered
+    Then the applied text is the trusted-base version
+    And a range-instruction-changed warning names packages/api/AGENTS.md
+
+  Scenario: Moving code out of a scope is reported
+    Given a trusted base with packages/crypto/AGENTS.md
+    And a change that renames packages/crypto/sign.ts to crypto-v2/sign.ts
+    Then a path-scope-changed warning names crypto-v2/sign.ts
 
   Scenario: A symbolic link named AGENTS.md is skipped
     Given the trusted base commits AGENTS.md as a symbolic link
     When dakar-review runs
-    Then stderr reports instruction-symlink-skipped for AGENTS.md
-    And the workflow arguments contain no agentInstructions
-
-  Scenario: Case variants are reported, not loaded
-    Given the trusted base contains packages/web/agents.md
-    Then stderr reports case-variant-ignored for packages/web/agents.md
+    Then the workflow arguments contain no agentInstructions
+    And stderr warns that AGENTS.md was skipped as a symbolic link
 ```
 
-Links: scenarios 1 and 2 trace to `REQ-applicability` and `EP-M5`; 3 to
-`REQ-trust` and `EP-M4`/`EP-M5`; 4 to `GAP-symlink` and `EP-M4`; 5 to
-`REQ-conflict-reporting` and `EP-M3`.
+Links: scenarios 1 and 2 trace to `REQ-applicability`; 3 to `REQ-trust` and D8;
+4 to D4; 5 to `GAP-symlink`. All belong to `EP-M4`.
 
 ## Plan of work
 
-### `EP-M0` LemmaScript feasibility probe (prototype)
+### `EP-M0` feasibility probes (prototype)
 
-Question: can the pinned LemmaScript release, with Dafny 4.11.0, verify a
-nested loop over `string[][]` with a segment-prefix predicate and a
-nearest-first allocation loop, written in a style that also passes this
-repository's `tsc`, Oxlint, and TypeDoc gates? Work in a scratch directory
-outside the repository (for example `/tmp/dakar-lsc-probe`), copying
-`tsconfig.json`. Write a 40-line `probe.ts` with `isPrefix` and `allocate`
-annotated as in `Interfaces and dependencies`, then run
-`npx --yes --package=lemmascript@<version> -- lsc check --backend=dafny probe.ts`.
-Choose `<version>` as the latest release that passes; start with 0.6.10. Go:
-both functions verify (adding helper lemmas in `probe.dfy` is allowed). No-go:
-the tool rejects the fragment; then escalate with the error text and the
-alternatives (a Dafny model maintained beside the code with a `fast-check`
-conformance test, or dropping the proof). Record the transcript in
-`Artefacts and notes`; delete the scratch directory afterwards. Nothing is
-committed in this milestone except plan updates.
+Three questions, each answered in a scratch directory outside the repository
+(for example `/tmp/dakar-probe-<name>`), deleted afterwards. Nothing but plan
+updates is committed.
+
+1. LemmaScript. Create a scratch `proofs/`-style package with
+   `"lemmascript": "0.6.10"` and run `npm install --ignore-scripts`; record the
+   number of resolved packages (`npm ls --all --parseable | wc -l`). Write a
+   60-line `probe.ts` containing `isSegmentPrefix`, `applicableIndices`, and
+   `selectWithinBudget` annotated as in `Interfaces and dependencies`, and run
+   `npx lsc check --backend=dafny probe.ts`. Then apply seeded faults A, B, and
+   C one at a time and confirm each fails with a named postcondition, not a
+   translation error. Go: all three verify and all faults fail as intended.
+   No-go: escalate with the transcript and the alternatives (a Dafny model
+   beside the code plus a `fast-check` conformance test, or proof of
+   `isSegmentPrefix` only).
+2. Git. Re-run the planning probe (see `Artefacts and notes`) with an
+   additional SHA-256 repository (`git init --object-format=sha256`) and a
+   directory name containing a space and non-ASCII letters, confirming the `-z`
+   parse and `cat-file --batch` framing.
+3. Dafny in CI. Record the release archive URL for Dafny 4.11.0 on
+   `ubuntu-latest` (x64) and its SHA-256, computed after download.
 
 ### `EP-M1` design recorded
 
-Assigned: `REQ-applicability`, `REQ-precedence`, `REQ-conflict-reporting`,
-`REQ-trust`, `REQ-bounds`; decisions D1 and D3 to D8.
+Assigned: all requirements at the design level; decisions D1 and D3 to D13.
 
-Create `docs/adrs/adr-0004-scope-nested-agents-instructions.md` in the house
-ADR format
-(`# Architectural decision record (ADR) 0004: Scope nested
-AGENTS.md instructions by directory ancestry`;
-sections Status, Date, Context and problem statement, Decision drivers,
-Options considered, Decision outcome, Consequences, Known risks and
-limitations, References). Options considered: root only (status quo); nearest
-file only (no inheritance); full root-to-nearest chain with nearest-wins
-precedence (chosen); glob-scoped front matter as in Claude Code rules (rejected
-for v1: new syntax, no portability). The decision outcome states D3 to D8
-normatively with the diagnostic code table, and a Mermaid flowchart (with a
-screen-reader sentence and caption) of discovery, scoping, and reporting.
-Status is `Proposed` until the user approves this plan, then `Accepted`.
+Create `docs/adrs/adr-0004-scope-nested-agents-instructions.md` with the heading
+`# Architectural decision record (ADR) 0004: Scope nested AGENTS.md
+instructions by directory ancestry`,
+status `Accepted` with the approval date (D13), and sections Context and
+problem statement (opening with the two-sense reading of "conflicts"), Decision
+drivers, Options considered (root only; nearest file only; root-to-nearest
+chain with nearest-wins precedence, chosen; glob-scoped instruction rules;
+desugaring into `path_instructions`, the review panel's strongest alternative,
+rejected for 2.3.1 because it merges 2.3.1 with 2.3.2 and makes precedence
+implicit), Decision outcome (D3 to D8, D10, D11, the diagnostic table with
+codes, severities, SARIF rule ids, and user actions, and a Mermaid flowchart
+with a screen-reader sentence and caption), Consequences (the 2.3.2 contract:
+result-JSON reporting beside `ignoredPolicyKeys`, SARIF
+`toolExecutionNotifications`, pack budgeting, the argument-transport ceiling),
+Known risks and limitations (the double `--base` resolution, quoted changed
+paths, warm-up divergence, gate configuration read from `prepared.reviewBase`,
+the reversal of the 2026-07-14 Dafny decision), and References.
 
-Rewrite `docs/dakar-review-design.md` §6's final paragraph into a subsection
-"Instruction discovery and precedence" that summarizes the ADR rules, keeps the
-root rule, and names the 2.3.1 reporting surface (stderr) and the 2.3.2
-consumer. Add the terms "instruction file", "instruction chain", "governing
-instruction file", "trusted instruction commit", and "instruction diagnostic"
-to §3. Add the invariants `INV-sound`, `INV-complete`, `INV-order`,
-`INV-trust`, and `INV-budget-nearest` to §12 in prose. Update §2's goal "Use
-CodeRabbit YAML and root `AGENTS.md`" to mention nested discovery. Add the ADR
-to `docs/contents.md` and to the design document's front matter.
+In `docs/dakar-review-design.md`: update §2's goal to mention nested discovery;
+add the terms "instruction file", "instruction chain", "governing instruction
+file", "trusted instruction commit", and "instruction diagnostic" to §3; add an
+"Load trusted instructions" step to the §4 flowchart and prose; replace §6's
+final paragraph with a subsection "Instruction discovery and precedence" that
+summarizes ADR 0004; add Git-failure and per-file-anomaly behaviour to §11; and
+add `INV-sound`, `INV-segment`, `INV-select-prefix`, `INV-trust`, and
+`INV-fail-closed` in prose to §12. Add ADR 0004 to the design document's front
+matter and to `docs/contents.md`, and add this plan to the "Execution plans"
+list there.
 
-Validation: `make check-fmt`, `make lint` (spelling, markdownlint, nixie,
-docs-check), `make typecheck`, `make test`, all passing; no code changes.
-Commit: "Record the nested AGENTS.md scoping design (ADR 0004)".
+Validation: `make fmt` then all gates. Commit: "Record the nested AGENTS.md
+scoping design (ADR 0004)".
 
-### `EP-M2` ancestry and budget kernel with proof
+### `EP-M2` proved kernel and proof tooling
 
 Assigned: `INV-sound`, `INV-complete`, `INV-order`, `INV-root`, `INV-segment`,
-`INV-budget*`, `L-chain-from-filter`, `L-allocate-spec`; decision D9.
+`INV-select-*`, `L-chain-filter`, `L-select-spec`; D9, D11.
 
-Red: add `tests/instruction-scope-kernel.test.mjs` with table tests for
-`isSegmentPrefix`, `applicableIndices`, and `allocateNearestFirst` (witnesses:
-root only; `packages` and `packages/api`; the near-miss `packages/api` against
-`packages/api-client`; equal depth siblings; empty catalogue; budget exactly
-equal to a length; zero budget). Run
-`node --test tests/instruction-scope-kernel.test.mjs`; expect failure because
-the module does not exist.
+Red: add `tests/instruction-scope-kernel.test.mjs` with table tests (root only;
+`packages` and `packages/api`; the near-miss `packages/api` against
+`packages/api-client`; equal-depth siblings; empty catalogue; a budget exactly
+equal to a length; zero budget; an empty ranking). Run
+`node --test tests/instruction-scope-kernel.test.mjs`; it must fail with
+"Cannot find module".
 
 Green: add `src/workflows/dakar-review/instruction-scope-kernel.ts` with the
-three functions over `readonly (readonly string[])[]`, `readonly string[]`, and
+three functions over `readonly string[]`, `readonly (readonly string[])[]`, and
 `readonly number[]`, using `while` loops with `//@ invariant` and
-`//@ decreases` annotations and `//@ ensures` postconditions expressing the
-invariants. Add `lemmascript` at the exact version chosen in `EP-M0` to
-`devDependencies`, run `npm install`, add `LemmaScript-files.txt` listing the
-kernel, and add a Makefile target:
+`//@ decreases`, and `//@ ensures` clauses that state the invariants. Create
+`proofs/package.json` (`"private": true`, `"lemmascript": "<EP-M0 version>"`)
+and its lockfile with `npm install --ignore-scripts --prefix proofs`; add
+`proofs/node_modules/` to `.gitignore` if the existing `node_modules/` rule
+does not already cover it. Add `LemmaScript-files.txt` (one line naming the
+kernel; this is the list `lsc`-based checks read). Add Makefile targets:
 
 ```make
-proofs:
-	@npx lsc check --backend=dafny src/workflows/dakar-review/instruction-scope-kernel.ts
+proofs: proofs/node_modules
+	@cd proofs && npx lsc check --backend=dafny ../src/workflows/dakar-review/instruction-scope-kernel.ts
+
+proofs/node_modules: proofs/package-lock.json
+	@npm ci --ignore-scripts --prefix proofs
 ```
 
-(add `proofs` to `.PHONY`; keep it out of `check` so hosts without Dafny can
-still run the main gate). Run `npx lsc gen --backend=dafny …`, commit the
-generated `.dfy.gen`, and add helper lemmas only in the `.dfy`. Run
-`make proofs` until verified. Add property tests for the budget obligations in
-`tests/instruction-scope.property.test.mjs` with an independent oracle.
+and make `check` call a `proofs-if-available` target that runs `proofs` when
+`dafny --version` starts with `4.11.0` and otherwise prints
+`proofs skipped: Dafny 4.11.0 not found`. Generate artefacts with
+`npx lsc gen --backend=dafny` (once only; later always `lsc regen`, which
+three-way merges and keeps proof work). `lsc gen` writes two files beside the
+source: `instruction-scope-kernel.dfy.gen`, which is always regenerated and
+never edited, and `instruction-scope-kernel.dfy`, which is the source of truth
+where helper lemmas go and which may only add lines to the `.gen` file. Write
+helper lemmas until `make proofs` passes. Add the budget-selection properties to
+`tests/instruction-scope.property.test.mjs`.
 
-Refactor: keep each function under Biome's complexity threshold and free of
-Oxlint findings; confirm the `.dfy` diff over `.dfy.gen` is additions only; run
-the seeded faults in the verification plan and record their rejection.
+Add a `proofs` job to `.github/workflows/ci.yml`: check out, set up Node,
+download the Dafny 4.11.0 archive recorded in `EP-M0`, verify its SHA-256, put
+it on `PATH`, run `make proofs`, then regenerate `.dfy.gen` into a temporary
+copy and fail if it differs from the committed file.
 
-Validation: `make check-fmt`, `make typecheck`, `make lint`, `make test`,
-`make proofs`. Commit: "Add the proved instruction-scope kernel".
+Refactor: keep functions small and lint-clean; run seeded faults A, B, and C
+and record each rejection in `Artefacts and notes`; revert them.
 
-### `EP-M3` instruction-scope policy
+Validation: all gates plus `make proofs`. Commit: "Add the proved
+instruction-scope kernel".
 
-Assigned: `REQ-precedence`, `REQ-conflict-reporting`, `INV-locality`,
-`INV-determinism`, `INV-diagnostic`, malformed-path handling.
+### `EP-M3` pure instruction-scope policy
 
-Red: add `tests/instruction-scope.test.mjs` with named cases for each
-diagnostic code, malformed paths, the example in `Purpose / big picture`,
-changed-in-range handling, the discovery cap ordering, and per-file truncation;
-extend `tests/instruction-scope.property.test.mjs` with the locality,
-determinism, and diagnostic properties. Expect "Cannot find module".
+Assigned: `REQ-precedence` (ordering only), `REQ-conflict-reporting`,
+`INV-locality`, `INV-determinism`, `INV-diagnostic`, D3, D4, D6, D8 (policy
+side).
+
+Red: add `tests/instruction-scope.test.mjs` with named cases for every
+diagnostic code, malformed paths, the `Purpose / big picture` example, renames
+across scopes, a deleted path, a changed instruction file, per-file truncation
+at exactly 24,000 and 24,001 code units, and invalid UTF-8 replacement; extend
+the property suite with locality, determinism, and diagnostic properties.
+Expect "Cannot find module".
 
 Green: add `src/workflows/dakar-review/instruction-scope.ts` exporting the
-types and functions in `Interfaces and dependencies`. It splits paths into
-segments, validates them, builds a catalogue from discovered entries (applying
-the per-file cap and the discovery cap, and classifying skipped entries), calls
-the kernel for each changed path, groups paths that share an identical chain,
-applies the chain budget per group, and returns a frozen
-`InstructionScopeReport` with diagnostics sorted by code then path. Use a
-lookup table from diagnostic code to severity rather than a branching ladder.
-Sort with code-unit comparison, never `localeCompare`.
+types and functions in `Interfaces and dependencies`. Split and validate paths;
+classify tree entries with a lookup table from (name match, mode) to outcome;
+build the catalogue; compute chains through the kernel; group paths by
+identical chain; emit diagnostics sorted by code then path with code-unit
+comparison (never `localeCompare`); and freeze the result.
 
-Refactor and validate as before, including `make proofs`. Commit: "Add the
-instruction-scope policy and diagnostics".
+Validation: all gates plus `make proofs`. Commit: "Add the instruction-scope
+policy and diagnostics".
 
-### `EP-M4` trusted Git discovery adapter
+### `EP-M4` trusted Git discovery, root loading, and pi context fix
 
-Assigned: `REQ-trust`, `GAP-symlink`, `GAP-buffer`, `INV-compat`.
+Assigned: `REQ-trust`, `INV-fail-closed`, `GAP-symlink`, `GAP-buffer`,
+`GAP-subdir`, `GAP-pi-context`, D7, D8 (adapter side), D10, `INV-compat`.
 
-Red: add `tests/instruction-discovery.test.mjs` that builds temporary Git
-repositories (reuse `initFixtureRepo` from `tests/cli-test-support.mjs`)
-covering: nested files; a symbolic link named `AGENTS.md` at the root and
-nested; an executable `AGENTS.md` (mode `100755`, accepted); a case variant; a
-root file larger than 1 MiB; base-versus-head-versus-working-tree trust; more
-than 64 instruction files; a missing base ref; a path containing a space and a
-non-ASCII character. Add one red case to `tests/cli.test.mjs` only for the
-symlink and oversized root behaviour, because those deliberately change.
+Red:
+
+1. Add `tests/instruction-discovery.test.mjs`, building temporary
+   repositories with `initFixtureRepo`, covering the five BDD scenarios plus:
+   an executable `AGENTS.md` (accepted); a tree entry named `AGENTS.md` that is
+   a directory; a root file over 1 MiB and one over 4 MiB; a directory name with
+   `[`, a space, and non-ASCII letters; a SHA-256 repository; a `--repo-root`
+   subdirectory; and Git failures in each of `rev-parse`, `ls-tree`,
+   `cat-file`, and `diff`, each of which must throw with the expected prefix.
+2. In `tests/cli.test.mjs`, add red cases for the symbolic-link root and the
+   oversized root, and update "CLI preserves trusted-instruction Git failure
+   diagnostics" so its fake `git` injects failures in `ls-tree` and `cat-file`
+   (asserting the fallbacks `git ls-tree failed` and `git cat-file failed` and
+   the unchanged prefixes); this is a deliberate test change because the read
+   command changes.
+3. In `tests/adapter-config.test.mjs`, assert that every pi adapter command
+   contains `--no-context-files`.
+4. In `tests/cli-bundle.test.mjs`, assert that the generated bundle contains
+   no import of a `.ts` file.
 
 Green: add `scripts/instruction-discovery.mjs` with
-`createGitTreeReader(repoRoot)` (the driven adapter: `resolveCommit`,
-`listInstructionCandidates`, `readBlob`, using `spawnSync` with explicit
-`maxBuffer` values and `-z` output) and
-`discoverInstructionCatalogue(reader, baseRef, options)` (the application
-service that resolves the commit, lists candidates with
-`git ls-tree -r -z -l --full-tree <commit>`, reads accepted blobs, and calls
-the policy's catalogue builder). Replace the body of `readAgentInstructions()`
-in `bin/dakar-review.mjs` with a call that takes the root entry from the
-catalogue, preserving its error prefixes and the
-`{ source, content, truncated }` shape. Add the new script to `NODE_MODULES` in
-the Makefile and to `EXTERNAL_MODULES` in `scripts/build-cli.mjs` only if the
-existing scripts pattern requires it (follow how `scripts/review-config.mjs` is
-treated); rebuild the bundle with `make workflow-build`.
+`createGitReader(repoRoot, { timeoutMs })` (the driven adapter, a plain object
+of functions using `spawnSync` with explicit `maxBuffer` values, `timeout`,
+`-z`, `--literal-pathspecs`, and `--full-tree`),
+`loadRootInstructions(reader, baseRef)`, and
+`discoverInstructionScope(reader, { baseRef, headRef, changedPaths })`. Replace
+the body of `readAgentInstructions()` with a call to `loadRootInstructions()`,
+keep its return shape, and print one stderr warning line per root diagnostic,
+for example
+`dakar-review: AGENTS.md at <sha> is a symbolic link; repository instructions
+skipped`.
+Add the new script to `NODE_MODULES` in the Makefile; do not add it to
+`EXTERNAL_MODULES`. Add `--no-context-files` to the five pi adapters in
+`odw.config.json`. Rebuild with `make workflow-build`.
 
-Validation: all existing `tests/cli.test.mjs` cases pass unchanged except the
-two deliberately changed behaviours; full gates and `make proofs`. Commit:
-"Discover AGENTS.md files from the trusted base".
+Validation: all gates plus `make proofs`; every pre-existing
+`tests/cli.test.mjs` case passes unchanged except the failure-injection test
+edited above. Commit in two parts: "Discover AGENTS.md files from the trusted
+base" and "Stop pi agents loading untrusted context files".
 
-### `EP-M5` CLI stderr scope report
+### `EP-M5` documentation and roadmap closure
 
-Assigned: `GAP-visibility`, `REQ-conflict-reporting`, BDD scenarios.
-
-Red: add `tests/cli-instruction-scope.test.mjs` implementing the five
-scenarios, using a fake ODW that echoes prepared arguments, asserting the stderr
-`instruction_scope` event shape, that stdout is one JSON value, and that
-`receivedArgs` is byte-identical to a root-only baseline. Expect no event on
-stderr.
-
-Green: in `bin/dakar-review.mjs`, keep the discovered catalogue from
-`buildWorkflowArgs()` (dry-run and live), emit a `type: "catalogue"` event
-listing discovered files and catalogue diagnostics (dry-run has no range), and
-in `prepareLiveReview()` after preparation call the policy with
-`prepared.changedFiles` and the instruction files touched in the range, then
-emit the `type: "summary"` event described in `Purpose / big picture`. Use an
-injected `report` function as `scripts/context-warmup.mjs` does. List
-instruction-file paths, but report changed paths only as counts per group. Cap
-`groups` at 50 entries and record the overflow count. Keep `run()` and
-`prepareLiveReview()` under the Biome complexity limit by extracting a small
-`reportInstructionScope()` helper. Rebuild the bundle.
-
-Validation: full gates and `make proofs`. Commit: "Report nested AGENTS.md
-scope on stderr".
-
-### `EP-M6` documentation, CI, and closure
-
-Update `docs/users-guide.md` (new subsection "Nested `AGENTS.md` files" under
-"How much of the CodeRabbit format is honoured": discovery rule, precedence,
-bounds, the stderr report and every diagnostic code with the action a user
-should take, and the explicit statement that prompts still use only the root
-file until 2.3.2); `docs/developers-guide.md` §3 (module ownership: kernel,
-policy, adapter; the proof workflow with `make proofs`, `lsc regen`, and the
-additions-only rule; how to add a diagnostic code) and §1 (local validation now
-includes `make proofs` with Dafny 4.11.0); `skills/dakar-review/SKILL.md`
-configuration section (one sentence); `docs/repository-layout.md` (new files);
-and `docs/roadmap.md` (mark 2.3.1 done, and add under 2.3.2 a note that it
-consumes `InstructionScopeReport`). Add a CI step to `.github/workflows/ci.yml`
-that installs Dafny 4.11.0 from the pinned GitHub release archive and runs
-`make proofs` after `npm ci`. Search for stale claims with the command below,
-excluding `docs/execplans/`, and correct each. Mark ADR 0004 `Accepted`.
+Update `docs/users-guide.md`: under "How much of the CodeRabbit format is
+honoured", explain that the root `AGENTS.md` comes from the trusted base, that
+symbolic links and oversized files are now skipped or truncated with a stderr
+warning, that agents no longer load working-copy context files, and that nested
+files are specified (link to ADR 0004) but not yet applied to prompts. Update
+`docs/developers-guide.md`: §3 module ownership (kernel, policy, adapter, and
+the bundling rule), how to add a diagnostic code (ADR table, policy table,
+users' guide, tests in one commit), and the proof workflow (`proofs/`,
+`make proofs`, `lsc regen`, the `.dfy` additions-only rule, the CI freshness
+check); §1 local validation including Dafny 4.11.0. Update
+`skills/dakar-review/SKILL.md` (one sentence), `docs/repository-layout.md`
+(`proofs/` and the new modules), and `README.md` if the stale-claim search
+finds it. Mark 2.3.1 done in `docs/roadmap.md`, note under 2.3.2 that it
+consumes `InstructionScopeReport` and must satisfy ADR 0004's consequences, and
+add the three D12 follow-ups with `mapsplice`. Search for stale claims,
+excluding `docs/execplans/`, and correct each:
 
 ```bash
-grep -rn 'root .AGENTS.md\|root AGENTS.md' docs README.md skills
+grep -rn 'root .AGENTS.md\|root AGENTS.md\|reviewed repository.s AGENTS' \
+  docs README.md skills --exclude-dir=execplans
 ```
 
-Validation: full gates and `make proofs`; reconcile `Outcomes & retrospective`.
-Commit: "Document nested AGENTS.md scope and close 2.3.1".
+Validation: `make fmt`, all gates, and `make proofs`; reconcile
+`Outcomes & retrospective`. Commit: "Document nested AGENTS.md scope and close
+2.3.1".
 
 ## Milestones and plateaus
 
-- `EP-M0`: probe verdict recorded; repository unchanged except this plan.
-  Recovery: delete the scratch directory. Compatibility: none.
+- `EP-M0`: probe verdicts recorded; repository unchanged except this plan.
+  Recovery: delete the scratch directories.
 - `EP-M1`: the design is the accepted source of truth; no behaviour change.
-  Conformance: requirements stated; no interface change. Recovery: revert the
-  commit. Remaining: implementation.
-- `EP-M2`: the kernel exists, is proved, and is tested, but nothing calls
-  it. Conformance: pure module, no imports outside the module; no workflow
-  manifest change. Recovery: revert; `npm ci` restores the lockfile. Remaining:
-  policy, adapter, report.
-- `EP-M3`: the policy produces complete reports from in-memory catalogues.
-  Conformance: pure; diagnostics match ADR 0004's table exactly. Recovery:
-  revert.
-- `EP-M4`: the CLI reads root instructions through the shared adapter; two
-  deliberate behaviour changes (symlink skip, oversized truncation) are tested.
-  Conformance: trust rule unchanged; stdout and workflow arguments unchanged
-  for regular root files. Recovery: revert this commit and rebuild the bundle.
-- `EP-M5`: users see instruction scope on stderr. Conformance: stdout,
-  arguments, and workflow artefact unchanged. Recovery: revert and rebuild the
-  bundle; earlier plateaus remain valid.
-- `EP-M6`: documentation and CI match behaviour; roadmap updated.
+  Recovery: revert the commit.
+- `EP-M2`: the kernel is proved, tested, and checked in CI, but nothing calls
+  it. Conformance: pure; root `package-lock.json` untouched; no workflow
+  manifest change. Recovery: revert; delete `proofs/node_modules`.
+- `EP-M3`: the policy produces complete reports from in-memory input.
+  Conformance: diagnostics match the ADR table exactly. Recovery: revert.
+- `EP-M4`: the CLI loads root instructions through the adapter; the deliberate
+  trust fixes are tested; the pi adapters no longer load context files.
+  Conformance: trust rule unchanged; stdout and arguments unchanged for a
+  regular root file at the top level; bundle has no `.ts` imports. Recovery:
+  revert the two commits and run `make workflow-build`.
+- `EP-M5`: documentation, roadmap, and CI match behaviour.
 - Compatibility decision for every milestone: none. The modules are new and
-  internal; the CLI is pre-1.0 (`package.json` version 0.1.0); no compatibility
-  layer is introduced.
+  internal and the CLI is pre-1.0 (`package.json` version 0.1.0); no
+  compatibility layer is introduced.
 
 ## Concrete steps
 
-Working directory: the repository root. Use `set -o pipefail` in the shell
-before every piped gate so failures propagate through `tee`.
+Working directory: the repository root. Enable `pipefail` before piping gates
+through `tee` so failures propagate.
 
 ```bash
 set -o pipefail
 BRANCH=$(git branch --show-current)
-make check-fmt 2>&1 | tee /tmp/check-fmt-dakar-$BRANCH.out
-make typecheck 2>&1 | tee /tmp/typecheck-dakar-$BRANCH.out
-make lint 2>&1 | tee /tmp/lint-dakar-$BRANCH.out
-make test 2>&1 | tee /tmp/test-dakar-$BRANCH.out
-make workflow-check 2>&1 | tee /tmp/workflow-check-dakar-$BRANCH.out
-make proofs 2>&1 | tee /tmp/proofs-dakar-$BRANCH.out   # from EP-M2
+make check-fmt 2>&1 | tee "/tmp/check-fmt-dakar-$BRANCH.out"
+make typecheck 2>&1 | tee "/tmp/typecheck-dakar-$BRANCH.out"
+make lint 2>&1 | tee "/tmp/lint-dakar-$BRANCH.out"
+make test 2>&1 | tee "/tmp/test-dakar-$BRANCH.out"
+make workflow-check 2>&1 | tee "/tmp/workflow-check-dakar-$BRANCH.out"
+make proofs 2>&1 | tee "/tmp/proofs-dakar-$BRANCH.out"   # from EP-M2
 ```
 
-Focused commands by milestone:
+Focused commands:
 
 ```plaintext
-EP-M2 red:   node --test tests/instruction-scope-kernel.test.mjs -> fails: Cannot find module '../src/workflows/dakar-review/instruction-scope-kernel.ts'
-EP-M2 green: node --test tests/instruction-scope-kernel.test.mjs -> all pass; make proofs -> "verified, 0 errors"
+EP-M2 red:   node --test tests/instruction-scope-kernel.test.mjs -> fails: Cannot find module
+EP-M2 green: node --test tests/instruction-scope-kernel.test.mjs -> pass
+EP-M2 green: make proofs -> Dafny reports the kernel verified with 0 errors
 EP-M3 red:   node --test tests/instruction-scope.test.mjs -> fails: Cannot find module
-EP-M3 green: node --test tests/instruction-scope.test.mjs tests/instruction-scope.property.test.mjs -> all pass
+EP-M3 green: node --test tests/instruction-scope.test.mjs tests/instruction-scope.property.test.mjs -> pass
 EP-M4 red:   node --test tests/instruction-discovery.test.mjs -> fails: Cannot find module
-EP-M4 red:   symlink case in tests/cli.test.mjs fails (link target read as text)
-EP-M4 green: node --test tests/instruction-discovery.test.mjs tests/cli.test.mjs -> all pass
-EP-M5 red:   node --test tests/cli-instruction-scope.test.mjs -> fails: no instruction_scope event on stderr
-EP-M5 green: same command -> all pass
+EP-M4 red:   node --test tests/cli.test.mjs -> symlink and oversized cases fail
+EP-M4 red:   node --test tests/adapter-config.test.mjs -> fails: --no-context-files missing
+EP-M4 green: node --test tests/instruction-discovery.test.mjs tests/cli.test.mjs tests/adapter-config.test.mjs -> pass
 ```
 
-Known baseline: `make typecheck` needs the `odw` CLI on `PATH` for its dry run;
-`make spelling` needs network access to fetch the pinned
-`typos-config-builder`. If either is unavailable, record it here with the exact
-error and do not waive the gate.
+Known baseline needs: `make typecheck` requires `odw` on `PATH`;
+`make spelling` fetches the pinned `typos-config-builder`. If either is
+unavailable, record the exact error here and do not waive the gate.
 
 ## Validation and acceptance
 
-Acceptance is behavioural:
-
-- In a fixture repository with the example tree from `Purpose / big picture`, a
-  live CLI run against a fake ODW prints exactly one `instruction_scope`
-  summary event on stderr with the two groups and the `case-variant-ignored`
-  diagnostic shown there, and stdout parses as one JSON value.
-- In a repository with only a root `AGENTS.md`, the workflow arguments
-  captured by the fake ODW are byte-identical to those captured before this
-  change (the existing `tests/cli.test.mjs` suites pass unmodified).
-- `make proofs` verifies the kernel with zero errors, and each seeded fault
-  in the verification plan is rejected.
+- `tests/instruction-discovery.test.mjs` builds the `Purpose / big picture`
+  repository and asserts the three chains and the `name-case-variant`
+  diagnostic exactly.
+- With a root `AGENTS.md` committed as a symbolic link at the base, the CLI's
+  captured workflow arguments contain no `agentInstructions`, stderr carries
+  the warning line, and stdout parses as one JSON value.
+- With a regular root `AGENTS.md`, the captured workflow arguments are
+  byte-identical to the baseline.
+- Every pi adapter command in `odw.config.json` contains `--no-context-files`.
+- `make proofs` verifies the kernel with zero errors locally and in CI, and
+  seeded faults A to D are each rejected for the named reason.
 - `make check-fmt`, `make typecheck`, `make lint`, `make test`, and
-  `make workflow-check` pass after every milestone.
-
-Quality criteria: all tests pass; every obligation in the verification plan is
-discharged by its named artefact; no lint or type suppressions are added; the
-workflow artefact is byte-identical to the base.
+  `make workflow-check` pass after every milestone, and
+  `workflows/dakar-review.js` is byte-identical to the base.
 
 ## Idempotence and recovery
 
-Every gate and test is re-runnable. Temporary Git repositories are created under
-`os.tmpdir()` and removed with `t.after()` cleanup, as existing CLI tests do.
-`lsc regen` (never `gen` over an existing `.dfy`) preserves proof work; if a
-regeneration conflicts, restore the `.dfy` from Git and rerun.
-`make workflow-build` regenerates the CLI bundle deterministically. Each
-milestone is one commit, so `git revert <commit>` followed by
-`make workflow-build` and `npm ci` restores any earlier plateau.
+Every gate and test is re-runnable. Temporary repositories live under
+`os.tmpdir()` and are removed in `t.after()` hooks, as existing CLI tests do.
+Use `lsc regen`, never `lsc gen`, once a `.dfy` exists; if a regeneration
+conflicts, restore the `.dfy` from Git and rerun. `make workflow-build`
+regenerates the CLI bundle deterministically. Each milestone ends in a commit,
+so `git revert` followed by `make workflow-build` restores an earlier plateau.
 
 ## Artefacts and notes
 
@@ -1018,20 +1115,51 @@ Reconnaissance (2026-11-17, base `379128f`):
 
 ```plaintext
 bin/dakar-review.mjs: readAgentInstructions(repoRoot, baseRef) reads <sha>:AGENTS.md
-  via git ls-tree/show and caps it at 24,000 code units
-scripts/review-state.mjs: changedFiles() = git diff --name-only base..head | sort (no -z)
-src/workflows/dakar-review/prompts.ts: agentInstructionsBlock() precedence sentence used by taskPrompt and auditPrompt
-scripts/build-workflow.mjs: RUNTIME_MODULES manifest checked against esbuild metafile inputs
+  via git ls-tree and git show, and caps it at 24,000 code units
+scripts/review-state.mjs: changedFiles() = git diff --name-only base..head, sorted (no -z)
+odw.config.json: pi adapters run pi -p --no-session --provider openai-flex ... (no --no-context-files)
+pi --help: --no-context-files, -nc  Disable AGENTS.md and CLAUDE.md discovery and loading
 dafny --version -> 4.11.0+fcb2042d6d043a2634f0854338c08feeaaaf4ae2
 npm view lemmascript version -> 0.6.10 (dependencies: ts-morph ^25.0.0, lemmascript-claimcheck ^0.2.0)
 ```
 
-Probe, red/green, and seeded-fault transcripts are added here as milestones
+Git probe (scratch repository, 2026-11-17):
+
+```plaintext
+$ git --literal-pathspecs ls-tree -z HEAD -- packages/api/ 'we[ir]d/' packages/
+120000 blob 47dc3e3…  packages/AGENTS.md
+040000 tree 955e2ce…  packages/api-client
+100644 blob af7b368…  packages/api/AGENTS.md
+040000 tree 00ec51e…  packages/api/src
+100644 blob 0dad6d9…  we[ir]d/AGENTS.md
+$ git ls-tree HEAD AGENTS.md | awk '{print $3}' | git cat-file --batch
+c317064… blob 10
+AGENTS.md
+```
+
+Design review (2026-11-17): three panellists (Pandalump and Telefono; Doggylump
+and Buzzy Bee; Wafflecat and Dinolump) returned "proceed with conditions".
+Accepted findings and where they landed: bundling the adapter (Constraints,
+`EP-M4`); splitting budget from applicability and stopping at the first misfit
+(D11); ancestry discovery without a global cap (D7); merge-base and no-rename
+range detection (D8); review-policy ranking by source (D5); `area-condition`
+codes with SARIF ids (D6); fail-closed Git errors (Constraints,
+`INV-fail-closed`); the isolated proof package and CI job (D9, `EP-M2`); the pi
+context-file gap (D10); scope-change on renames (D4); deferring the stderr
+report (D1); follow-ups (D12). Pre-mortem scenarios recorded: silent loss of a
+deep monorepo instruction file (mitigated by D7 and D11); review jobs hanging
+on partial clones (mitigated by D7 and timeouts); moving code out of a strict
+scope to escape instructions (mitigated by D4, D8, and D10). Strongest
+alternative: desugar nested files into `path_instructions` and report in the
+result JSON; its reporting channel is adopted as the 2.3.2 target, its matching
+approach is rejected (ADR 0004 options).
+
+Probe, red and green, and seeded-fault transcripts are added here as milestones
 complete.
 
 ## Interfaces and dependencies
 
-Kernel, `src/workflows/dakar-review/instruction-scope-kernel.ts` (pure, proved;
+Kernel, `src/workflows/dakar-review/instruction-scope-kernel.ts` (pure, proved,
 no imports):
 
 ```typescript
@@ -1039,8 +1167,8 @@ no imports):
 export function isSegmentPrefix(prefix: readonly string[], path: readonly string[]): boolean
 
 /**
- * Indices of `directories` that are segment prefixes of `parent`, ordered by
- * ascending directory depth. Requires distinct directories.
+ * Indices of `directories` that are segment prefixes of `parent`, in ascending
+ * directory depth. Requires pairwise distinct directories.
  */
 export function applicableIndices(
   directories: readonly (readonly string[])[],
@@ -1048,11 +1176,14 @@ export function applicableIndices(
 ): number[]
 
 /**
- * Indices kept when allocating `budget` to `lengths` (root-to-nearest order),
- * walking nearest first and skipping entries that do not fit; returned in
- * ascending order.
+ * The longest prefix of `ranking` whose lengths fit within `budget`; stops at
+ * the first ranked index that does not fit.
  */
-export function allocateNearestFirst(lengths: readonly number[], budget: number): number[]
+export function selectWithinBudget(
+  lengths: readonly number[],
+  ranking: readonly number[],
+  budget: number,
+): number[]
 ```
 
 Policy, `src/workflows/dakar-review/instruction-scope.ts` (pure; imports only
@@ -1060,90 +1191,108 @@ the kernel):
 
 ```typescript
 export const INSTRUCTION_FILE_NAME = 'AGENTS.md'
-export const MAX_INSTRUCTION_FILE_CHARS = 24_000
-export const MAX_INSTRUCTION_FILES = 64
-export const MAX_CHAIN_CHARS = 48_000
+export const MAX_INSTRUCTION_CHARS = 24_000
+export const MAX_INSTRUCTION_BLOB_BYTES = 4 * 1024 * 1024
 
 export type InstructionDiagnosticCode =
-  | 'case-variant-ignored'
-  | 'instruction-symlink-skipped'
-  | 'instruction-not-regular-file'
-  | 'instruction-file-too-large'
-  | 'instruction-truncated'
-  | 'discovery-limit-exceeded'
-  | 'chain-budget-exceeded'
-  | 'instruction-changed-in-range'
-  | 'unresolvable-path'
-  | 'instruction-discovery-failed'
+  | 'name-case-variant'          // note: e.g. agents.md; not loaded
+  | 'entry-symlink'              // warning: symbolic link skipped
+  | 'entry-not-blob'             // warning: directory or submodule named AGENTS.md
+  | 'entry-too-large'            // warning: blob over 4 MiB not read
+  | 'content-truncated'          // note: over 24,000 code units
+  | 'content-invalid-utf8'       // warning: decoded with replacement characters
+  | 'range-instruction-changed'  // warning: trusted version applied
+  | 'path-scope-changed'         // warning: rename between different chains
+  | 'path-unresolvable'          // warning: counted, root chain only
 
 export interface InstructionDiagnostic {
   readonly code: InstructionDiagnosticCode
   readonly severity: 'note' | 'warning'
-  readonly path: string // repository-relative; '' for whole-catalogue diagnostics
-  readonly detail?: string
+  readonly ruleId: string        // `dakar/instruction/${code}`
+  readonly path?: string         // repository-relative; absent for counts
+  readonly count?: number        // for path-unresolvable
 }
 
-export interface TreeCandidate { readonly path: string; readonly mode: string; readonly size: number }
+/** Directory scope now; a glob scope is reserved for future sources. */
+export type InstructionScope = { readonly kind: 'directory'; readonly segments: readonly string[] }
+
+export interface TreeEntry {
+  readonly path: string
+  readonly mode: string
+  readonly type: string
+  readonly objectId: string
+}
 export interface InstructionFile {
-  readonly path: string            // e.g. 'packages/api/AGENTS.md'
-  readonly directory: readonly string[]
-  readonly content: string         // capped at MAX_INSTRUCTION_FILE_CHARS
+  readonly path: string
+  readonly scope: InstructionScope
+  readonly objectId: string
+  readonly content: string       // at most MAX_INSTRUCTION_CHARS code units
   readonly truncated: boolean
 }
-export interface InstructionCatalogue {
-  readonly trustedCommit: string
-  readonly files: readonly InstructionFile[]   // sorted by depth, then path
-  readonly diagnostics: readonly InstructionDiagnostic[]
-}
-export interface InstructionChainGroup {
-  readonly chain: readonly string[]           // instruction file paths, root first
-  readonly keptChain: readonly string[]        // after the chain budget
-  readonly changedPaths: readonly string[]
+export interface ChangeSet {
+  readonly paths: readonly string[]                        // rename-free change set
+  readonly renames: readonly { readonly from: string; readonly to: string }[]
+  readonly instructionChanges: readonly string[]           // any-case AGENTS.md paths changed since the merge base
 }
 export interface InstructionScopeReport {
   readonly trustedCommit: string
-  readonly groups: readonly InstructionChainGroup[]
-  readonly diagnostics: readonly InstructionDiagnostic[]
+  readonly files: readonly InstructionFile[]               // sorted by depth, then path
+  readonly chains: readonly { readonly fileIndices: readonly number[]; readonly paths: readonly string[] }[]
+  readonly diagnostics: readonly InstructionDiagnostic[]   // sorted by code, then path
 }
 
-/** Classify tree candidates into instruction files to read and diagnostics. */
-export function selectInstructionCandidates(candidates: readonly TreeCandidate[]): {
-  readonly accepted: readonly TreeCandidate[]
+/** Ancestor directories (root as '') to list, plus malformed-path counts. */
+export function instructionDirectories(changes: ChangeSet): {
+  readonly directories: readonly string[]
+  readonly unresolvable: number
+}
+/** Classify listed tree entries into blobs to read and diagnostics. */
+export function classifyTreeEntries(entries: readonly TreeEntry[]): {
+  readonly accepted: readonly TreeEntry[]
   readonly diagnostics: readonly InstructionDiagnostic[]
 }
-/** Build a capped catalogue from accepted files and their decoded text. */
-export function buildInstructionCatalogue(
-  trustedCommit: string,
-  texts: readonly { readonly path: string; readonly content: string }[],
-  diagnostics: readonly InstructionDiagnostic[],
-): InstructionCatalogue
-/** Resolve the chain for every changed path and report diagnostics. */
+/** Resolve chains for every changed path from the loaded files. */
 export function resolveInstructionScope(
-  catalogue: InstructionCatalogue,
-  changedPaths: readonly string[],
+  trustedCommit: string,
+  files: readonly InstructionFile[],
+  changes: ChangeSet,
+  diagnostics: readonly InstructionDiagnostic[],
 ): InstructionScopeReport
 ```
 
-Final names may be adjusted during implementation if TypeDoc or lint rules
-require it; any change to the diagnostic codes must be mirrored in ADR 0004 and
-the users' guide in the same commit.
+Names may change during implementation if TypeDoc or lint rules require it; any
+change to a diagnostic code is mirrored in ADR 0004 and the users' guide in the
+same commit.
 
-Adapter, `scripts/instruction-discovery.mjs` (host; Node built-ins only):
-`createGitTreeReader(repoRoot)` returns an object with `resolveCommit(ref)`,
-`listCandidates(commit)`, and `readBlob(commit, path, maxBytes)`;
-`discoverInstructionCatalogue(reader, baseRef)` returns an
-`InstructionCatalogue`. Ports are plain objects of functions, not classes;
-tests substitute an in-memory reader for application-level cases and use real
-repositories for adapter cases. Severity table: `warning` for
-`instruction-symlink-skipped`, `instruction-not-regular-file`,
-`instruction-file-too-large`, `discovery-limit-exceeded`,
-`chain-budget-exceeded`, `instruction-discovery-failed`; `note` for the rest.
+Adapter, `scripts/instruction-discovery.mjs` (host; Node built-ins only;
+bundled into the CLI): `createGitReader(repoRoot, { timeoutMs })` returns an
+object with `topLevel()`, `resolveCommit(ref)`,
+`listDirectories(commit, directories)`, `readBlobs(objectIds, maxBytes)`,
+`mergeBase(a, b)`, and `changedPaths(a, b)`;
+`loadRootInstructions(reader, baseRef)` returns `{ instructions, diagnostics }`
+where `instructions` has today's `{ source, content, truncated }` shape or is
+`undefined`; and
+`discoverInstructionScope(reader, { baseRef, headRef, changedPaths })` returns
+an `InstructionScopeReport`. Tests substitute an in-memory reader for
+application-level cases and use real repositories for adapter cases.
 
-Dependencies: `lemmascript` (exact version from `EP-M0`, development only). No
-runtime dependency is added; `zod` and `js-yaml` are unchanged. Dafny 4.11.0 is
-a host and CI tool.
+Dependencies: `lemmascript` (exact version from `EP-M0`) in
+`proofs/package.json` only. No runtime dependency is added; the root
+`package.json` and `package-lock.json` are unchanged. Dafny 4.11.0 is a host
+and CI tool pinned by version and SHA-256.
 
 ## Revision note
 
-- 2026-11-17: initial draft from reconnaissance and prior-art research;
-  awaiting the community-of-experts design review and user approval.
+- 2026-11-17: initial draft from reconnaissance and prior-art research.
+- 2026-11-17: applied the community-of-experts design review. Changes: stderr
+  scope report deferred to 2.3.2 (D1); ancestry discovery without a global cap
+  (D7); range detection from the merge base without rename detection (D8);
+  rename scope-change diagnostic (D4); review-policy precedence by
+  configuration source (D5); budget split from applicability with
+  stop-at-first-misfit selection (D11); `area-condition` diagnostic codes with
+  SARIF rule ids (D6); fail-closed Git errors; adapter bundling rule; isolated
+  `proofs/` package and an early CI proof job (D9); pi `--no-context-files`
+  (D10); roadmap follow-ups (D12); ADR status timing (D13); recomputed
+  tolerances; approval questions added. Milestones renumbered: `EP-M5` is now
+  documentation and closure. Remaining work is unchanged in kind and awaits
+  approval.
