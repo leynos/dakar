@@ -1,5 +1,7 @@
 .PHONY: check fmt check-fmt docs-check lint biome-lint oxlint-lint typecheck markdownlint nixie test spelling \
-	workflow-build workflow-freshness workflow-check
+	workflow-build workflow-freshness workflow-check review-rules
+
+REVIEW_RULES ?= examples/df12-code-review.yaml
 
 MD_FILES := $(shell git ls-files '*.md')
 # Explicit bin/ and scripts/ entries, then every tracked test module via a glob
@@ -36,7 +38,11 @@ check-fmt:
 		xargs -0 -r sh -c 'for file do test "$$(tail -c 1 "$$file")" = "" || { printf "%s: missing final newline\n" "$$file"; exit 1; }; done' sh
 	$(MDTABLEFIX) --check $(MDTABLEFIX_SELECT) $(MDTABLEFIX_RULES)
 
-lint: biome-lint oxlint-lint markdownlint nixie docs-check
+lint: biome-lint oxlint-lint markdownlint nixie docs-check review-rules
+
+review-rules:
+	@$(UV_ENV) npm run lint:review-yaml -- "$(REVIEW_RULES)"
+	@$(UV_ENV) npm run lint:review-schema -- "$(REVIEW_RULES)"
 
 # Enforce sub-10 cognitive complexity on the authored CLI and SARIF sources.
 biome-lint:

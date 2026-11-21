@@ -1,0 +1,6 @@
+extends: default
+
+rules:
+  document-start: disable
+  # Embedded review prompts contain intentionally long Markdown lines.
+  line-length: disable
