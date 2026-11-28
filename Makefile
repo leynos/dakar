@@ -6,9 +6,8 @@ MD_FILES := $(shell git ls-files '*.md')
 # so a newly added test cannot silently escape the node --check pre-flight.
 NODE_MODULES := bin/dakar-review.mjs bin/dakar-review.bundle.mjs scripts/build-cli.mjs scripts/build-workflow.mjs scripts/check-tested-examples.mjs scripts/live-review-harness.mjs scripts/odw-config.mjs scripts/odw-result-poll.mjs scripts/review-config.mjs scripts/review-state.mjs scripts/tested-examples.mjs $(shell git ls-files 'tests/*.test.mjs' 'tests/helpers/*.mjs')
 UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
-UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
 TYPOS_CONFIG_BUILDER_VERSION ?= v0.1.3
-TYPOS_CONFIG_BUILDER = $(UV_ENV) $(UV) tool run --python 3.14 --from \
+TYPOS_CONFIG_BUILDER = $(UV) tool run --python 3.14 --from \
 	"git+https://github.com/leynos/typos-config-builder.git@$(TYPOS_CONFIG_BUILDER_VERSION)" \
 	typos-config-builder
 
